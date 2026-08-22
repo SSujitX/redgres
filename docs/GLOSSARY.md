@@ -19,5 +19,8 @@
 - **RPO** — maximum accepted data loss measured in time.
 - **RTO** — target time to restore service.
 - **Parity** — required source behavior reproduced and proven by tests, not similarity of UI/code.
+- **Latest tested** — newest stable service version explicitly approved and pinned by a Redgres release; never an upstream floating `latest` tag.
+- **Expected version** — optional operator assertion checked against runtime detection; it identifies the intended server but cannot expand Redgres support.
+- **Compatibility matrix** — release-owned PostgreSQL/Redis/PgBouncer versions and combinations backed by required integration, installer, backup, and restore evidence.
 - **Cutover** — moving operator traffic to Redgres after gates pass.
 - **Observation window** — period after cutover when legacy fallback remains and production evidence is collected.

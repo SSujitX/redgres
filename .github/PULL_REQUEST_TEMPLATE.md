@@ -14,8 +14,13 @@ Describe the outcome and affected PRD requirement IDs.
 - [ ] Go unit/HTTP tests
 - [ ] Go race tests and vet
 - [ ] Frontend tests/build
-- [ ] PostgreSQL 17 integration (if applicable)
-- [ ] Redis 8 integration (if applicable)
+- [ ] UI viewport/zoom/keyboard review and `redgres-ui-reviewer` evidence (if applicable)
+- [ ] Applicable PostgreSQL 17/18 matrix jobs, with detected full versions/artifacts
+- [ ] Applicable Redis 8.2/8.10 matrix jobs, with detected full versions/image digests
+- [ ] Version selection/detection and unsupported-version rejection (if applicable)
+- [ ] New/changed dependency APIs and version-sensitive claims verified against pinned source or official primary documentation
+- [ ] Dependencies/toolchains use latest stable compatible reviewed versions with exact pins; release/security notes and migration impact recorded
+- [ ] No unrelated features/refactors, invented APIs/results, or unlicensed copied code
 - [ ] Secret/log/audit checks
 - [ ] Deployment/backup/rollback checks (if applicable)
 - [ ] Documentation and `docs/TRACEABILITY.md` updated

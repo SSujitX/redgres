@@ -9,6 +9,8 @@ This is a sign-off record, not a substitute for automated evidence. Every checke
 - [ ] PostgreSQL direct/pooled URL and project-role behavior accepted.
 - [ ] Redis preset workloads and ACL isolation accepted.
 - [ ] pgAdmin and RedisInsight remain correctly separated expert tools.
+- [ ] Login and authenticated shell pass the responsive/zoom viewport matrix, keyboard/focus checks, and independent UI review.
+- [ ] Global search groups service context correctly and exposes no credentials, protected data, or direct destructive actions.
 
 ## Security
 
@@ -29,6 +31,10 @@ This is a sign-off record, not a substitute for automated evidence. Every checke
 ## Deployment
 
 - [ ] Fresh and existing-postgres installer modes rehearsed.
+- [ ] Selected and detected PostgreSQL/Redis/PgBouncer versions match the release compatibility matrix and exact artifacts/digests are recorded.
+- [ ] PostgreSQL and PgBouncer existing/fresh modes pass independently; existing PostgreSQL preserve mode proves zero unapproved package/config/restart/extension changes.
+- [ ] Every claimed optional PostgreSQL capability has exact package/extension versions, named-database scope, preload/restart result and restore evidence; unrequested databases and `template1` are unchanged.
+- [ ] PostgreSQL 17/18 × Redis 8.2/8.8 release matrix and required PgBouncer checks pass.
 - [ ] Second-run idempotency and interrupted-run recovery pass.
 - [ ] Application update and schema-compatible rollback pass.
 - [ ] DNS, TLS, renewal hooks, tunnel routes, Access policies, listeners, and firewall observed live.

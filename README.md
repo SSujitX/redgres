@@ -9,6 +9,18 @@ Redgres is the planned open-source successor to two existing private administrat
 
 This repository is currently the authoritative product and engineering specification. It does **not** yet contain a production Redgres implementation. The source applications remain operationally independent until the migration gates in [docs/MIGRATION.md](docs/MIGRATION.md) are passed.
 
+## Start coding with Cursor
+
+1. Open `Redgres.code-workspace` in Cursor—not an individual sibling folder.
+2. Open Agent mode.
+3. Run `/start-redgres`.
+
+That is the normal entry point. The command inspects Git/roadmap/traceability, selects the next dependency-ready slice, invokes the planner, uses isolated implementation subagents when parallel work is safe, runs reviewers/tests, and synchronizes canonical documentation. Project rules in `.cursor/rules` apply persistently; specialized skills and subagents are loaded when relevant.
+
+For start, resume, status, and bug-fix copy/paste commands, use [CURSOR_CODING.md](CURSOR_CODING.md).
+
+Do not paste all documentation into chat. Agents receive the durable project context through the always-applied rule, `AGENTS.md`, routed docs, committed code, and explicit subagent context packets. See [docs/CURSOR_WORKFLOW.md](docs/CURSOR_WORKFLOW.md) for limits and recovery behavior.
+
 ## Product boundary
 
 Redgres will provide one authenticated browser console for:
@@ -21,13 +33,17 @@ Redgres is not intended to replace pgAdmin or RedisInsight. Those tools remain o
 
 ## Recommended architecture
 
-- Backend: Go, Chi, `pgx/v5` + `pgxpool`, `go-redis/v9`, SQLite via `modernc.org/sqlite`.
-- Frontend: React 19, TypeScript, Vite, Tailwind CSS, TanStack Query, Radix primitives; embedded into the Go binary.
-- Runtime: Ubuntu 24.04 LTS; Redgres as a systemd service; PostgreSQL 17 and PgBouncer host-native; Redis 8 in Docker Compose; `cloudflared` as a systemd service.
+- Backend: latest stable compatible Go toolchain, Chi, `pgx/v5` + `pgxpool`, `go-redis/v9`, and SQLite via `modernc.org/sqlite`, all exactly pinned at the implementation/release baseline.
+- Frontend: latest stable compatible React, TypeScript, Vite, Tailwind CSS, TanStack Query, and Radix primitives, locked in the npm lockfile and embedded into the Go binary.
+- Runtime: Ubuntu 24.04 LTS; Redgres as a systemd service; PostgreSQL 17/18 and PgBouncer independently adopted or installed host-native; a supported Redis 8.2/8.8 selection in Docker Compose; `cloudflared` as a systemd service. Exact packages/images are release-pinned.
 - Browser ingress: Cloudflare Tunnel + Cloudflare Access to loopback-only HTTP services.
 - Database ingress: direct DNS records with end-to-end TLS, authentication, `pg_hba.conf`/Redis ACLs, and source-restricted firewall rules where possible.
 
 There is deliberately no Kubernetes requirement and no Node.js runtime in production.
+
+“Latest” means the newest stable, security-supported, mutually compatible release that passes Redgres tests—not a floating package/container tag, beta, RC, or automatic unreviewed major upgrade.
+
+PostgreSQL installation is not all-or-nothing: Redgres can preserve/adopt an existing cluster or install a fresh supported major. Optional capabilities such as pgvector, PostGIS, TimescaleDB, pgAudit and contrib extensions are explicitly selected, pinned and enabled only in named databases; PgBouncer remains a separate service. See [docs/POSTGRESQL_PROVISIONING.md](docs/POSTGRESQL_PROVISIONING.md).
 
 ## Documentation map
 
@@ -39,6 +55,8 @@ Start with [docs/INDEX.md](docs/INDEX.md). The most important documents are:
 - [docs/PRD.md](docs/PRD.md) — product requirements and acceptance criteria.
 - [docs/SOURCE_SYSTEMS.md](docs/SOURCE_SYSTEMS.md) — how both current repositories work and what must be preserved.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — target components, boundaries, and request/data flows.
+- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) — authoritative service-version choices, defaults, detection, and test matrix.
+- [docs/UI_DESIGN_SYSTEM.md](docs/UI_DESIGN_SYSTEM.md) — distinctive responsive shell, sidebar, topbar search, login, visual tokens, and review requirements.
 - [docs/SECURITY.md](docs/SECURITY.md) — threat model and non-negotiable controls.
 - [docs/MIGRATION.md](docs/MIGRATION.md) — staged migration and cutover gates.
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — target server, filesystem, networking, and installer behavior.

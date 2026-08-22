@@ -18,7 +18,7 @@ Do not claim PITR or near-zero RPO unless WAL/AOF handling and restore drills pr
 One timestamped manifest links:
 
 - PostgreSQL globals (`pg_dumpall --globals-only`) and per-database custom-format dumps, including `database_console_vault`.
-- PostgreSQL version, cluster system identifier, extensions, config checksums, role/database inventory, and dump tool version.
+- PostgreSQL version, cluster system identifier, extension package origin/exact versions, installed extension version/schema/owner per database, preload configuration, PgBouncer version/config checksum, role/database inventory, and dump tool version.
 - Redis verified RDB snapshot, AOF directory/files when enabled, ACL file (`users.acl`) and sanitized configuration metadata.
 - Consistent Redgres SQLite backup using SQLite online backup API or `.backup`, followed by integrity check.
 - Redgres version/release metadata and non-secret configuration checksums.
@@ -33,7 +33,7 @@ One timestamped manifest links:
 4. Dump each database in custom format with failure-on-error behavior and restrictive umask.
 5. Run `pg_restore --list` for structural readability and checksum all files.
 6. Copy encrypted/off-host.
-7. Periodically restore into a clean PostgreSQL 17 test cluster and run logical validation.
+7. Periodically restore into clean test clusters for every supported PostgreSQL major and run logical validation. Cross-major restore/upgrade claims require separate evidence.
 
 For larger/stricter RPO deployments, add base backups and WAL archiving through an ADR; logical dumps alone are not PITR.
 
@@ -47,9 +47,9 @@ Never copy an actively changing live RDB/AOF directory blindly.
 4. Copy the completed RDB to a staging directory on the same filesystem where possible, then checksum.
 5. If AOF is enabled, use Redis-supported safe AOF backup procedure for the installed version; capture the complete manifest/multipart AOF set consistently.
 6. Copy `users.acl` and required sanitized config with permissions preserved.
-7. Restore into an isolated Redis 8 instance; verify load, key count/sample, ACL users/rules, and representative auth.
+7. Restore into an isolated instance of every supported Redis series; verify load, key count/sample, ACL users/rules, representative auth, and detected persistence layout.
 
-The exact AOF procedure must be validated against the deployed Redis version because Redis 7/8 multipart AOF layouts differ from legacy single-file assumptions.
+The exact AOF procedure must be validated against the deployed Redis version because persistence layouts and safe capture procedures can vary between series. Backup manifests record the full detected version and compatibility-policy revision.
 
 ## 5. SQLite capture
 
@@ -69,9 +69,9 @@ The exact AOF procedure must be validated against the deployed Redis version bec
 ## 7. Restore order
 
 1. Provision isolated host/network; do not restore over production first.
-2. Install exact compatible PostgreSQL/Redis/Redgres versions.
+2. Install exact compatible PostgreSQL/Redis/Redgres versions, PgBouncer, and every extension package/control/library required by the manifest before database restore.
 3. Verify manifest/signatures/checksums.
-4. Restore PostgreSQL globals then databases; validate vault access using protected legacy secret.
+4. Restore PostgreSQL globals then databases; verify extension objects/data against [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md) and validate vault access using the protected legacy secret.
 5. Restore Redis data/AOF/ACL using the matching persistence configuration.
 6. Restore SQLite; invalidate sessions if security policy requires.
 7. Restore non-secret configuration and inject secrets through approved mechanism.

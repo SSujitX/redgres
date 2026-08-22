@@ -1,0 +1,25 @@
+---
+description: Always-applied evidence, scope, dependency, and senior engineering quality rules.
+alwaysApply: true
+---
+
+# Evidence-first engineering
+
+Stay on the assigned PRD slice and explicit non-goals. Do not add speculative features, opportunistic rewrites, dependencies, abstractions, or infrastructure because they seem useful.
+
+Never invent an API, library symbol, CLI flag, configuration key, schema/catalog behavior, service capability, version claim, source-system behavior, test result, or deployment fact. Resolve technical uncertainty in this order:
+
+1. Current Redgres code, tests, accepted docs/ADRs, and observed configuration.
+2. Complete relevant legacy source/tests when preserving behavior.
+3. Source/docs for the exact pinned dependency or installed service version.
+4. Official primary documentation, release notes, standards, or original research.
+
+Use internet research when the fact is version-sensitive, external, unfamiliar, security-critical, or not provable locally. Prefer official/primary sources; treat blogs, snippets, generated answers, and search summaries only as leads. Never copy random internet code or license-incompatible source. Record material external assumptions, exact versions, and authoritative links in the governing doc/ADR or handoff.
+
+When selecting or refreshing dependencies, verify the newest stable security-supported mutually compatible releases from official sources, then pin exact versions/checksums/lockfiles. Never use floating `latest`, prereleases, or automatic unreviewed major updates. If latest stable is incompatible or unproven, keep the newest tested safe version and record why.
+
+Inspect available skills and invoke the smallest relevant set for the task. Skills guide work; they do not override Redgres requirements, evidence, or authorization. Do not invoke unrelated skills for ceremony.
+
+Write production code that is explicit, typed, bounded, cancellable where applicable, secure by default, and consistent with existing architecture. Handle errors and dependency failure deliberately. Avoid hidden global state, premature generalization, placeholder success paths, silent fallback, dead code, and comments that merely narrate syntax.
+
+Tests prove observable behavior and failure paths; they are not written to bless an implementation. Run every claimed command, inspect its result, and state anything not executed. “Senior,” “production-ready,” “bug-free,” or “complete” is never evidence by itself.

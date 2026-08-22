@@ -47,6 +47,7 @@ Requirement IDs are stable. Implementation and test evidence belongs in [TRACEAB
 | PLAT-001 | Dashboard reports component health. | Redgres state DB, PostgreSQL direct admin path, PgBouncer, Redis, and optional tool links are represented independently; partial failure is visible. |
 | PLAT-002 | Every mutation writes an audit event. | Actor, action, target, outcome, request ID, client IP, redacted metadata, and time are recorded; no secret detector finds credential material. |
 | PLAT-003 | Operators can inspect paginated audit history. | Cursor pagination is stable and failure events are visible without raw internal errors. |
+| PLAT-004 | Operators can search and navigate globally. | Authenticated bounded search groups PostgreSQL databases, Redis ACL users, navigation, and documentation with explicit service/type context; it works by keyboard and mobile sheet, excludes credentials/protected data, and never executes destructive actions directly. |
 
 ### PostgreSQL
 
@@ -82,11 +83,13 @@ Requirement IDs are stable. Implementation and test evidence belongs in [TRACEAB
 
 | ID | Requirement | Acceptance criteria |
 |---|---|---|
-| OPS-001 | Install on a fresh server. | `fresh-postgres` mode validates a clean target, installs pinned dependencies, creates users/directories, configures services, and passes verification. |
-| OPS-002 | Adopt an existing PostgreSQL server. | `existing-postgres` mode inventories and backs up first, preserves cluster/data/config unless an explicit step is approved, and passes non-destructive compatibility checks. |
+| OPS-001 | Install on a fresh server. | Fresh mode validates a clean target, accepts only PostgreSQL/Redis selections supported by the current Redgres release, resolves exact pinned artifacts, creates users/directories, configures services, records versions/digests, and passes verification. |
+| OPS-002 | Adopt existing database services. | Existing mode auto-detects PostgreSQL, Redis, and PgBouncer versions/capabilities, checks optional expected-version assertions, inventories and backs up first, preserves cluster/data/config unless an explicit step is approved, and passes non-destructive compatibility checks. |
 | OPS-003 | Verify the complete platform. | Command checks services, bindings, DNS, certificates, TLS rejection/acceptance, auth boundaries, HTTP health, tunnel routes, and backup prerequisites without printing secrets. |
 | OPS-004 | Produce recoverable backups. | PostgreSQL logical backup, atomic Redis persistence snapshot/AOF/ACL capture, consistent SQLite backup, configuration manifest, checksums, retention, and encrypted off-host copy are defined. |
 | OPS-005 | Update and roll back application releases. | Releases are immutable; `current` symlink switch is atomic; health gate runs; rollback never reverses data/schema/credential changes automatically. |
+| OPS-006 | Enforce a release-owned service compatibility policy. | The UI/installer exposes the supported choices and recommendations from [COMPATIBILITY.md](COMPATIBILITY.md); unsupported, prerelease, unparseable, or mismatched service versions fail before mutation; configuration cannot widen support; service major/series upgrades are never implicit. |
+| OPS-007 | Adopt or provision PostgreSQL capabilities safely. | PostgreSQL and PgBouncer have independent existing/fresh modes; existing mode defaults to inventory-and-preserve; optional extension packages/preloads/per-database enablement use an explicit release-supported plan; unrequested databases and `template1` remain unchanged; required restart and schema mutation are previewed, backed up, approved, verified, and reported as specified in [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md). |
 
 ## 5. Non-functional requirements
 
@@ -98,19 +101,23 @@ Requirement IDs are stable. Implementation and test evidence belongs in [TRACEAB
 | NFR-004 | Accessibility | WCAG 2.2 AA target for core workflows; complete keyboard operation, visible focus, labels, error announcements, reduced motion. |
 | NFR-005 | Browser support | Current and previous major Chromium, Firefox, and Safari. |
 | NFR-006 | Observability | Structured logs to journald, request IDs, redaction, service health, bounded audit retention policy. |
-| NFR-007 | Supply chain | Locked Go/npm dependencies, reproducible CI build, SBOM and checksums for releases, vulnerability scanning before release. |
+| NFR-007 | Supply chain | Direct application/build dependencies start from the latest stable security-supported compatible releases, are exactly pinned in reproducible manifests/lockfiles, receive reviewed automated update proposals, and pass complete tests, SBOM/license checks, vulnerability scanning, and rollback/migration review before release. Floating `latest`, prereleases, and unreviewed automatic major upgrades are forbidden. |
 | NFR-008 | Portability | Linux amd64/arm64 application builds; primary supported deployment is Ubuntu 24.04 LTS on one server. |
 | NFR-009 | Maintainability | Modular monolith with dependency boundaries; no package may reach PostgreSQL/Redis except its adapter. |
 | NFR-010 | Data durability | SQLite WAL mode plus consistent backups; PostgreSQL/Redis durability follows documented service configuration and tested recovery objectives. |
+| NFR-011 | Service compatibility | Every claimed PostgreSQL/Redis combination has reproducible integration, install/adoption, backup, and restore evidence tied to exact artifacts. |
+| NFR-012 | Responsive interface | Every core owner workflow functions from 320 CSS px through wide desktop and at 200% zoom without viewport-level horizontal scrolling; sidebar, icon-rail, drawer, search, tables, dialogs, and login follow [UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md). |
 
 ## 6. UX requirements
 
-- Navigation: Overview, PostgreSQL, Redis ACL, Audit, System, Documentation.
-- PostgreSQL and Redis must be visually distinct but share interaction patterns.
+- The authenticated shell uses a responsive left sidebar/icon rail/mobile drawer, sticky topbar search, and top-right owner menu as specified in [UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md).
+- Navigation: Overview, PostgreSQL, Redis ACL, Audit, System, Documentation. PostgreSQL and Redis use distinct service identity while sharing interaction patterns.
+- The unauthenticated login route is responsive, reveals no dependency state, and never renders the authenticated shell.
 - Credentials use a modal/ticket with copy actions, explicit “shown now” wording, no auto-copy, no browser persistence, and forced clearing.
 - Dangerous actions use a dedicated danger surface, state exact blast radius, require typed target, and require reauthentication where specified.
 - Long operations return an operation ID and progress state; HTTP requests must not remain open indefinitely.
 - Status colors are never the only signal.
+- Feature work reuses shared design tokens/shell primitives and passes the documented responsive, keyboard, zoom, and visual review gate.
 
 ## 7. Release gates
 
@@ -119,7 +126,7 @@ The migration release cannot replace legacy consoles until all are true:
 1. Source baselines are pinned and parity matrix is complete.
 2. Critical source defects listed in [SOURCE_SYSTEMS.md](SOURCE_SYSTEMS.md) are fixed or intentionally superseded with tests.
 3. Vault compatibility passes fixture and copied-record tests without modifying source records.
-4. Full CI, PostgreSQL 17, Redis 8, TLS, permission, destructive-action, backup, and restore suites pass.
+4. The complete matrix in [COMPATIBILITY.md](COMPATIBILITY.md), TLS, permission, destructive-action, backup, and restore suites pass using exact recorded artifacts.
 5. Existing-server install rehearsal succeeds on a clone/staging host.
 6. Cloudflare Access, loopback bindings, DNS-only raw endpoints, certificates, and UFW rules are observed on the live host.
 7. Legacy fallback remains available through the observation window.

@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | R-001 | Legacy vault cannot decrypt in Go | Medium/Critical | Exact KDF/Fernet vectors, copied-record dry run, immutable secret backup | 100% sampled records decrypt read-only |
 | R-002 | PostgreSQL destructive policy targets system/shared data | Medium/Critical | Central protected policy, re-read, confirmations, integration/fault tests | Protected matrix passes with flags enabled |
-| R-003 | Redis custom commands grant escalation or break apps | Medium/High | Explicit versioned allow-list + representative workloads | Redis 8 integration suite |
+| R-003 | Redis custom commands grant escalation or break apps | Medium/High | Explicit versioned allow-list + representative workloads | Supported Redis-series integration matrix |
 | R-004 | One owner/login increases blast radius | Medium/High | Access outer layer, Argon2id, server sessions, reauth, audit, future capabilities | Security test/review |
 | R-005 | Public raw DB ports attacked | High/High | TLS, SCRAM/ACL, source firewall, patching, monitoring | External negative/positive tests |
 | R-006 | Existing installer damages PostgreSQL | Low/Critical | Separate modes, cluster identity guard, backup gate, VM clone rehearsal | Existing-mode invariant test |
@@ -17,5 +17,8 @@
 | R-013 | One-host resource contention harms databases | Medium/High | Live sizing, Redis maxmemory, PG tuning, resource limits, capacity alerts | Load/capacity report |
 | R-014 | Documentation diverges from code | High/Medium | Traceability, generated config/API refs, PR checks | CI/doc review evidence |
 | R-015 | Project name conflicts legally | Unknown/Medium | Formal availability/trademark check before launch | Recorded approval |
+| R-016 | Untested service version or floating artifact changes administrative behavior | Medium/Critical | Release-owned compatibility matrix, exact package/image/digest pinning, runtime detection/capability checks, no implicit major/series upgrade | Complete matrix CI plus fresh/adoption and restore evidence |
+| R-017 | Desktop-only or generic UI hides context/actions on smaller devices or confuses PostgreSQL/Redis scope | Medium/High | Shared UI contract/tokens, explicit shell modes, viewport/zoom/browser tests, accessibility checks, independent UI reviewer | NFR-012 evidence at required viewports and no critical/high UI findings |
+| R-018 | PostgreSQL capability plan upgrades packages, overwrites preload settings, restarts unexpectedly, or enables extensions in the wrong database | Medium/Critical | Existing-mode preserve default, release-owned capability registry, named database scope, config merge/diff, backup/capacity/restart approval, direct-path and restore tests | OPS-007 evidence for each claimed PostgreSQL-major/capability combination |
 
 Owners and due dates are assigned in the issue tracker when implementation begins. “Accepted” risks require explicit maintainer/operator approval, not silence.

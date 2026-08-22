@@ -49,7 +49,8 @@ Redgres/
 │   │   ├── compatibility.go
 │   │   └── redaction.go
 │   ├── platform/
-│   │   └── status.go
+│   │   ├── status.go
+│   │   └── search.go
 │   ├── httpapi/
 │   │   ├── server.go
 │   │   ├── middleware.go
@@ -58,6 +59,7 @@ Redgres/
 │   │   ├── postgres_routes.go
 │   │   ├── redis_routes.go
 │   │   ├── audit_routes.go
+│   │   ├── search_routes.go
 │   │   └── system_routes.go
 │   └── web/
 │       └── embed.go
@@ -72,6 +74,9 @@ Redgres/
 │   └── src/
 │       ├── api/
 │       ├── components/
+│       │   ├── shell/
+│       │   ├── search/
+│       │   └── ui/
 │       ├── features/
 │       │   ├── auth/
 │       │   ├── overview/
@@ -80,9 +85,12 @@ Redgres/
 │       │   ├── audit/
 │       │   └── system/
 │       ├── styles/
+│       │   ├── tokens.css
+│       │   └── globals.css
 │       └── test/
 ├── integration/
 │   ├── postgres_test.go
+│   ├── postgres_extensions_test.go
 │   ├── redis_test.go
 │   ├── vault_compatibility_test.go
 │   └── fixtures/
@@ -96,17 +104,31 @@ Redgres/
 │   │   ├── common.sh
 │   │   ├── checks.sh
 │   │   ├── logging.sh
-│   │   └── secrets.sh
+│   │   ├── secrets.sh
+│   │   ├── postgres.sh
+│   │   ├── postgres_extensions.sh
+│   │   └── pgbouncer.sh
+│   ├── manifests/
+│   │   └── postgres-capabilities.json  # release-owned exact package/extension mapping
+│   ├── schemas/
+│   │   └── postgres-extension-plan.schema.json
 │   ├── systemd/
 │   ├── compose/
 │   └── cloudflare/
 ├── docs/
+├── .agents/
+│   └── skills/                    # repository-local workflows discovered by Cursor/agents
+├── .cursor/
+│   ├── commands/                  # reusable start/resume/status/fix entry points
+│   ├── agents/                    # planner, bounded implementer, and independent reviewers
+│   └── rules/                     # persistent and path-routed project instructions
 ├── .github/
 │   ├── workflows/ci.yml
 │   ├── ISSUE_TEMPLATE/
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── .env.example
 ├── AGENTS.md
+├── CURSOR_CODING.md               # human day-to-day command cheat sheet
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── LICENSE
@@ -123,7 +145,9 @@ Redgres/
 - `database` owns only Redgres SQLite state; it is not a generic PostgreSQL package.
 - `secrets` implements compatibility/redaction primitives; it does not decide product policy.
 - UI API types are generated from or checked against the versioned API contract where practical.
+- UI shell, search, and primitives are shared components; feature folders consume semantic tokens and do not create independent navigation, palettes, or breakpoints.
 - Deployment scripts never source application `.env` files as shell code; they parse known keys safely.
+- `deploy/manifests/postgres-capabilities.json` is release-owned and maps canonical capability IDs to exact PostgreSQL-major/architecture artifacts, SQL names, preload/restart metadata and verification probes. Operator plans reference IDs only and cannot inject packages, repositories, SQL or libraries.
 - Tests use fixtures and ephemeral services, never live production endpoints by default.
 
 ## Naming rules

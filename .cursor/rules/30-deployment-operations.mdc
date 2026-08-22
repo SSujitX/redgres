@@ -6,12 +6,14 @@ alwaysApply: false
 
 # Deployment and operations rule
 
-Read `docs/DEPLOYMENT.md`, `docs/INSTALLER_SPEC.md`, `docs/DOMAIN_AND_NETWORK.md`, `docs/BACKUP_RECOVERY.md`, `docs/OPERATIONS.md`, `docs/SECURITY.md`, and ADR-002/ADR-003/ADR-007.
+Read `docs/COMPATIBILITY.md`, `docs/DEPLOYMENT.md`, `docs/INSTALLER_SPEC.md`, `docs/POSTGRESQL_PROVISIONING.md`, `docs/DOMAIN_AND_NETWORK.md`, `docs/BACKUP_RECOVERY.md`, `docs/OPERATIONS.md`, `docs/SECURITY.md`, and ADR-002/ADR-003/ADR-007/ADR-008/ADR-009.
 
 - Treat all host details as provisional until observed on the live VPS.
 - Browser origins bind loopback and use Cloudflare Tunnel + Access. Raw PostgreSQL/Redis use DNS-only native TLS endpoints.
 - Separate tunnel and Certbot DNS tokens. Never print/source secrets or pass them in process arguments.
 - Existing-PostgreSQL mode must preserve cluster identity/data and require backup evidence. Never silently initialize, overwrite, purge, or move existing data.
+- Fresh services accept only release-supported selections; existing services are detected and capability-checked. Pin exact artifacts/digests, never use upstream `latest`, and never perform implicit PostgreSQL major or Redis series upgrades.
+- PostgreSQL, extension host packages, per-database `CREATE EXTENSION`, preload/restart changes and PgBouncer are separate lifecycles. Existing mode defaults to preserve. Derive packages/SQL/preloads from release metadata, target named databases only, never touch `template1`, and require explicit approval for PostgreSQL restart.
 - Redis backup uses successful BGSAVE/LASTSAVE verification plus consistent AOF/ACL capture. SQLite backup uses its online backup mechanism.
 - Application rollback never reverses data, schema, credentials, Redis state, or DNS automatically.
 - Scripts are idempotent, strict, shellchecked, path-safe, and testable. Do not download-and-pipe executable scripts.

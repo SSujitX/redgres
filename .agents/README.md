@@ -12,7 +12,7 @@ These skills are vendored for agents working on Redgres. They are ordinary proje
 
 Do not update directly from a moving `main` branch. Review upstream changes, choose an exact commit, reinstall/update, inspect the diff, validate referenced skills/resources, and update the pin above.
 
-## Installed workflow skills
+## Installed upstream workflow skills
 
 - Setup/routing: `setup-matt-pocock-skills`, `ask-matt`
 - Requirements/planning: `grill-with-docs`, `grilling`, `domain-modeling`, `to-spec`, `to-tickets`, `wayfinder`, `research`
@@ -21,6 +21,10 @@ Do not update directly from a moving `main` branch. Review upstream changes, cho
 - Communication/decision support: `grill-me`, `to-questionnaire`, `wait-what`
 
 The unrelated multi-session teaching skill was intentionally not vendored.
+
+## Redgres project skills
+
+- `redgres-ui-design` — repository-owned visual/responsive implementation and review workflow for the React application. It is not part of the pinned Matt Pocock upstream bundle.
 
 ## Required one-time setup
 

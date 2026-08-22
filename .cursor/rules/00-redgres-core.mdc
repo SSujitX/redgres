@@ -15,10 +15,12 @@ Before planning or changing files:
 
 Read only the task-relevant documents routed by `docs/INDEX.md`; do not load all documentation blindly. Update `docs/TRACEABILITY.md` when implementation/test evidence lands.
 
+Repository state is durable context; chat memory is not. At the start of every task, derive current status from Git, implementation, tests, `docs/ROADMAP.md`, and `docs/TRACEABILITY.md`. For every behavior/contract/configuration/architecture change, update the canonical documents from the ownership table in `AGENTS.md` in the same bounded change. Do not create parallel status documents or leave documentation synchronization as a later task.
+
 The sibling repositories `../database-app` and `../redis-ui` are read-only behavioral references. Never edit, clean, move, commit, or execute destructive tests against them. Never copy their `.env`, runtime SQLite/WAL files, binaries, certificates, credentials, or generated artifacts. Pin/verify source behavior against `docs/SOURCE_BASELINE.md`.
 
 Redgres application code belongs only in this repository. Follow `docs/REPOSITORY_STRUCTURE.md`. Never claim a feature is complete merely because its target documentation exists.
 
 Before coding a feature, define its external test seam and acceptance criteria. Prefer one bounded vertical slice. Run focused tests during development and the required complete checks before handoff.
 
-Never push, merge, change production, rotate credentials, modify DNS/Cloudflare, or retire a legacy service without explicit user authorization. Commits are allowed only when requested by the parent task; editing subagents commit only to their isolated branches.
+Never push, change production, rotate credentials, modify DNS/Cloudflare, or retire a legacy service without explicit user authorization. Local commits/integration are allowed only when explicitly requested or when the user invokes `/start-redgres`; editing subagents commit only to their isolated branches.

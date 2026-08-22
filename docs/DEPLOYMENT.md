@@ -5,14 +5,18 @@ Status: target and provisional until verified against the live VPS.
 ## 1. Supported production profile
 
 - Ubuntu Server 24.04 LTS.
-- systemd for Redgres, PostgreSQL 17, PgBouncer, cloudflared, timers, and log lifecycle.
-- Docker Engine + Compose plugin for Redis 8 and optional RedisInsight.
+- systemd for Redgres, a selected supported PostgreSQL 17/18 release, PgBouncer, cloudflared, timers, and log lifecycle.
+- Docker Engine + Compose plugin for a selected supported Redis 8.2/8.8 release and optional RedisInsight.
 - PostgreSQL and PgBouncer host-native to preserve existing cluster integration and simplify direct backup/recovery.
 - Cloudflare Tunnel + Access for browser consoles.
 - Certbot DNS challenge for raw database TLS certificates.
 - UFW plus provider firewall/security group where available.
 
 Kubernetes is out of scope. A fully containerized alternative may be documented later, but production should have one supported path, not two half-tested paths.
+
+The authoritative choices, defaults, detection rules, and required test combinations are in [COMPATIBILITY.md](COMPATIBILITY.md). Exact patch versions, package repositories, image tags, and image digests are pinned by each Redgres release; deployment never follows an upstream `latest` tag.
+
+PostgreSQL may be safely adopted when already installed or provisioned fresh on this host. PostgreSQL packages, optional extension packages, per-database extension state, preload/restart changes and PgBouncer are separate lifecycles governed by [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md); no production profile installs every optional capability.
 
 ## 2. Filesystem hierarchy
 
@@ -60,10 +64,10 @@ Redis data ownership follows the container UID/GID and must be explicitly valida
 | Redgres | systemd | `127.0.0.1:8790` during migration |
 | Legacy database app | existing systemd/container | `127.0.0.1:6969` |
 | Legacy Redact | existing systemd | `127.0.0.1:8787` |
-| PostgreSQL 17 | systemd | local + required external interface on 5432 |
+| Selected PostgreSQL 17/18 | systemd | local + required external interface on 5432 |
 | PgBouncer | systemd | local + required external interface on 6432 |
-| Redis 8 plaintext | Docker | loopback/container network 6379 only |
-| Redis 8 TLS | Docker/proxy design | external 6380 |
+| Selected Redis 8.2/8.8 plaintext | Docker | loopback/container network 6379 only |
+| Selected Redis 8.2/8.8 TLS | Docker/proxy design | external 6380 |
 | RedisInsight | Docker | `127.0.0.1:5540` |
 | pgAdmin | Apache/container | loopback selected port |
 | cloudflared | systemd | outbound tunnel; no inbound listener required |
@@ -114,6 +118,7 @@ Redis UI is not the deciding resource cost; PostgreSQL, Redis data, backup jobs,
 
 - Complete hardware/disk/RAM/service/DNS/port inventory.
 - Existing PostgreSQL cluster/version/data/config backup and restore rehearsal.
+- Existing PostgreSQL package/extension/preload/PgBouncer inventory, or an approved fresh PostgreSQL and extension desired-state plan.
 - Redis persistence mode, volume, ACL file, memory policy, and TLS inventory.
 - Certificate names/renewal and Cloudflare routes/Access policies.
 - Real application source IPs and connection pooling requirements.

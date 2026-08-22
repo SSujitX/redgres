@@ -12,4 +12,4 @@ Planned entry points:
 - `update.sh`
 - `rollback.sh`
 
-The public contract belongs in the installer specification; scripts and tests must stay synchronized with it.
+The public contract belongs in the installer specification, while supported service choices belong in [../docs/COMPATIBILITY.md](../docs/COMPATIBILITY.md). PostgreSQL/PgBouncer existing/fresh behavior and optional extension plans belong in [../docs/POSTGRESQL_PROVISIONING.md](../docs/POSTGRESQL_PROVISIONING.md). Scripts and tests must stay synchronized with all three and must never use floating database-service artifacts, arbitrary extension packages/SQL, or an unapproved PostgreSQL restart.

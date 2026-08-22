@@ -37,8 +37,8 @@ Do not bind both Redact and Redgres to 8787 during coexistence. After retirement
 
 - One `redgres` Go binary serves `/api/v1/*` and embedded React assets.
 - One SQLite database stores owner/session/audit/operation state only.
-- PostgreSQL remains host-native with PgBouncer host-native.
-- Redis remains Docker-managed with persistent host volumes.
+- A [supported PostgreSQL selection](COMPATIBILITY.md) remains host-native with PgBouncer host-native.
+- A [supported Redis selection](COMPATIBILITY.md) remains Docker-managed with persistent host volumes.
 - pgAdmin and RedisInsight remain optional, isolated tools.
 
 ## 3. Modular monolith
@@ -56,7 +56,7 @@ Dependency direction is inward: transport depends on use cases; use cases depend
 
 ## 4. Backend stack
 
-- Go: currently supported stable release, pinned in `go.mod`/CI.
+- Go: newest stable security-supported release compatible with the selected dependencies, pinned through `go.mod`, the `toolchain` directive where used, and CI/release metadata.
 - Router: `github.com/go-chi/chi/v5`.
 - PostgreSQL: `github.com/jackc/pgx/v5` and `pgxpool`.
 - Redis: `github.com/redis/go-redis/v9`.
@@ -67,16 +67,30 @@ Dependency direction is inward: transport depends on use cases; use cases depend
 
 No ORM is planned. PostgreSQL administrative SQL depends heavily on catalog queries, identifier quoting, autocommit-only operations, and explicit privilege semantics; direct audited SQL is clearer.
 
+Service-version support is governed by [COMPATIBILITY.md](COMPATIBILITY.md) and [ADR-008](decisions/ADR-008-service-version-policy.md). Redgres detects the connected PostgreSQL, Redis, and PgBouncer versions and required capabilities before enabling administrative mutations. The supported matrix is release-owned and cannot be widened by runtime configuration.
+
+PostgreSQL server adoption/install, extension host packages, per-database extension state, preload/restart configuration and PgBouncer service lifecycle are separate deployment concerns governed by [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md) and [ADR-009](decisions/ADR-009-postgres-adoption-and-extensions.md). The browser application does not become an arbitrary package/extension manager; approved changes run through the versioned installer/CLI and direct PostgreSQL connection.
+
 ## 5. Frontend stack
 
-- React 19 + TypeScript + Vite.
+- Latest stable compatible React + TypeScript + Vite releases, exactly locked in `package-lock.json`.
 - TanStack Query for server state.
 - Tailwind CSS for design tokens/utilities.
 - Radix UI primitives for accessible dialogs, menus, sheets, and tabs.
+- Shared application shell and semantic tokens follow [UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md); feature folders do not define independent navigation, palettes, or breakpoints.
 - Small local state only; no credential in global stores, URL, localStorage, sessionStorage, IndexedDB, analytics, or error reporting.
 - Production build embedded through Go `embed`; Node.js is build-time only.
 
 Feature folders mirror API domains: `overview`, `postgres`, `redis-users`, `audit`, `system`, `auth`, and `docs`.
+
+### Application dependency version policy
+
+- At the initial implementation baseline and each planned dependency refresh, resolve every direct dependency/tool to the newest stable, security-supported release compatible with the complete stack and supported platforms.
+- “Latest” is resolved during a reviewed change and then pinned. Production/CI never follows floating package ranges, unpinned tool downloads, container `latest` tags, prereleases, or nightly builds.
+- Go modules/checksums, npm lockfiles, Node build-tool version, linters/generators, container images/digests, and deployment tools are reproducible inputs. Node.js uses a supported LTS line and remains build-time only.
+- Automated dependency tooling may open small grouped update pull requests, but does not merge automatically. Major updates and security-sensitive runtime changes receive explicit review, release-note/migration analysis, complete tests, vulnerability/license checks, and rollback consideration.
+- If the newest upstream release is incompatible or unproven, Redgres pins the newest tested safe release and records the reason/upgrade issue. Being newest never outranks correctness, security, or recoverability.
+- PostgreSQL, Redis, and PgBouncer version choices remain governed by [COMPATIBILITY.md](COMPATIBILITY.md); PostgreSQL/PgBouncer lifecycle and optional capability changes additionally follow [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md).
 
 ## 6. Control-plane state
 
@@ -109,7 +123,7 @@ Long operations (clone, backup verification) create an operation record and run 
 
 Redgres connects using a dedicated ACL administrator loaded from a root-readable credential file. The browser never receives it. Adapter methods expose narrowly scoped behavior rather than a generic command API.
 
-Preset command sets are versioned in code. Redis version compatibility is tested in integration CI. Externally managed ACL users with unsupported patterns/categories are read-only or require an explicit adoption workflow; Redgres must not rewrite an ACL it cannot faithfully understand.
+Preset command sets are versioned in code and tested against every supported Redis series. Externally managed ACL users with unsupported patterns/categories are read-only or require an explicit adoption workflow; Redgres must not rewrite an ACL it cannot faithfully understand.
 
 ## 9. Credential lifecycle
 
@@ -131,8 +145,8 @@ Configuration loads from flags/environment plus root-protected credential files.
 Recommended prefixes:
 
 - `REDGRES_*` — service/base URL/state/session/log settings.
-- `REDGRES_POSTGRES_*` — administrative DSN components, public host/ports, protected databases.
-- `REDGRES_REDIS_*` — administrator URL file, public host/port, supported version policy.
+- `REDGRES_POSTGRES_*` — administrative DSN components, public host/ports, protected databases, optional expected-major identity guard.
+- `REDGRES_REDIS_*` — administrator URL file, public host/port, optional expected-series identity guard.
 - `REDGRES_FEATURE_*` — destructive action gates.
 
 Secrets should be passed as file paths where practical, never command-line values visible in process listings.

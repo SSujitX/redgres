@@ -42,6 +42,19 @@ This runbook defines operator intent. Exact commands must be generated/validated
 8. Monitor logs/audit/latency/errors through observation window.
 9. Retain prior compatible release.
 
+PostgreSQL/PgBouncer/extension packages are not part of an ordinary Redgres application update. Apply those only through a separately approved plan from [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md), with exact package and extension release notes, database backups, preload/config diff, capacity review, maintenance window and restore evidence.
+
+## PostgreSQL capability change
+
+1. Run the read-only `postgres-plan` command and confirm cluster/system identity did not change.
+2. Review exact package source/version, named databases, extension owner/schema/version, preload merge, restart requirement, capacity and backup evidence.
+3. Reject plans that mention unrequested databases, `template1`, arbitrary packages/SQL, extension upgrades/drops or an implicit PostgreSQL major upgrade.
+4. If restart is required, approve a maintenance window and PgBouncer drain/pause; do not rely on application rollback to undo it.
+5. Apply with the reviewed plan digest, verify direct PostgreSQL first, then PgBouncer and representative pooled clients.
+6. Verify every named database and capability smoke query, capture the redacted report and rerun the plan to prove convergence.
+
+Running pg_repack, creating TimescaleDB hypertables/jobs, configuring pg_partman/pg_cron jobs, or broadening pgAudit classes are separate operational/database changes after installation; package/extension availability does not authorize those actions.
+
 ## Application rollback
 
 1. Confirm failure is application/configuration related, not data corruption or external dependency failure.

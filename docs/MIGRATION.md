@@ -18,11 +18,13 @@ Gate: source tests pass and compatibility fixtures are immutable.
 
 ## Phase 1 — stabilize current production topology
 
-- Deploy/verify PostgreSQL 17 + PgBouncer host-native.
-- Deploy/verify Redis 8 with persistent Docker volumes and TLS/ACL.
+- Detect the existing PostgreSQL/Redis/PgBouncer versions and verify that they are in [COMPATIBILITY.md](COMPATIBILITY.md); do not upgrade a service implicitly.
+- Inventory existing PostgreSQL packages, available/installed extensions per database, preload libraries and restart constraints. Use `preserve` policy unless an operator approves a plan under [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md).
+- Deploy/verify the selected supported PostgreSQL + PgBouncer host-native and Redis with persistent Docker volumes and TLS/ACL.
 - Keep FastAPI on loopback 6969 and Redact on loopback 8787.
 - Publish legacy browser hosts through Cloudflare Tunnel + Access.
 - Complete PostgreSQL, Redis, and SQLite/runtime backup procedures and one isolated restore.
+- Rehearse PostgreSQL and PgBouncer existing/fresh paths independently and prove that extension package/preload/per-database state can be restored from the release manifest.
 
 Gate: current system is recoverable before unification starts.
 

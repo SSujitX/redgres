@@ -22,6 +22,8 @@ Every delegated context packet must include:
 
 Editing agents must use isolated Git worktrees/branches. Read-only analysis agents may share the checkout. Never allow two writers to own the same files, migration numbers, API schemas, or dependency manifests. The parent reviews and integrates branches in dependency order, reruns complete tests, then invokes `redgres-security-reviewer` and `redgres-verifier` independently.
 
+Use `redgres-implementer` for bounded writing packets. Subagents start with clean context and do not know the parent conversation; committed documentation plus the explicit context packet is the shared context. Require each implementer to update its owned canonical docs and traceability evidence before handoff.
+
 Worktrees require a committed baseline. Do not start parallel editing from an unborn branch or a dirty uncommitted specification tree.
 
 Cloud agents cannot see uncommitted local sibling repositories unless they are explicitly made available. For legacy parity, use local multi-root agents or include committed characterization fixtures/specifications in Redgres.

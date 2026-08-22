@@ -23,7 +23,8 @@ A quick search is not legal clearance.
 - Complete canonical license text and SPDX headers where appropriate.
 - README with screenshots only after UI exists; never show real hosts/credentials/data.
 - CONTRIBUTING, SECURITY, Code of Conduct, issue/PR templates.
-- Release checksums, SBOM, changelog/release notes, supported-version matrix.
+- Release checksums, SBOM, changelog/release notes, and the maintained [supported-version matrix](COMPATIBILITY.md).
+- License files/notices for any bundled Manrope, IBM Plex Mono, icon, or other design assets; production must not depend on third-party font CDNs.
 - Architecture/security docs without live private infrastructure details.
 - Example deployment profile using `example.com`; keep OneLife-specific profile in a clearly marked example or private overlay if operational sensitivity requires it.
 
@@ -38,4 +39,5 @@ Do not publish real `.env`, SQLite/WAL files, binaries built from unknown source
 - Semantic Versioning after the first public release.
 - `0.x` while APIs, installer, and migration behavior remain unstable.
 - Release notes call out schema compatibility, migration, rollback constraints, Redis/PostgreSQL support, and security changes.
+- Application/tool dependencies use latest-stable-compatible-at-review selection with exact lockfile/manifest pins; automated update proposals require human/agent review and complete gates before merge.
 - Never promise stable API compatibility before a documented policy exists.

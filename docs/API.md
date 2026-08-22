@@ -37,8 +37,11 @@ Core error codes: `unauthorized`, `forbidden`, `csrf_invalid`, `rate_limited`, `
 | GET | `/api/v1/session` | Return owner identity, rotated CSRF, enabled capabilities/tool links |
 | GET | `/api/v1/healthz` | Liveness/state DB health, no auth secrets |
 | GET | `/api/v1/status` | Authenticated component status |
+| GET | `/api/v1/search?q=&limit=` | Authenticated bounded search over manageable resource metadata/navigation; no secrets or destructive execution |
 | GET | `/api/v1/audit?cursor=&limit=` | Paginated redacted audit history |
 | GET | `/api/v1/operations/{id}` | Long-operation state/result summary |
+
+Search requires a normalized minimum query length, a strict maximum length/limit, request cancellation/timeouts, and stable grouped result types. It returns only fields already safe for authenticated inventory views, excludes protected/hidden targets and credential material, rate-limits abusive use, and never accepts an action/command to execute. Documentation/navigation entries may be client-side; server resource results still enforce the same manageability policy as their source list endpoints.
 
 ## PostgreSQL endpoints
 

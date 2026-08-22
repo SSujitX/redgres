@@ -26,9 +26,12 @@ This is the target namespace; implementation must generate a machine-checked ref
 | `REDGRES_POSTGRES_PUBLIC_HOST` | Host placed in project URLs |
 | `REDGRES_POSTGRES_DIRECT_PORT` | Usually 5432 |
 | `REDGRES_POSTGRES_POOLED_PORT` | Usually 6432 |
+| `REDGRES_POSTGRES_EXPECTED_MAJOR` | Optional identity assertion (`17` or `18` initially); detected version remains authoritative |
 | `REDGRES_POSTGRES_PROTECTED_DATABASES` | Additional comma-separated deny set |
 | `REDGRES_POSTGRES_PROTECTED_ROLES` | Additional deny set |
 | `REDGRES_LEGACY_VAULT_SECRET_FILE` | Exact legacy KDF secret source |
+
+These are application connection settings, not authority to install PostgreSQL or change extensions. Installer-only lifecycle values such as `POSTGRES_MODE`, `POSTGRES_MAJOR`, `PGBOUNCER_MODE`, `POSTGRES_EXTENSION_POLICY`, and `POSTGRES_EXTENSION_PLAN_FILE` live in the protected install configuration and are validated under [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md). The application environment never accepts package names, repositories, arbitrary extension SQL or preload libraries.
 
 Never accept a full admin DSN on the CLI. If a DSN file is supported, parse/redact it and give it the same protection as a password.
 
@@ -40,9 +43,11 @@ Never accept a full admin DSN on the CLI. If a DSN file is supported, parse/reda
 | `REDGRES_REDIS_PUBLIC_HOST` | Host placed in project URLs |
 | `REDGRES_REDIS_PUBLIC_PORT` | Usually TLS 6380 |
 | `REDGRES_REDIS_ALLOW_PLAINTEXT` | False by default; true only for explicit loopback/private path |
-| `REDGRES_REDIS_SUPPORTED_MAJOR` | Compatibility guard, initially 8 |
+| `REDGRES_REDIS_EXPECTED_SERIES` | Optional identity assertion (`8.2` or `8.8` initially); detected version remains authoritative |
 
 Plain `redis://` to non-loopback is rejected unless the explicit private-path override is true. Public generated URLs use `rediss://`.
+
+Supported service versions are defined by the Redgres release and [COMPATIBILITY.md](COMPATIBILITY.md), not by environment configuration. Expected-version settings detect connection to the wrong server; they cannot make an unsupported version supported. PostgreSQL is detected with `SHOW server_version_num`, Redis from `INFO server`, and PgBouncer with `SHOW VERSION`, followed by required capability checks.
 
 ## UI/tool links
 
@@ -65,6 +70,6 @@ Recommended precedence: explicit flags (non-secret) > process environment > opti
 
 ## Startup validation
 
-Production startup fails for default/empty admin values, non-loopback UI bind, insecure base URL, insecure remote Redis, unavailable secret files, permissive secret modes, impossible session durations, duplicate public endpoints, missing vault secret when legacy data exists, or invalid protected lists.
+Production startup fails for default/empty admin values, non-loopback UI bind, insecure base URL, insecure remote Redis, unavailable secret files, permissive secret modes, impossible session durations, duplicate public endpoints, missing vault secret when legacy data exists, invalid protected lists, unsupported detected service versions, expected-version mismatches, or missing required service capabilities.
 
 Validation errors identify the variable/path but never echo its value.

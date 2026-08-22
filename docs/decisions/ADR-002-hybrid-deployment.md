@@ -5,12 +5,12 @@ Date: 2026-08-23
 
 ## Context
 
-PostgreSQL is an existing stateful host service with PgBouncer and mature host backup/config procedures. Redis 8 has a clean Docker deployment model. Redgres/cloudflared need direct systemd lifecycle and protected host credentials.
+PostgreSQL may be an existing stateful host service with PgBouncer and mature host backup/config procedures or a fresh supported installation on a clean server. In either case, keeping PostgreSQL/PgBouncer host-native avoids an unnecessary data-layout/container migration. Supported Redis releases have a clean Docker deployment model. Redgres/cloudflared need direct systemd lifecycle and protected host credentials. Service-version selection is governed by [ADR-008](ADR-008-service-version-policy.md); PostgreSQL adoption/extensions/PgBouncer lifecycle is governed by [ADR-009](ADR-009-postgres-adoption-and-extensions.md).
 
 ## Decision
 
-- PostgreSQL 17 and PgBouncer remain host-native systemd services.
-- Redis 8 and optional RedisInsight run with Docker Compose and explicit persistent mounts.
+- The selected supported PostgreSQL release and PgBouncer remain host-native systemd services.
+- The selected supported Redis release and optional RedisInsight run with Docker Compose and explicit persistent mounts.
 - Redgres and cloudflared run as systemd services.
 - pgAdmin remains an optional separately managed loopback service.
 

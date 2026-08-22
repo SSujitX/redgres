@@ -37,7 +37,7 @@ Tagline: **One secure control plane for PostgreSQL and Redis.**
 - Multi-tenant public SaaS or untrusted customer self-service.
 - High-availability cluster orchestration, failover, sharding, or Kubernetes.
 - Arbitrary SQL execution or arbitrary Redis command execution.
-- PostgreSQL extension/package management.
+- Arbitrary browser-based PostgreSQL package/extension management. The installer may safely adopt/install the approved capabilities in [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md).
 - Redis key browsing/editing (use RedisInsight).
 - Replacing pgAdmin’s advanced administration features.
 - Billing, quotas, organizations, teams, or full RBAC in the first migration release.
@@ -48,7 +48,8 @@ Tagline: **One secure control plane for PostgreSQL and Redis.**
 - All source-system capabilities marked “must preserve” have passing parity tests.
 - Existing PostgreSQL vault records decrypt in Go without mutation.
 - Credential responses are one-time/no-store and absent from logs, audit, SQLite, and frontend persistence.
-- A fresh install and an existing-PostgreSQL install both pass automated verification.
+- Fresh selections and existing-service adoption pass the complete release-owned matrix in [COMPATIBILITY.md](COMPATIBILITY.md), including version/capability detection and exact artifact reporting.
+- Existing PostgreSQL adoption proves preserve-by-default behavior; every claimed optional PostgreSQL capability has exact package, named-database, restart and restore evidence under [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md).
 - PostgreSQL, Redis, and Redgres state can be restored into an isolated test host from documented backups.
 - Legacy apps can remain available during observation and can be restored by a binary/config rollback.
 - A new operator can understand topology, deploy, verify, back up, and recover using only this repository and explicitly supplied secrets.
