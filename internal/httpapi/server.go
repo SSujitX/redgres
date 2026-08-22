@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/SSujitX/redgres/internal/audit"
 	"github.com/SSujitX/redgres/internal/config"
 
 	"github.com/go-chi/chi/v5"
@@ -19,6 +20,7 @@ type Server struct {
 	db     *sql.DB
 	assets fs.FS
 	log    *slog.Logger
+	audit  audit.Store
 }
 
 func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger) *Server {
@@ -28,7 +30,7 @@ func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger) *Serv
 	if assets == nil {
 		assets = nopFS{}
 	}
-	return &Server{cfg: cfg, db: db, assets: assets, log: logger}
+	return &Server{cfg: cfg, db: db, assets: assets, log: logger, audit: audit.Store{DB: db}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -50,6 +52,9 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	r.Get("/api/v1/healthz", s.handleHealthz)
+	r.Post("/api/v1/auth/login", s.handleLogin)
+	r.With(s.requireSession, s.requireMutation).Post("/api/v1/auth/logout", s.handleLogout)
+	r.With(s.requireSession).Get("/api/v1/session", s.handleSession)
 	return r
 }
 

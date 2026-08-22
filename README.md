@@ -101,6 +101,6 @@ The name had no obvious exact software-project collision in a quick web search, 
 
 ## Current status
 
-Status: **Wave 0 foundation**. A compiling Go/React skeleton exists (`cmd/redgres`, SQLite migrations, `GET /api/v1/healthz`, embedded boot document, CI workflow). Owner auth, PostgreSQL, Redis, and installer behavior are not implemented.
+Status: **Wave 0 foundation plus owner auth**. A compiling Go/React skeleton exists (`cmd/redgres`, SQLite migrations, `GET /api/v1/healthz`, `create-owner`, `/api/v1/auth/login|logout`, `/api/v1/session`, embedded boot document, CI workflow). PostgreSQL, Redis, installer, and the browser login shell are not implemented.
 
 No source code from either existing application has been copied into this repository. Do not decommission either application based only on these documents.

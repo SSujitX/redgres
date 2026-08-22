@@ -24,7 +24,7 @@ Cloudflare, the VPS provider, OS root, and backup administrator are privileged t
 | Credential theft from response/cache/history | POST-only reveal/issue, `no-store`, no-referrer, no URL secrets, frontend memory clearing, Access + app auth |
 | Session theft/fixation | 256-bit random opaque tokens, hash-at-rest, regenerate on login, idle+absolute expiry, Secure/HttpOnly/SameSite Strict, logout deletion |
 | CSRF | Same-origin Origin/Referer validation plus per-session CSRF token for all mutations |
-| Brute force | Argon2id, generic login errors, persistent username+IP throttling, Cloudflare Access/rate controls |
+| Brute force | Argon2id, generic login errors, persistent username+IP throttling (5 failures / 15m, exponential then 15m cap), Cloudflare Access/rate controls |
 | SQL injection/identifier confusion | Parameterized values, `pgx.Identifier`/quoted identifiers, strict normalized identifiers, no arbitrary SQL endpoint |
 | Redis privilege escalation | Dedicated ACL admin, protected users, one prefix, `-@all`, explicit command allow-list, no generic command API |
 | Destructive operator mistake | Disabled-by-default features, protected targets, typed confirmation, fresh reauth, exact impact, audit, pre-action backup policy |
@@ -47,6 +47,15 @@ Migration release has one owner role. Authorization remains capability-based int
 - `redis.read`, `redis.provision`, `redis.credentials`, `redis.destructive`
 
 The owner receives all capabilities. HTTP handlers ask the authorization service; they do not assume “authenticated means allowed.” Cloudflare identity is not automatically mapped to a Redgres role in v1.
+
+## 4.1 Owner password and bootstrap (implemented)
+
+- Owner bootstrap is CLI-only: `redgres create-owner --username NAME [--sqlite-path PATH] [--replace]`. There is no HTTP bootstrap route. An existing owner is not overwritten unless `--replace` is set.
+- Passwords are hashed with Argon2id (`golang.org/x/crypto/argon2` `IDKey`) using RFC 9106’s second option: time=3, memory=64 MiB, threads=4, 16-byte salt, 32-byte key. The stored value is the PHC string `$argon2id$v=19$m=65536,t=3,p=4$…` as UTF-8 bytes in `owners.password_hash`.
+- v1 password policy (NIST SP 800-63B-4 / OWASP, no MFA): at least 15 Unicode code points; reject empty/all-whitespace and passwords equal to the normalized username; reject bodies longer than 1024 bytes; no composition rules. There is no `REDGRES_MIN_PASSWORD_LENGTH` setting.
+- Session and CSRF tokens are 256-bit hex; SQLite stores SHA-256 only. Login deletes prior sessions for that owner.
+- Lockout is per normalized username + `RemoteAddr` host. Forwarded-for / `CF-Connecting-IP` headers are not trusted.
+- Login success and logout fail closed if the audit insert fails.
 
 ## 5. Protected resources
 

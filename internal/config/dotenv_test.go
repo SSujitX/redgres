@@ -152,6 +152,18 @@ func TestProductionFlagIgnoresDotEnv(t *testing.T) {
 	}
 }
 
+func TestLoadDevelopmentDotEnvCannotSelectProduction(t *testing.T) {
+	isolateConfig(t)
+	if err := os.WriteFile(".env", []byte("REDGRES_ENVIRONMENT=production\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := LoadDevelopmentDotEnv(nil); err == nil {
+		t.Fatal("expected production-via-dotenv error")
+	} else if !strings.Contains(err.Error(), "REDGRES_ENVIRONMENT") {
+		t.Fatalf("error %q", err)
+	}
+}
+
 func TestDotEnvCannotSelectProduction(t *testing.T) {
 	isolateConfig(t)
 	abs := filepath.Join(t.TempDir(), "redgres.db")

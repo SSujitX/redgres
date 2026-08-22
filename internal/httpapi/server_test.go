@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/database"
@@ -34,7 +35,12 @@ func testServer(t *testing.T, assets fstest.MapFS) (*Server, string) {
 	if assets == nil {
 		assets = fstest.MapFS{}
 	}
-	return New(config.Config{Address: "127.0.0.1:8790", BaseURL: "http://127.0.0.1:8790"}, db, assets, nil), path
+	return New(config.Config{
+		Address:            "127.0.0.1:8790",
+		BaseURL:            "http://127.0.0.1:8790",
+		SessionTTL:         12 * time.Hour,
+		AbsoluteSessionTTL: 24 * time.Hour,
+	}, db, assets, nil), path
 }
 
 func TestHealthzOK(t *testing.T) {

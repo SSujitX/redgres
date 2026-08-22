@@ -6,7 +6,7 @@ Repository-local engineering skills are vendored under `.agents/skills`. Read [.
 
 ## Current truth
 
-Redgres has a compiling Wave 0 foundation (`cmd/redgres`, SQLite migrations, `/api/v1/healthz`, embedded React boot document, and CI skeleton). No owner auth, PostgreSQL, Redis, or installer behavior is implemented. Target documentation is not evidence that those features exist.
+Redgres has a compiling Wave 0 foundation plus owner auth (`create-owner`, `/api/v1/auth/login|logout`, `/api/v1/session`, Argon2id, hashed sessions/CSRF, lockout, login/logout audit). No PostgreSQL, Redis, installer, or browser login shell is implemented. Target documentation is not evidence that those features exist.
 
 The two source systems are local sibling repositories:
 

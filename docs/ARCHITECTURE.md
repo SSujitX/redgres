@@ -61,7 +61,7 @@ Dependency direction is inward: transport depends on use cases; use cases depend
 - PostgreSQL: `github.com/jackc/pgx/v5` and `pgxpool` (not in Wave 0).
 - Redis: `github.com/redis/go-redis/v9` (not in Wave 0).
 - SQLite: `modernc.org/sqlite` `v1.57.0`.
-- Passwords: `golang.org/x/crypto/argon2` with encoded, versioned parameters.
+- Passwords: `golang.org/x/crypto` `v0.55.0` (`argon2.IDKey`, version `0x13`). Interactive owner bootstrap uses `golang.org/x/term` `v0.45.0`. Both are official `go.googlesource.com` modules; `openpgp` is not imported.
 - Fernet: a maintained Go implementation validated against Python `cryptography`, or a small audited compatibility package. Choice requires test vectors and dependency review.
 - Logging: standard `log/slog`, structured to journald with redaction.
 
@@ -95,7 +95,7 @@ Feature folders mirror API domains: `overview`, `postgres`, `redis-users`, `audi
 
 SQLite contains:
 
-- owner users and Argon2id hashes;
+- owner users and Argon2id PHC strings stored as UTF-8 bytes in `owners.password_hash`;
 - hashed session and CSRF tokens plus expirations;
 - login attempts;
 - redacted audit events;

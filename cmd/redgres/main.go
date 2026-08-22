@@ -19,9 +19,16 @@ import (
 
 func main() {
 	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "create-owner" {
+		if err := createOwner(args[1:]); err != nil {
+			os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(args) > 0 && (args[0] == "serve" || args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
 		if args[0] != "serve" {
-			os.Stderr.WriteString("usage: redgres [serve] [flags]\n")
+			os.Stderr.WriteString("usage: redgres [serve | create-owner] [flags]\n")
 			os.Exit(2)
 		}
 		args = args[1:]

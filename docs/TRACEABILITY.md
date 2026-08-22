@@ -4,7 +4,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
-| AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | TODO | Planned |
+| AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz` unit tests only; no `/status` or search | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | TODO | Planned |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | TODO | Planned |
@@ -59,4 +59,29 @@ Commands executed locally (2026-08-23):
   development serve → GET /api/v1/healthz 200 {"status":"ok","request_id":...} Cache-Control no-store
 Local commit: `912b5a431413e90eb8641d0a994a5e533286ad6d` on `master` (not pushed).
 Reviewer/date: UI reviewer approved Wave 0 scaffolding only (2026-08-23). Security review found no Critical; H1 (production flag still read .env) and H2 (SQLite umask) plus M1–M3 and L1–L6 were corrected in this change (`TestProductionFlagIgnoresDotEnv`, `.env.*` gitignore, 0700/0600 state files). Verifier approved merge to master (2026-08-23) with conditions: exclude `.env.local` (now ignored by `.env.*`); treat race, linux cross-compile, Node 24.19.0, gitleaks, and govulncheck as unproven until the first CI run. Verifier residual that `-environment production` still loads `.env` was stale relative to the post-security-review tree. No functional PRD ID is complete.
+```
+
+## Owner auth (2026-08-23)
+
+```text
+Requirement: AUTH-001..005; PLAT-002 (owner.login / owner.logout only)
+Decision/ADR: ADR-001, ADR-005 hash-encoding amendment
+Source characterization: redis-ui create-owner / internal/auth / login-logout-session; not copied. 15-code-point policy from NIST SP 800-63B-4 and OWASP Authentication Cheat Sheet (no MFA). Argon2id API from golang.org/x/crypto@v0.55.0 argon2.go (RFC 9106 second option).
+Implementation files: cmd/redgres/{main,create_owner}.go; internal/auth/{password,owner,session,security}.go;
+ internal/audit/audit.go; internal/httpapi/{auth_routes,json}.go; internal/config LoadDevelopmentDotEnv
+Unit tests: internal/auth/*_test.go; internal/audit/audit_test.go; internal/httpapi/auth_routes_test.go;
+ cmd/redgres/create_owner_test.go
+Integration tests: none
+Security tests: hash-at-rest, generic login errors, canary audit redaction, origin/CSRF, no --password flag
+Deployment/migration impact: none deployed. 001_initial.sql unchanged (PHC bytes in existing BLOB).
+Known limitations: AUTH-006 not implemented; no login UI; first lockout is 1s (inherited redis-ui);
+ RemoteAddr-only IP (tunnel clients may share 127.0.0.1); no pwned-password corpus;
+ go test -race / CI / Node 24.19.0 still unproven
+Commands executed locally (2026-08-23):
+  go list -m golang.org/x/crypto golang.org/x/term → v0.55.0 / v0.45.0 (proxy.golang.org @latest)
+  go test -count=1 ./... → ok (cmd/redgres, audit, auth, config, database, httpapi, web)
+  go vet ./... → no findings
+  gofmt -l cmd internal migrations → empty
+  go build -o NUL ./cmd/redgres → success
+Reviewer/date: Security review (2026-08-23) found no Critical/High. M1/L1/L2 corrected. Independent verifier started after those corrections.
 ```

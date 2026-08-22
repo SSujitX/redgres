@@ -39,6 +39,36 @@ Core error codes: `unauthorized`, `forbidden`, `csrf_invalid`, `rate_limited`, `
 | POST | `/api/v1/auth/login` | Authenticate owner and issue session + CSRF |
 | POST | `/api/v1/auth/logout` | Delete session |
 | GET | `/api/v1/session` | Return owner identity, rotated CSRF, enabled capabilities/tool links |
+
+Session cookie name: `redgres_session` (opaque 64-hex token, `Path=/`, `HttpOnly`, `SameSite=Strict`, `Secure` from `REDGRES_COOKIE_SECURE`). Mutations send `X-CSRF-Token`. There is no HTTP bootstrap route.
+
+**POST `/api/v1/auth/login`** requires a matching `Origin` or `Referer` (no CSRF header). Body: `{"username":"admin","password":"…"}`. Unknown fields are rejected. Success `200`:
+
+```json
+{"owner":{"username":"admin"},"csrf_token":"<64 hex>","request_id":"<32 hex>"}
+```
+
+Generic failure is `401` `unauthorized` with message `Invalid username or password.` Lockout is `429` `rate_limited` plus `Retry-After`. Bad origin is `403` `csrf_invalid`.
+
+**POST `/api/v1/auth/logout`** requires session + origin + CSRF. Success `200`: `{"ok":true,"request_id":"…"}` and clears the cookie (`MaxAge=-1`).
+
+**GET `/api/v1/session`** requires a session cookie and does not require CSRF. It rotates the CSRF token. Success `200`:
+
+```json
+{
+  "owner": {"username": "admin"},
+  "csrf_token": "<rotated 64 hex>",
+  "capabilities": [
+    "platform.read", "audit.read",
+    "postgres.read", "postgres.provision", "postgres.credentials", "postgres.destructive",
+    "redis.read", "redis.provision", "redis.credentials", "redis.destructive"
+  ],
+  "tool_links": {},
+  "request_id": "…"
+}
+```
+
+`tool_links` stays empty until optional tool-link configuration exists.
 | GET | `/api/v1/healthz` | Liveness/state DB health, no auth secrets |
 | GET | `/api/v1/status` | Authenticated component status |
 | GET | `/api/v1/search?q=&limit=` | Authenticated bounded search over manageable resource metadata/navigation; no secrets or destructive execution |

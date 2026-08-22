@@ -25,6 +25,15 @@ Use hand-rolled, embedded, ordered `.sql` files. Do not add a third-party migrat
 
 `operations` remains a later numbered file; its columns depend on the long-operation state machine.
 
+## Hash encoding (2026-08-23 amendment)
+
+`001_initial.sql` uses BLOB for `password_hash`, `token_hash`, and `csrf_hash`. Those columns store:
+
+- `password_hash`: UTF-8 bytes of the Argon2id PHC string (`$argon2id$v=19$m=65536,t=3,p=4$…`), not the raw `IDKey` output.
+- `token_hash` / `csrf_hash`: raw 32-byte SHA-256 of the hex token string shown to the browser.
+
+Do not migrate these to TEXT unless a later numbered file is required after the first tag.
+
 ## Consequences
 
 - Simple single-binary deployment and no circular dependency on managed PostgreSQL.

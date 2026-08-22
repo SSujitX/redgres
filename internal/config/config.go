@@ -99,6 +99,20 @@ func Load(args []string) (Config, error) {
 	return cfg, nil
 }
 
+func LoadDevelopmentDotEnv(args []string) error {
+	if environmentFromFlagsAndEnv(args) == EnvironmentProduction {
+		return nil
+	}
+	applied, err := loadDotEnvFile(dotenvDefaultPath)
+	if err != nil {
+		return err
+	}
+	if applied && normalizeEnvironment(os.Getenv("REDGRES_ENVIRONMENT")) == EnvironmentProduction {
+		return errors.New("REDGRES_ENVIRONMENT: production cannot be selected from a dotenv file")
+	}
+	return nil
+}
+
 func environmentFromFlagsAndEnv(args []string) string {
 	env := normalizeEnvironment(os.Getenv("REDGRES_ENVIRONMENT"))
 	for i := 0; i < len(args); i++ {
