@@ -57,5 +57,6 @@ Commands executed locally (2026-08-23):
   web: npm run test:run → 3 passed; npm run build → TypeScript 7.0.2 + Vite 8.2.2
   production serve with development defaults → exit 1, "REDGRES_BASE_URL: production origin must use https"
   development serve → GET /api/v1/healthz 200 {"status":"ok","request_id":...} Cache-Control no-store
+Local commit: `912b5a431413e90eb8641d0a994a5e533286ad6d` on `master` (not pushed).
 Reviewer/date: UI reviewer approved Wave 0 scaffolding only (2026-08-23). Security review found no Critical; H1 (production flag still read .env) and H2 (SQLite umask) plus M1–M3 and L1–L6 were corrected in this change (`TestProductionFlagIgnoresDotEnv`, `.env.*` gitignore, 0700/0600 state files). Verifier approved merge to master (2026-08-23) with conditions: exclude `.env.local` (now ignored by `.env.*`); treat race, linux cross-compile, Node 24.19.0, gitleaks, and govulncheck as unproven until the first CI run. Verifier residual that `-environment production` still loads `.env` was stale relative to the post-security-review tree. No functional PRD ID is complete.
 ```

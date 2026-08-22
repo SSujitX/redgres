@@ -4,7 +4,7 @@ This file pins the exact source revisions used for Redgres parity work. Fill it 
 
 | System | Local path | Git remote | Commit | Working tree | Recorded at |
 |---|---|---|---|---|---|
-| Redgres | `D:\code\github\Redgres` | `https://github.com/SSujitX/redgres.git` | `553f1568b3a803e2aafb9897691705c472492ff0` specification baseline; Wave 0 implementation is on `master` after that commit | Wave 0 implemented locally; SHA recorded in the Wave 0 commit | 2026-08-23 |
+| Redgres | `D:\code\github\Redgres` | `https://github.com/SSujitX/redgres.git` | `912b5a431413e90eb8641d0a994a5e533286ad6d` Wave 0 foundation (`553f156` specification baseline) | Wave 0 implemented; AUTH/PG/REDIS/OPS not started | 2026-08-23 |
 | PostgreSQL console | `D:\code\github\database-app` | `https://github.com/onelifeproject/database-app` | `1c3e8e2fe77345e6a40955a22a28b7bafe6fc4ad` | Clean when recorded | 2026-08-23 |
 | Redis console | `D:\code\github\redis-ui` | No `.git` directory observed during initial review | Establish/import provenance | Runtime artifacts present; source baseline not yet immutable | 2026-08-23 |
 
