@@ -1,0 +1,18 @@
+---
+description: React frontend, credential UX, accessibility, and API-consumption rules.
+globs: "web/**/*.ts,web/**/*.tsx,web/**/*.css,web/package.json,web/package-lock.json,web/vite.config.*"
+alwaysApply: false
+---
+
+# Frontend rule
+
+Read `docs/UX.md`, `docs/API.md`, `docs/PRD.md`, `docs/SECURITY.md`, and `docs/DATA_AND_SECRETS.md` before editing.
+
+- Use React 19, TypeScript, Vite, Tailwind, TanStack Query, and accessible Radix primitives as specified.
+- Keep server state in TanStack Query and sensitive response state local/ephemeral.
+- Never put credentials or full credential URLs in URLs, logs, analytics, localStorage, sessionStorage, IndexedDB, global stores, snapshots, or error reporting.
+- Clear credential state on dismissal, logout, route/target change, and session expiry.
+- Use exact PostgreSQL versus Redis language from `CONTEXT.md`.
+- Preserve keyboard navigation, focus restoration, labels, announcements, reduced motion, and non-color status signals.
+- UI confirmation is not authorization; the server must repeat all protected/destructive checks.
+- Add tests for loading, degraded, error, session expiry, credential clearing, and accessibility behavior.

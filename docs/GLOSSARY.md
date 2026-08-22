@@ -1,0 +1,23 @@
+# Glossary
+
+- **Control plane** — Redgres administration interface and state; not the application data path.
+- **Data plane** — PostgreSQL/Redis traffic used by applications.
+- **Direct PostgreSQL** — client connection to PostgreSQL on 5432.
+- **Pooled PostgreSQL** — client connection through PgBouncer on 6432.
+- **Project role/user** — least-privilege PostgreSQL login associated with a project database.
+- **Redis ACL user** — Redis identity with password hashes, command permissions, and key patterns.
+- **Preset** — versioned explicit Redis command list for a supported workload.
+- **Protected resource** — database, role, or Redis user Redgres must never mutate through ordinary workflows.
+- **Vault** — legacy `database_console_vault` PostgreSQL database holding Fernet-encrypted project passwords.
+- **Legacy secret** — Python `SESSION_SECRET` used to derive the vault Fernet key.
+- **Control-state DB** — Redgres SQLite database containing auth/session/audit/operation state, never project credentials.
+- **Cloudflare Tunnel** — outbound connector publishing loopback HTTP services to Cloudflare hostnames.
+- **Cloudflare Access** — identity/access policy in front of browser applications.
+- **DNS-only** — Cloudflare DNS record that resolves directly to the server; traffic is not HTTP-proxied by Cloudflare.
+- **One-time credential** — secret returned on create/rotate and not persistently recoverable from Redgres (Redis).
+- **Revealable credential** — PostgreSQL project secret intentionally encrypted in the vault and returned only by explicit reveal.
+- **RPO** — maximum accepted data loss measured in time.
+- **RTO** — target time to restore service.
+- **Parity** — required source behavior reproduced and proven by tests, not similarity of UI/code.
+- **Cutover** — moving operator traffic to Redgres after gates pass.
+- **Observation window** — period after cutover when legacy fallback remains and production evidence is collected.

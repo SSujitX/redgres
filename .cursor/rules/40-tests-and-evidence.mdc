@@ -1,0 +1,17 @@
+---
+description: Testing and traceability rules for Go, React, integration, deployment, and security evidence.
+globs: "**/*_test.go,web/**/*.test.ts,web/**/*.test.tsx,integration/**,tests/**,.github/workflows/**,docs/TRACEABILITY.md"
+alwaysApply: false
+---
+
+# Tests and evidence rule
+
+Read `docs/TESTING.md`, the relevant PRD acceptance criteria, and `docs/TRACEABILITY.md`.
+
+- Test externally observable behavior at the highest stable seam; avoid implementation-coupled tests.
+- Use red-green-refactor for new behavior and regression tests for defects.
+- Destructive integration tests target only ephemeral allow-listed resources with unique test names.
+- Real-service behavior requires PostgreSQL 17 and/or Redis 8 integration evidence.
+- Security-sensitive changes require canary-secret tests covering HTTP, logs, audit, SQLite, and frontend persistence.
+- Do not weaken or delete a test to make a change pass unless the requirement itself changed and documentation/ADR explains why.
+- Record reproducible implementation and test evidence in `docs/TRACEABILITY.md`; state anything not run.

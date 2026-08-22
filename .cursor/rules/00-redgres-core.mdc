@@ -1,0 +1,24 @@
+---
+description: Core Redgres project context, safety boundaries, and document-routing requirements.
+alwaysApply: true
+---
+
+# Redgres core rule
+
+Before planning or changing files:
+
+1. Read `AGENTS.md` completely.
+2. Read `CONTEXT.md`, `docs/INDEX.md`, and `docs/PROJECT_CHARTER.md`.
+3. Inspect `git status` and preserve unrelated/user changes.
+4. Identify the PRD requirement IDs and accepted ADRs governing the task.
+5. State whether the work is specification, implementation, migration, or live operations. Documentation marked target is not implementation evidence.
+
+Read only the task-relevant documents routed by `docs/INDEX.md`; do not load all documentation blindly. Update `docs/TRACEABILITY.md` when implementation/test evidence lands.
+
+The sibling repositories `../database-app` and `../redis-ui` are read-only behavioral references. Never edit, clean, move, commit, or execute destructive tests against them. Never copy their `.env`, runtime SQLite/WAL files, binaries, certificates, credentials, or generated artifacts. Pin/verify source behavior against `docs/SOURCE_BASELINE.md`.
+
+Redgres application code belongs only in this repository. Follow `docs/REPOSITORY_STRUCTURE.md`. Never claim a feature is complete merely because its target documentation exists.
+
+Before coding a feature, define its external test seam and acceptance criteria. Prefer one bounded vertical slice. Run focused tests during development and the required complete checks before handoff.
+
+Never push, merge, change production, rotate credentials, modify DNS/Cloudflare, or retire a legacy service without explicit user authorization. Commits are allowed only when requested by the parent task; editing subagents commit only to their isolated branches.

@@ -1,0 +1,18 @@
+---
+description: Deployment, installer, Cloudflare, networking, backup, release, and operations safeguards.
+globs: "deploy/**,.github/workflows/**,Dockerfile,compose*.yml,compose*.yaml,*.service,*.timer,*.sh"
+alwaysApply: false
+---
+
+# Deployment and operations rule
+
+Read `docs/DEPLOYMENT.md`, `docs/INSTALLER_SPEC.md`, `docs/DOMAIN_AND_NETWORK.md`, `docs/BACKUP_RECOVERY.md`, `docs/OPERATIONS.md`, `docs/SECURITY.md`, and ADR-002/ADR-003/ADR-007.
+
+- Treat all host details as provisional until observed on the live VPS.
+- Browser origins bind loopback and use Cloudflare Tunnel + Access. Raw PostgreSQL/Redis use DNS-only native TLS endpoints.
+- Separate tunnel and Certbot DNS tokens. Never print/source secrets or pass them in process arguments.
+- Existing-PostgreSQL mode must preserve cluster identity/data and require backup evidence. Never silently initialize, overwrite, purge, or move existing data.
+- Redis backup uses successful BGSAVE/LASTSAVE verification plus consistent AOF/ACL capture. SQLite backup uses its online backup mechanism.
+- Application rollback never reverses data, schema, credentials, Redis state, or DNS automatically.
+- Scripts are idempotent, strict, shellchecked, path-safe, and testable. Do not download-and-pipe executable scripts.
+- Do not execute live infrastructure changes unless the user explicitly authorizes that environment and exact operation.

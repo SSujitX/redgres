@@ -1,0 +1,83 @@
+# Backup and recovery specification
+
+A successful backup command is not proof of recoverability. Redgres backup sets require consistency, checksums, retention, off-host copies, and restore evidence.
+
+## 1. Recovery objectives
+
+Initial targets, to be adjusted after business review:
+
+- PostgreSQL RPO: 24 hours for logical backups; lower RPO requires WAL archiving/PITR as a separate design.
+- Redis RPO: persistence-policy dependent; target at most 24 hours for backup copies, with AOF/RDB durability documented.
+- Redgres SQLite RPO: 24 hours plus audit-loss acceptance; consider more frequent snapshots.
+- RTO: 4 hours for a single-server rebuild after infrastructure is available.
+
+Do not claim PITR or near-zero RPO unless WAL/AOF handling and restore drills prove it.
+
+## 2. Backup set
+
+One timestamped manifest links:
+
+- PostgreSQL globals (`pg_dumpall --globals-only`) and per-database custom-format dumps, including `database_console_vault`.
+- PostgreSQL version, cluster system identifier, extensions, config checksums, role/database inventory, and dump tool version.
+- Redis verified RDB snapshot, AOF directory/files when enabled, ACL file (`users.acl`) and sanitized configuration metadata.
+- Consistent Redgres SQLite backup using SQLite online backup API or `.backup`, followed by integrity check.
+- Redgres version/release metadata and non-secret configuration checksums.
+- Cloudflare/DNS/TLS reconstruction notes or exported non-secret identifiers; secrets are backed up separately under an approved secret-management process.
+- SHA-256 checksum and size for every artifact.
+
+## 3. PostgreSQL procedure
+
+1. Confirm server and `pg_dump` major compatibility.
+2. Capture globals.
+3. Enumerate intended databases from the server, not shell-parsed untrusted output.
+4. Dump each database in custom format with failure-on-error behavior and restrictive umask.
+5. Run `pg_restore --list` for structural readability and checksum all files.
+6. Copy encrypted/off-host.
+7. Periodically restore into a clean PostgreSQL 17 test cluster and run logical validation.
+
+For larger/stricter RPO deployments, add base backups and WAL archiving through an ADR; logical dumps alone are not PITR.
+
+## 4. Redis atomic capture
+
+Never copy an actively changing live RDB/AOF directory blindly.
+
+1. Record `LASTSAVE`, persistence configuration, AOF state, data directory, and ACL file location.
+2. Trigger `BGSAVE` through a backup identity allowed only the required persistence/status commands.
+3. Poll persistence status and require successful completion plus an advanced `LASTSAVE`; fail on `rdb_last_bgsave_status != ok`.
+4. Copy the completed RDB to a staging directory on the same filesystem where possible, then checksum.
+5. If AOF is enabled, use Redis-supported safe AOF backup procedure for the installed version; capture the complete manifest/multipart AOF set consistently.
+6. Copy `users.acl` and required sanitized config with permissions preserved.
+7. Restore into an isolated Redis 8 instance; verify load, key count/sample, ACL users/rules, and representative auth.
+
+The exact AOF procedure must be validated against the deployed Redis version because Redis 7/8 multipart AOF layouts differ from legacy single-file assumptions.
+
+## 5. SQLite capture
+
+- Use SQLite online backup API while the app runs, or stop Redgres cleanly and copy DB plus any required WAL state.
+- Prefer online backup into a standalone database, then run `PRAGMA integrity_check` on the copy.
+- Copying only `redgres.db` while WAL mode is active is not a valid general backup procedure.
+- Confirm owner/session/audit/operation table counts within expected ranges after restore. Sessions may be intentionally invalidated during disaster recovery.
+
+## 6. Storage and retention
+
+- Local staging: `/var/backups/redgres`, `root:root 0700`, separate capacity monitoring.
+- Off-host: encrypted at rest and in transit, with credentials not stored inside the same backup set.
+- Example retention: 7 daily, 4 weekly, 12 monthly; business/legal requirements override.
+- Do not delete the last known-good backup until a newer restore is verified.
+- Backup pruning targets only manifest-owned paths and is tested against path traversal/broad deletion.
+
+## 7. Restore order
+
+1. Provision isolated host/network; do not restore over production first.
+2. Install exact compatible PostgreSQL/Redis/Redgres versions.
+3. Verify manifest/signatures/checksums.
+4. Restore PostgreSQL globals then databases; validate vault access using protected legacy secret.
+5. Restore Redis data/AOF/ACL using the matching persistence configuration.
+6. Restore SQLite; invalidate sessions if security policy requires.
+7. Restore non-secret configuration and inject secrets through approved mechanism.
+8. Run complete verification and application smoke tests.
+9. For production recovery, change DNS/firewall only after approval and final backup/evidence capture.
+
+## 8. Required restore evidence
+
+Each drill records date, backup manifest, isolated target, commands/tool versions, duration, checksums, database counts, Redis key/ACL checks, vault fixture reveal, Redgres login/audit check, failures, and approver. A backup status UI must display last successful **backup** and last successful **restore test** separately.

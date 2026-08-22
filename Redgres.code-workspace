@@ -1,0 +1,33 @@
+{
+  "folders": [
+    {
+      "name": "Redgres",
+      "path": "."
+    },
+    {
+      "name": "Legacy PostgreSQL Console (read-only reference)",
+      "path": "../database-app"
+    },
+    {
+      "name": "Legacy Redis Console (read-only reference)",
+      "path": "../redis-ui"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/.pytest_cache": true,
+      "**/__pycache__": true,
+      "**/node_modules": true
+    },
+    "search.exclude": {
+      "**/.git": true,
+      "**/.venv": true,
+      "**/node_modules": true,
+      "**/dist": true,
+      "**/*.db": true,
+      "**/*.db-shm": true,
+      "**/*.db-wal": true,
+      "**/*.exe": true
+    }
+  }
+}

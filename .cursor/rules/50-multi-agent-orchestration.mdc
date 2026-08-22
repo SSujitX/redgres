@@ -1,0 +1,27 @@
+---
+description: Apply when a Redgres task requests multiple agents, multitasking, worktrees, or work decomposition.
+alwaysApply: false
+---
+
+# Multi-agent orchestration rule
+
+Use a lead parent agent. Before spawning writers, invoke `redgres-planner` to identify dependencies, shared files, test seams, and merge order.
+
+Start with at most three concurrent subagents. Parallelize only work with non-overlapping ownership and explicit contracts. Foundation changes to module files, entry points, migrations, shared API types, or frontend bootstrap run sequentially first.
+
+Every delegated context packet must include:
+
+- objective and explicit non-goals;
+- PRD requirement IDs and acceptance criteria;
+- documents and ADRs to read;
+- allowed files/directories and forbidden files;
+- legacy source paths/functions to inspect, if any;
+- tests/commands required;
+- secret/destructive restrictions;
+- expected output, commit behavior, and handoff format.
+
+Editing agents must use isolated Git worktrees/branches. Read-only analysis agents may share the checkout. Never allow two writers to own the same files, migration numbers, API schemas, or dependency manifests. The parent reviews and integrates branches in dependency order, reruns complete tests, then invokes `redgres-security-reviewer` and `redgres-verifier` independently.
+
+Worktrees require a committed baseline. Do not start parallel editing from an unborn branch or a dirty uncommitted specification tree.
+
+Cloud agents cannot see uncommitted local sibling repositories unless they are explicitly made available. For legacy parity, use local multi-root agents or include committed characterization fixtures/specifications in Redgres.

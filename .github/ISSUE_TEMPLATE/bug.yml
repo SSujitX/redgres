@@ -1,0 +1,31 @@
+name: Bug report
+description: Report reproducible incorrect behavior without secrets
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Actual and expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Safe reproduction
+      description: Remove credentials, connection URLs, tokens, private data, and production identifiers.
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: Redgres/PostgreSQL/Redis versions and deployment mode
+    validations:
+      required: true
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This is not a vulnerability report; vulnerabilities will be reported privately per SECURITY.md.
+          required: true

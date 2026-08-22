@@ -1,0 +1,26 @@
+# Build outputs
+/redgres
+/redgres.exe
+/dist/
+/coverage/
+
+# Frontend
+/web/node_modules/
+/web/dist/
+
+# Runtime state and secrets
+*.db
+*.db-shm
+*.db-wal
+*.env
+!.env.example
+*.pem
+*.key
+/secrets/
+/backups/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

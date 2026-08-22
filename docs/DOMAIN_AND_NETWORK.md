@@ -1,0 +1,72 @@
+# Domain and network plan
+
+## Canonical names
+
+| Hostname | Purpose | Origin/port | Cloudflare mode | Final disposition |
+|---|---|---|---|---|
+| `console.onelifeltd.xyz` | Redgres Console | `127.0.0.1:8790` during migration; selected final loopback port | Tunnel + Access | Primary UI |
+| `database.onelifeltd.xyz` | Legacy FastAPI PostgreSQL console | `127.0.0.1:6969` | Tunnel + Access | Retire after observation |
+| `redis-admin.onelifeltd.xyz` | Legacy Redact ACL console | `127.0.0.1:8787` | Tunnel + Access | Retire after observation |
+| `pgadmin.onelifeltd.xyz` | Optional pgAdmin | loopback Apache/container port | Tunnel + Access | Expert tool |
+| `redis-insight.onelifeltd.xyz` | Optional RedisInsight | `127.0.0.1:5540` | Tunnel + Access | Data explorer |
+| `db.onelifeltd.xyz` | PostgreSQL direct and pooled client endpoint | public `5432`, `6432` | DNS-only | Permanent raw DB endpoint |
+| `rs.onelifeltd.xyz` | Redis TLS client endpoint | public `6380` | DNS-only | Permanent raw DB endpoint |
+
+`redis-admin` always means ACL user administration. `redis-insight` always means RedisInsight. Do not reuse `redis.onelifeltd.xyz`; if it already exists, redirect/retire it deliberately to remove ambiguity.
+
+## Traffic rules
+
+### Browser applications
+
+- Bind origins to `127.0.0.1` only.
+- Publish through one remotely managed Cloudflare Tunnel with multiple hostname-to-service routes.
+- Require Cloudflare Access policies for every administration hostname.
+- Keep application authentication even behind Access; Cloudflare is an outer control, not the only login.
+- Trust forwarding headers only from the local tunnel path/configured proxy, never arbitrary internet clients.
+
+### PostgreSQL
+
+- PostgreSQL must listen on an externally reachable or private network interface if remote applications connect directly; it cannot be loopback-only in that topology.
+- Require TLS and SCRAM in `pg_hba.conf`; reject non-TLS remote connections explicitly.
+- Restrict source IPs in UFW/security-group rules whenever application egress IPs are stable.
+- `5432` is direct and required for migrations, session features, and administrative workloads.
+- `6432` is PgBouncer, normally transaction pooling for application traffic. Document client limitations.
+- Redgres administrative connections use 5432, not PgBouncer.
+
+### Redis
+
+- Local plaintext Redis may remain bound only to loopback/container network for trusted local services.
+- Public `6380` is TLS + Redis ACL only; no anonymous/default-user access.
+- Restrict source IPs when possible. Redis ACLs do not replace firewalling or TLS.
+- Redgres uses a dedicated Redis ACL administrator with only the commands needed to inspect status and manage ACL users.
+
+## Public inbound ports
+
+Expected public listeners:
+
+- `22/tcp` — SSH, source-restricted where possible; key authentication; no password/root login according to host policy.
+- `5432/tcp` — PostgreSQL direct TLS/SCRAM.
+- `6432/tcp` — PgBouncer TLS/SCRAM.
+- `6380/tcp` — Redis TLS/ACL.
+
+HTTP UI origin ports must not appear in public firewall allow rules or bind to `0.0.0.0`/`::`.
+
+## DNS/TLS ownership
+
+- Cloudflare Tunnel terminates public browser HTTPS; no Certbot certificate is needed for the tunneled UI origin.
+- Certbot DNS validation is for raw PostgreSQL and Redis service certificates.
+- Use separate least-privilege Cloudflare tokens for DNS certificate automation and tunnel execution.
+- Tunnel token is a bearer credential and must be rotated if exposed.
+- Certificate renewal deploy hooks must copy/set ownership to service-readable paths and reload only after configuration validation.
+
+## Naming for open-source deployments
+
+Documentation examples outside the OneLife profile use:
+
+- `console.example.com`
+- `db.example.com:5432/6432`
+- `redis.example.com:6380`
+- `pgadmin.example.com`
+- `redis-insight.example.com`
+
+The application must not hard-code `onelifeltd.xyz`; these values are deployment configuration.

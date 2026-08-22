@@ -1,0 +1,21 @@
+# Risk register
+
+| ID | Risk | Likelihood/impact | Mitigation | Exit evidence |
+|---|---|---|---|---|
+| R-001 | Legacy vault cannot decrypt in Go | Medium/Critical | Exact KDF/Fernet vectors, copied-record dry run, immutable secret backup | 100% sampled records decrypt read-only |
+| R-002 | PostgreSQL destructive policy targets system/shared data | Medium/Critical | Central protected policy, re-read, confirmations, integration/fault tests | Protected matrix passes with flags enabled |
+| R-003 | Redis custom commands grant escalation or break apps | Medium/High | Explicit versioned allow-list + representative workloads | Redis 8 integration suite |
+| R-004 | One owner/login increases blast radius | Medium/High | Access outer layer, Argon2id, server sessions, reauth, audit, future capabilities | Security test/review |
+| R-005 | Public raw DB ports attacked | High/High | TLS, SCRAM/ACL, source firewall, patching, monitoring | External negative/positive tests |
+| R-006 | Existing installer damages PostgreSQL | Low/Critical | Separate modes, cluster identity guard, backup gate, VM clone rehearsal | Existing-mode invariant test |
+| R-007 | Backup succeeds but restore fails | Medium/Critical | Checksums, complete RDB/AOF/ACL/SQLite procedure, isolated drills | Signed restore report |
+| R-008 | Release rollback incompatible with migrated SQLite | Medium/High | Schema compatibility metadata, expand/contract migrations | Upgrade/rollback suite |
+| R-009 | Runtime artifacts/secrets enter public Git | Medium/Critical | Ignore rules, provenance review, secret scanning, clean import | History/diff scan |
+| R-010 | Legacy and Redgres port/route conflict | Medium/Medium | Stage on 8790, route inventory, listener checks | Coexistence verification |
+| R-011 | Cross-store PostgreSQL password rotation leaves unknown secret | Medium/High | Operation state, retry/compensation, block concurrent rotation, incident path | Fault-injection tests |
+| R-012 | Externally managed Redis ACL rewritten incorrectly | Medium/High | Detect unrepresentable rules, read-only/adoption gate | Import/adoption tests |
+| R-013 | One-host resource contention harms databases | Medium/High | Live sizing, Redis maxmemory, PG tuning, resource limits, capacity alerts | Load/capacity report |
+| R-014 | Documentation diverges from code | High/Medium | Traceability, generated config/API refs, PR checks | CI/doc review evidence |
+| R-015 | Project name conflicts legally | Unknown/Medium | Formal availability/trademark check before launch | Recorded approval |
+
+Owners and due dates are assigned in the issue tracker when implementation begins. “Accepted” risks require explicit maintainer/operator approval, not silence.

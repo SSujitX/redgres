@@ -1,0 +1,20 @@
+---
+description: Go backend architecture and PostgreSQL/Redis implementation rules.
+globs: "cmd/**/*.go,internal/**/*.go,migrations/**/*.sql,integration/**/*.go,go.mod,go.sum"
+alwaysApply: false
+---
+
+# Go backend rule
+
+Read `docs/ARCHITECTURE.md`, `docs/API.md`, `docs/DATA_AND_SECRETS.md`, `docs/SECURITY.md`, `docs/TESTING.md`, and the relevant PRD/ADR sections before editing.
+
+- Preserve dependency direction: HTTP transport → use cases/interfaces → infrastructure adapters.
+- Only `postgresadmin` may administer PostgreSQL/vault. Only `redisadmin` may issue Redis commands. `database` owns SQLite control state only.
+- Use `pgx/v5`/`pgxpool`, direct parameterized SQL, quoted identifiers, typed domain errors, bounded contexts/timeouts, and direct port 5432 for administration.
+- Use `go-redis/v9` through narrow adapter methods. There is no generic Redis command API.
+- Never add an ORM, arbitrary SQL endpoint, or Redis deny-list-based custom permissions without replacing the governing ADR.
+- Every mutation produces a secret-safe audit event. Every credential-bearing response is POST-only and no-store.
+- Keep operations idempotent or define compensation/recovery state where PostgreSQL/vault or other stores cannot be atomic.
+- Add unit tests and PostgreSQL 17/Redis 8 integration tests appropriate to the behavior.
+
+When porting legacy behavior, read `docs/SOURCE_SYSTEMS.md` and the complete relevant source function, callers, frontend use, and tests in the sibling repository. Port behavior through Redgres interfaces; do not translate line by line.
