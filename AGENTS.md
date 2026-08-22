@@ -6,7 +6,7 @@ Repository-local engineering skills are vendored under `.agents/skills`. Read [.
 
 ## Current truth
 
-Redgres is in specification/pre-implementation status. Documentation describes the target and migration gates; it does not prove that a feature is implemented, deployed, or tested.
+Redgres has a compiling Wave 0 foundation (`cmd/redgres`, SQLite migrations, `/api/v1/healthz`, embedded React boot document, and CI skeleton). No owner auth, PostgreSQL, Redis, or installer behavior is implemented. Target documentation is not evidence that those features exist.
 
 The two source systems are local sibling repositories:
 

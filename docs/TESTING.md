@@ -80,17 +80,21 @@ go test ./...
 go test -race ./...
 go vet ./...
 go build ./cmd/redgres
-cd web && npm ci && npm test -- --run && npm run build
+cd web && npm ci && npm run test:run && npm run build
 ```
 
-Add formatter/linter, vulnerability, secret, SBOM, and shell checks in CI:
+`.github/workflows/ci.yml` is the authoritative command list. The `Makefile` and [CONTRIBUTING.md](../CONTRIBUTING.md) mirror it.
 
-- `gofmt`/`go vet` plus selected pinned linter.
-- `govulncheck`.
-- npm audit policy with reviewed exceptions.
-- Gitleaks or equivalent.
-- ShellCheck and Bats/VM tests for deployment scripts.
-- dependency/license/SBOM generation.
+Wave 0 CI jobs: `backend` (no npm; proves the embed placeholder), `cross-compile` (`linux/amd64` and `linux/arm64`, `CGO_ENABLED=0`), `frontend` (Node from `web/.nvmrc`, `npm audit --omit=dev --audit-level=high`), `embedded-build`, `secret-scan` (`gitleaks-action` v3.0.0), `vulnerability` (`govulncheck` v1.7.0).
+
+Deferred from Wave 0, with reasons:
+
+- Pinned Go linter: choosing one is a durable decision; `gofmt` + `go vet` is the current static gate.
+- SBOM and license checks: tied to a release artifact that does not exist yet.
+- ShellCheck / Bats: `deploy/` has no scripts yet.
+- Dev-dependency `npm audit` policy: Wave 0 audits production dependencies only.
+- Browser-level responsive automation: no shell exists to exercise.
+- `gitleaks-action` requires a `GITLEAKS_LICENSE` if the repository is transferred to a GitHub organization; fallback is the pinned gitleaks CLI with a recorded checksum.
 
 Dependency/toolchain update changes additionally record old/new exact versions, official release/security notes, compatibility or migration impact, lockfile/checksum diff, vulnerability/license result, and full affected test/build evidence. Automated update pull requests never merge solely because dependency resolution succeeds.
 
@@ -108,7 +112,7 @@ Use browser-level automation for the responsive shell, search palette, login/ses
 | Gate | Required evidence |
 |---|---|
 | Pull request | Unit + HTTP + frontend, static checks, docs/traceability |
-| Merge to main | Required PostgreSQL 17/18 × Redis 8.2/8.8 matrix jobs, focused claimed-extension jobs, build, secret scan |
+| Merge to default branch | Wave 0 jobs, plus the PostgreSQL 17/18 × Redis 8.2/8.8 matrix and focused claimed-extension jobs when the change alters PostgreSQL/Redis adapter or installer behavior. Those matrix jobs are not run (and must not be claimed) before adapter code exists. |
 | Release candidate | Fresh/existing install rehearsal, selected/default version checks, upgrade/rollback, backup/restore |
 | Production cutover | Live preflight, current backup, external TLS/Access tests, operator approval |
 | Legacy retirement | Observation window, parity signoff, restore test, rollback rehearsal |

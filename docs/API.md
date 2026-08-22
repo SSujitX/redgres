@@ -8,6 +8,8 @@ Status: target contract. Final schemas should be machine-described (OpenAPI or e
 - JSON only for API requests/responses.
 - Session cookie: opaque HttpOnly cookie; browser sends `X-CSRF-Token` on mutations.
 - Every response includes `request_id`.
+- `X-Request-ID` is a server-generated 128-bit value (32 lowercase hex characters) echoed as `request_id`. An inbound `X-Request-ID` is not trusted or copied (log-injection defense; intentional divergence from the Redis source).
+- All `/api/v1/*` responses set `Cache-Control: no-store`.
 - Body limit: 64 KiB by default; lower endpoint limits are allowed.
 - Unknown JSON fields are rejected.
 - List endpoints use cursor pagination where records can grow; row browsing uses bounded offset/keyset semantics documented per endpoint.
@@ -26,7 +28,9 @@ Success envelope may contain resource-specific keys. Error shape is stable:
 }
 ```
 
-Core error codes: `unauthorized`, `forbidden`, `csrf_invalid`, `rate_limited`, `validation_error`, `protected_resource`, `conflict`, `not_found`, `reauth_required`, `dependency_unavailable`, `operation_in_progress`, `internal`.
+`fields` is present only for field-level validation errors.
+
+Core error codes: `unauthorized`, `forbidden`, `csrf_invalid`, `rate_limited`, `validation_error`, `protected_resource`, `conflict`, `not_found`, `method_not_allowed`, `reauth_required`, `dependency_unavailable`, `operation_in_progress`, `internal`.
 
 ## Authentication/platform endpoints
 
@@ -40,6 +44,14 @@ Core error codes: `unauthorized`, `forbidden`, `csrf_invalid`, `rate_limited`, `
 | GET | `/api/v1/search?q=&limit=` | Authenticated bounded search over manageable resource metadata/navigation; no secrets or destructive execution |
 | GET | `/api/v1/audit?cursor=&limit=` | Paginated redacted audit history |
 | GET | `/api/v1/operations/{id}` | Long-operation state/result summary |
+
+## Static asset delivery
+
+The Go binary serves the embedded Vite build for non-API `GET` requests:
+
+- `index.html` is served with `Cache-Control: no-store` and is the SPA fallback for unknown non-API paths.
+- Hashed `/assets/*` files are served with `Cache-Control: public, max-age=31536000, immutable`.
+- If embedded assets are absent (clean checkout before `npm run build`), non-API `GET` returns `503` `dependency_unavailable`. There is no directory listing and no empty 200.
 
 Search requires a normalized minimum query length, a strict maximum length/limit, request cancellation/timeouts, and stable grouped result types. It returns only fields already safe for authenticated inventory views, excludes protected/hidden targets and credential material, rate-limits abusive use, and never accepts an action/command to execute. Documentation/navigation entries may be client-side; server resource results still enforce the same manageability policy as their source list endpoints.
 

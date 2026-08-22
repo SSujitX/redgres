@@ -62,7 +62,10 @@ Redgres/
 │   │   ├── search_routes.go
 │   │   └── system_routes.go
 │   └── web/
-│       └── embed.go
+│       ├── embed.go
+│       └── dist/
+│           ├── .gitkeep
+│           └── app/                 # Vite output; gitignored
 ├── migrations/
 │   ├── embed.go
 │   ├── 001_initial.sql
@@ -70,6 +73,10 @@ Redgres/
 ├── web/
 │   ├── package.json
 │   ├── package-lock.json
+│   ├── .nvmrc
+│   ├── tsconfig.json
+│   ├── tsconfig.node.json
+│   ├── index.html
 │   ├── vite.config.ts
 │   └── src/
 │       ├── api/
@@ -123,7 +130,7 @@ Redgres/
 │   ├── agents/                    # planner, bounded implementer, and independent reviewers
 │   └── rules/                     # persistent and path-routed project instructions
 ├── .github/
-│   ├── workflows/ci.yml
+│   ├── workflows/ci.yml          # authoritative Wave 0 check list
 │   ├── ISSUE_TEMPLATE/
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── .env.example
@@ -152,7 +159,7 @@ Redgres/
 
 ## Naming rules
 
-- Go module: decide the final public organization first, then use `github.com/<owner>/redgres`; never publish the placeholder.
+- Go module: `github.com/SSujitX/redgres` (case-sensitive). The path follows the configured `origin` remote; do not lowercase it.
 - Packages are lower-case singular concepts. Avoid `utils`, `common`, or `helpers` inside application code.
 - Configuration and API use `postgres`, not `postgresql`, except user-facing prose where either is clear.
 - Product is `Redgres`; binary/service/user/directories are lowercase `redgres`.

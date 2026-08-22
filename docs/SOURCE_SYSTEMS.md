@@ -108,7 +108,8 @@ Path: `D:\code\github\redis-ui`
 
 ### Known gaps Redgres must correct
 
-- Credential-bearing create/rotate responses do not currently set `Cache-Control: no-store` in the inspected server handler. Redgres must enforce this centrally and test it.
+- Credential-bearing create/rotate responses do not currently set `Cache-Control: no-store` in the inspected server handler. Redgres enforces `Cache-Control: no-store` on every `/api/v1/*` response.
+- The inspected server echoes inbound `X-Request-ID`. Redgres generates a 128-bit request ID and ignores the inbound header.
 - Custom Redis commands currently reject a finite dangerous deny-list but accept other arbitrary command names. Redgres requires an explicit allow-list that fails closed.
 - ACL category parsing does not expand Redis category rules returned by the server, so imported externally managed users may be represented incompletely. The UI/API must label this limitation rather than silently imply exact parity.
 - Runtime/build artifacts (`redact.exe`, SQLite DB/WAL/SHM) exist in the supplied folder and must not be copied or committed.

@@ -6,13 +6,15 @@
 
 # Frontend
 /web/node_modules/
-/web/dist/
+/internal/web/dist/app/
 
 # Runtime state and secrets
 *.db
 *.db-shm
 *.db-wal
 *.env
+.env
+.env.*
 !.env.example
 *.pem
 *.key

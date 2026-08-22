@@ -1,0 +1,134 @@
+# Authoritative check list. Makefile and CONTRIBUTING.md must mirror this file.
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          cache: true
+      - run: go mod verify
+      - name: gofmt
+        run: |
+          out="$(gofmt -l cmd internal migrations)"
+          if [ -n "$out" ]; then
+            echo "$out"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go test -race ./...
+      - run: go build ./cmd/redgres
+
+  cross-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          cache: true
+      - name: linux/amd64
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/redgres-linux-amd64 ./cmd/redgres
+      - name: linux/arm64
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /tmp/redgres-linux-arm64 ./cmd/redgres
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run test:run
+      - run: npm run build
+      - name: reject inline script and style
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("../internal/web/dist/app/index.html").read_text(encoding="utf-8")
+          if re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html, re.I):
+              raise SystemExit("inline script without src")
+          if re.search(r"<style[\s>]", html, re.I):
+              raise SystemExit("inline style block")
+          PY
+      - run: npm audit --omit=dev --audit-level=high
+
+  embedded-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          cache: true
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: go build -o redgres ./cmd/redgres
+      - name: healthz smoke
+        run: |
+          export REDGRES_ENVIRONMENT=development
+          export REDGRES_SQLITE_PATH="$RUNNER_TEMP/redgres.db"
+          ./redgres serve &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8790/api/v1/healthz | grep -q '"status":"ok"'; then
+              exit 0
+            fi
+            sleep 0.2
+          done
+          exit 1
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  vulnerability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          cache: true
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...

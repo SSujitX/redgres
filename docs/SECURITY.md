@@ -88,9 +88,10 @@ Never make browser confirmation the sole guard.
 - CSP: `default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`.
 - `X-Content-Type-Options: nosniff`.
 - `Referrer-Policy: no-referrer`.
-- `Permissions-Policy` denies unused device capabilities.
+- `Permissions-Policy: accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), screen-wake-lock=(), usb=(), xr-spatial-tracking=()`.
 - `Cross-Origin-Opener-Policy: same-origin`.
-- HSTS is set at Cloudflare and/or origin consistently; avoid conflicting partial policies.
+- The origin does not set `Strict-Transport-Security`. Cloudflare owns HSTS so the application cannot emit a conflicting partial policy.
+- `style-src 'self'` (no `unsafe-inline`) blocks React `style={{…}}` attributes. Use stylesheets/classes, or propose a reviewed CSP change.
 - No wildcard CORS. Same-origin deployment normally needs no CORS middleware.
 - Request bodies, timeouts, headers, and concurrent long operations are bounded.
 - Health endpoint reveals no versions, hostnames, secrets, or internal errors to unauthenticated callers.

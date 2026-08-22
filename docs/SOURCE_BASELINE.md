@@ -4,6 +4,7 @@ This file pins the exact source revisions used for Redgres parity work. Fill it 
 
 | System | Local path | Git remote | Commit | Working tree | Recorded at |
 |---|---|---|---|---|---|
+| Redgres | `D:\code\github\Redgres` | `https://github.com/SSujitX/redgres.git` | `553f1568b3a803e2aafb9897691705c472492ff0` specification baseline; Wave 0 implementation is on `master` after that commit | Wave 0 implemented locally; SHA recorded in the Wave 0 commit | 2026-08-23 |
 | PostgreSQL console | `D:\code\github\database-app` | `https://github.com/onelifeproject/database-app` | `1c3e8e2fe77345e6a40955a22a28b7bafe6fc4ad` | Clean when recorded | 2026-08-23 |
 | Redis console | `D:\code\github\redis-ui` | No `.git` directory observed during initial review | Establish/import provenance | Runtime artifacts present; source baseline not yet immutable | 2026-08-23 |
 
@@ -24,5 +25,7 @@ Provisional Redis anchor hashes from the inspected folder:
 | `internal/redisadmin/presets.go` | `592E75FB475A90DC79231DCE2EB7EEDFFC06651AD5E8210FDB50C5D6823C7929` |
 
 These hashes help detect accidental drift in critical files, but they are not a substitute for importing the complete source with verified authorship, license, and Git history.
+
+Wave 0 (2026-08-23) consulted `redis-ui` read-only for project layout, Makefile targets, embed/migration *approach*, and DSN pragma *shape*. No file was copied. SQLite URI parameters follow `modernc.org/sqlite` (`_pragma=busy_timeout(5000)`, `_pragma=foreign_keys(1)`, `_pragma=journal_mode(WAL)`). Redis source provenance remains unresolved and blocks copying into the Wave 1 Redis parity slice; it does not block Wave 0.
 
 Do not claim reproducible source parity until the Redis source has provenance and both baselines are pinned.

@@ -10,6 +10,24 @@ Redgres is currently specification-first. Contributions must preserve the migrat
 4. Never include real infrastructure addresses beyond already documented public hostnames, credentials, certificate material, `.env` files, runtime databases, or backups.
 5. Complete the pull-request checklist and provide test output.
 
+## Local checks
+
+`.github/workflows/ci.yml` is authoritative. The `Makefile` mirrors it for Unix contributors; this workstation does not have `make`. From the repository root:
+
+```text
+go mod verify
+gofmt -l cmd internal migrations
+go vet ./...
+go test ./...
+go build ./cmd/redgres
+cd web
+npm ci
+npm run test:run
+npm run build
+```
+
+`go test -race`, linux/amd64 and linux/arm64 cross-compiles, `govulncheck`, and gitleaks run in CI. Frontend release evidence is the CI job on Node 24.19.0; a local Node 25.x run is development feedback only.
+
 ## Definition of done
 
 - The implementation maps to an accepted PRD requirement.

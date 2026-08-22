@@ -56,11 +56,11 @@ Dependency direction is inward: transport depends on use cases; use cases depend
 
 ## 4. Backend stack
 
-- Go: newest stable security-supported release compatible with the selected dependencies, pinned through `go.mod`, the `toolchain` directive where used, and CI/release metadata.
-- Router: `github.com/go-chi/chi/v5`.
-- PostgreSQL: `github.com/jackc/pgx/v5` and `pgxpool`.
-- Redis: `github.com/redis/go-redis/v9`.
-- SQLite: `modernc.org/sqlite` to keep a pure-Go build.
+- Go: `go 1.27.0` in `go.mod` (installed/local and CI via `go-version-file`). Official [Go 1.27 release notes](https://go.dev/doc/go1.27) (2026-08) keep the Go 1 compatibility promise. Wave 0 originally considered `go 1.26.7` as the previous-line newest patch; the operator installed 1.27 and Wave 0 builds/tests passed against it with `modernc.org/sqlite` v1.57.0 and `chi` v5.3.2.
+- Router: `github.com/go-chi/chi/v5` `v5.3.2`.
+- PostgreSQL: `github.com/jackc/pgx/v5` and `pgxpool` (not in Wave 0).
+- Redis: `github.com/redis/go-redis/v9` (not in Wave 0).
+- SQLite: `modernc.org/sqlite` `v1.57.0`.
 - Passwords: `golang.org/x/crypto/argon2` with encoded, versioned parameters.
 - Fernet: a maintained Go implementation validated against Python `cryptography`, or a small audited compatibility package. Choice requires test vectors and dependency review.
 - Logging: standard `log/slog`, structured to journald with redaction.
@@ -73,10 +73,9 @@ PostgreSQL server adoption/install, extension host packages, per-database extens
 
 ## 5. Frontend stack
 
-- Latest stable compatible React + TypeScript + Vite releases, exactly locked in `package-lock.json`.
-- TanStack Query for server state.
-- Tailwind CSS for design tokens/utilities.
-- Radix UI primitives for accessible dialogs, menus, sheets, and tabs.
+- Wave 0 frontend pins (locked in `web/package-lock.json`): React `19.2.8`, Vite `8.2.2`, `@vitejs/plugin-react` `6.1.0`, Vitest `4.1.11`, TypeScript `7.0.2`. Node build tool is Active LTS **24.19.0** (`web/.nvmrc`). Local Node 25.x is unsupported and is not release evidence.
+- Vite writes to `internal/web/dist/app` so `//go:embed all:dist` still compiles from the tracked `dist/.gitkeep`. `build.modulePreload.polyfill` is `false` so the HTML has no inline script under `script-src 'self'`.
+- TanStack Query, Tailwind CSS, and Radix remain target-only until the Wave 1 frontend slice; the parent owns `web/package.json` / lockfile.
 - Shared application shell and semantic tokens follow [UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md); feature folders do not define independent navigation, palettes, or breakpoints.
 - Small local state only; no credential in global stores, URL, localStorage, sessionStorage, IndexedDB, analytics, or error reporting.
 - Production build embedded through Go `embed`; Node.js is build-time only.

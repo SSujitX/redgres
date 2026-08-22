@@ -1,19 +1,21 @@
 # Configuration reference
 
-This is the target namespace; implementation must generate a machine-checked reference from the actual config struct and keep this document synchronized.
+Wave 0 implements the Core table only. PostgreSQL, Redis, feature-gate, and tool-link keys remain target. Machine-checked reference generation from the config struct is still outstanding.
 
 ## Core
 
+Status: implemented in `internal/config`.
+
 | Variable | Required in production | Example | Rule |
 |---|---:|---|---|
-| `REDGRES_ENVIRONMENT` | Yes | `production` | Controls fail-closed validation, not authorization |
+| `REDGRES_ENVIRONMENT` | Yes | `production` | `development` or `production`; controls fail-closed validation, not authorization |
 | `REDGRES_ADDRESS` | Yes | `127.0.0.1:8790` | Production must be loopback unless an ADR approves a trusted private bind |
-| `REDGRES_BASE_URL` | Yes | `https://console.onelifeltd.xyz` | Exact public origin for cookie/origin checks |
+| `REDGRES_BASE_URL` | Yes | `https://console.onelifeltd.xyz` | Exact public origin for cookie/origin checks; production must be `https` |
 | `REDGRES_SQLITE_PATH` | Yes | `/var/lib/redgres/redgres.db` | Absolute path in production |
-| `REDGRES_SESSION_TTL` | No | `12h` | Idle expiry with safe min/max |
-| `REDGRES_ABSOLUTE_SESSION_TTL` | No | `24h` | Must be >= idle expiry and bounded |
+| `REDGRES_SESSION_TTL` | No | `12h` | Idle expiry; minimum 5m, maximum 24h |
+| `REDGRES_ABSOLUTE_SESSION_TTL` | No | `24h` | Must be >= idle expiry and at most 168h |
 | `REDGRES_COOKIE_SECURE` | Yes | `true` | Must be true in production |
-| `REDGRES_LOG_LEVEL` | No | `info` | Never enables secret/body logging |
+| `REDGRES_LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, or `error`. Never enables secret/body logging |
 
 ## PostgreSQL
 
@@ -66,7 +68,7 @@ Enabling a flag makes the server-side workflow reachable; it never bypasses capa
 
 ## Precedence
 
-Recommended precedence: explicit flags (non-secret) > process environment > optional development `.env` > defaults. Production does not automatically read repository `.env` files. Secret-file/systemd-credential values take precedence over secret environment variables; conflicting definitions fail closed.
+Recommended precedence: explicit flags (non-secret) > process environment > optional development `.env` > defaults. Production does not read repository `.env` files, including when selected with `-environment production`. A `.env` that sets `REDGRES_ENVIRONMENT=production` is rejected. Dotenv applies only `REDGRES_*` keys and never overwrites an already-set process variable. `REDGRES_BASE_URL` must be an origin (`scheme://host[:port]`) with no userinfo, path, query, or fragment. `REDGRES_SQLITE_PATH` must not contain `?`, `#`, or NUL. Secret-file/systemd-credential values take precedence over secret environment variables; conflicting definitions fail closed.
 
 ## Startup validation
 
