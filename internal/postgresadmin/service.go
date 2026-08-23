@@ -107,6 +107,62 @@ func (s *Service) Tables(ctx context.Context, name string) (TableListResult, err
 	return out, nil
 }
 
+func (s *Service) Rows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error) {
+	if err := ValidateIdentifier(database); err != nil {
+		return RowPage{}, err
+	}
+	if err := ValidateIdentifier(schema); err != nil {
+		return RowPage{}, err
+	}
+	if err := ValidateIdentifier(table); err != nil {
+		return RowPage{}, err
+	}
+	if catalogSchemaDenied(schema) {
+		return RowPage{}, ErrNotFound
+	}
+	if s == nil || s.catalog == nil {
+		return RowPage{}, ErrUnavailable
+	}
+	if s.policy.DatabaseDenied(database) {
+		return RowPage{}, ErrNotFound
+	}
+	row, err := s.catalog.Lookup(ctx, database)
+	if err != nil {
+		return RowPage{}, mapCatalogError(err)
+	}
+	if !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate) {
+		return RowPage{}, ErrNotFound
+	}
+	limit, offset = clampRowPage(limit, offset)
+	page, err := s.catalog.ListRows(ctx, row.Name, schema, table, q, offset, limit)
+	if err != nil {
+		return RowPage{}, mapCatalogError(err)
+	}
+	page.Offset = offset
+	page.Limit = limit
+	if page.Columns == nil {
+		page.Columns = []string{}
+	}
+	if page.Rows == nil {
+		page.Rows = []map[string]any{}
+	}
+	return page, nil
+}
+
+func clampRowPage(limit, offset int) (int, int) {
+	if limit <= 0 || limit > listCap {
+		limit = defaultRowLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
+func catalogSchemaDenied(schema string) bool {
+	return schema == "pg_catalog" || schema == "information_schema"
+}
+
 func mapCatalogError(err error) error {
 	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidIdentifier) || errors.Is(err, ErrUnavailable) {
 		return err

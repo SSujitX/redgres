@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz` unit tests only; no `/status` or search | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI; rows not started; PG-003–006/008–012 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API; no row UI; PG-003–006/008–012 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | TODO | Planned |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -221,4 +221,32 @@ Reviewer/date: UI reviewer approved (2026-08-23) inspector list only; Lows L1–
  optional (card chrome, empty copy, truncation live region, schema/table spacing,
  503 wording). Verifier approved (2026-08-23) at `ce7cf8b` (not pushed). Not
  viewport sign-off. Not full PG-007.
+```
+
+## PostgreSQL row browse API (2026-08-23)
+
+```text
+Requirement: PG-007 (bounded row GET only; no UI, DELETE, truncate)
+Decision/ADR: ADR-001, ADR-003, ADR-008 (majors already gated on Open)
+Source characterization: database-app fetch_table_data at 1c3e8e2; Redgres 404s
+ missing/zero-column tables instead of empty 200; explicit quoted SELECT list
+Implementation files: internal/postgresadmin/{types,service,memory,encode,rows,adapter}.go;
+ internal/httpapi/{server,postgres_routes,errors}.go
+Unit tests: service/encode + HTTP session/503/200 clamp/404/400/405/canary
+Integration tests: none run (no live PostgreSQL claimed)
+Security tests: identifier 400 before query; protected db no ListRows; canary
+ redacted; no-store; marshal-first writeJSON
+Deployment/migration impact: none. 001_initial.sql and go.mod unchanged.
+Known limitations: no row UI; COUNT/OFFSET on huge tables; q LIKE wildcards;
+ citext via data_type only; huge TOAST cells; live PG 17/18 unproven
+Assumptions recorded: q max 128 code points; offset unbounded; GET not audited
+Commands executed locally (2026-08-23):
+  go test -count=1 ./... → ok
+  go vet ./... → no findings
+  gofmt -l cmd internal migrations → empty
+  go build -o NUL ./cmd/redgres → success
+  Verifier also ran: go test -race -count=1 ./internal/postgresadmin/ ./internal/httpapi/ → ok
+  Not run: full ./... race, live PostgreSQL 17/18, CI, frontend
+Reviewer/date: Verifier approved (2026-08-23) row-browse API only (not full PG-007).
+ Security review still pending. Do not treat as COMPATIBILITY.md §6 evidence.
 ```

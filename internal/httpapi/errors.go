@@ -34,15 +34,31 @@ type errorBody struct {
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, r *http.Request, status int, payload any) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fallback, _ := json.Marshal(errorBody{
+			Error:     apiError{Code: CodeDependencyUnavailable, Message: "PostgreSQL is unavailable"},
+			RequestID: requestID(r),
+		})
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write(append(fallback, '\n'))
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	_, _ = w.Write(append(body, '\n'))
 }
 
 func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	s.writeErrorFields(w, r, status, code, message, nil)
+}
+
+func (s *Server) writeErrorFields(w http.ResponseWriter, r *http.Request, status int, code, message string, fields map[string]string) {
 	s.writeJSON(w, r, status, errorBody{
-		Error:     apiError{Code: code, Message: message},
+		Error:     apiError{Code: code, Message: message, Fields: fields},
 		RequestID: requestID(r),
 	})
 }

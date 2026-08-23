@@ -66,6 +66,9 @@ func TestServiceUnavailableWithoutCatalog(t *testing.T) {
 	if _, err := svc.Tables(context.Background(), "project_a"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("tables: %v", err)
 	}
+	if _, err := svc.Rows(context.Background(), "project_a", "public", "items", "", 0, 50); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("rows: %v", err)
+	}
 }
 
 func TestServiceMapsCanaryErrors(t *testing.T) {
@@ -176,5 +179,97 @@ func TestServiceRejectsInvalidDetailsName(t *testing.T) {
 	}
 	if _, err := svc.Tables(context.Background(), "bad-name"); !errors.Is(err, ErrInvalidIdentifier) {
 		t.Fatalf("tables: %v", err)
+	}
+	if _, err := svc.Rows(context.Background(), "bad-name", "public", "items", "", 0, 50); !errors.Is(err, ErrInvalidIdentifier) {
+		t.Fatalf("rows db: %v", err)
+	}
+}
+
+func TestServiceRowsRequiresManageableDatabase(t *testing.T) {
+	cat := &MemoryCatalog{
+		Rows: []CatalogRow{projectRow("project_a", "project_a_role")},
+		TableData: map[string]MemoryTable{
+			"project_a.public.items": {Columns: []string{"id"}, Rows: []map[string]any{{"id": 1}}},
+		},
+	}
+	svc := NewService(cat, NewPolicy(config.Config{PostgresDatabase: "postgres"}))
+	got, err := svc.Rows(context.Background(), "project_a", "public", "items", "", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Rows) != 1 || got.Total != 1 || got.Limit != 50 {
+		t.Fatalf("page = %#v", got)
+	}
+	if cat.LastRowsKey != "project_a.public.items" {
+		t.Fatalf("LastRowsKey = %q", cat.LastRowsKey)
+	}
+	cat.LastRowsKey = ""
+	if _, err := svc.Rows(context.Background(), "postgres", "public", "items", "", 0, 50); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("protected: %v", err)
+	}
+	if cat.LastRowsKey != "" {
+		t.Fatal("ListRows must not run for a protected database")
+	}
+}
+
+func TestServiceRowsClampsLimitAndOffset(t *testing.T) {
+	cat := &MemoryCatalog{
+		Rows: []CatalogRow{projectRow("project_a", "project_a_role")},
+		TableData: map[string]MemoryTable{
+			"project_a.public.items": {
+				Columns: []string{"id"},
+				Rows:    []map[string]any{{"id": 1}, {"id": 2}},
+			},
+		},
+	}
+	svc := NewService(cat, NewPolicy(config.Config{}))
+	got, err := svc.Rows(context.Background(), "project_a", "public", "items", "", -3, 501)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Offset != 0 || got.Limit != 50 || len(got.Rows) != 2 {
+		t.Fatalf("clamped = %#v", got)
+	}
+}
+
+func TestServiceRowsEmptyExistingTable(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows: []CatalogRow{projectRow("project_a", "project_a_role")},
+		TableData: map[string]MemoryTable{
+			"project_a.public.items": {Columns: []string{"id"}},
+		},
+	}, NewPolicy(config.Config{}))
+	got, err := svc.Rows(context.Background(), "project_a", "public", "items", "", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Columns) != 1 || got.Rows == nil || len(got.Rows) != 0 || got.Total != 0 {
+		t.Fatalf("empty = %#v", got)
+	}
+}
+
+func TestServiceRowsMissingTable(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows: []CatalogRow{projectRow("project_a", "project_a_role")},
+	}, NewPolicy(config.Config{}))
+	if _, err := svc.Rows(context.Background(), "project_a", "public", "missing", "", 0, 50); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := svc.Rows(context.Background(), "project_a", "pg_catalog", "pg_class", "", 0, 50); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("catalog: %v", err)
+	}
+}
+
+func TestServiceRowsMapsCanaryErrors(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows:    []CatalogRow{projectRow("project_a", "project_a_role")},
+		RowsErr: errors.New("postgresql://canary:secret@127.0.0.1/db"),
+	}, NewPolicy(config.Config{}))
+	_, err := svc.Rows(context.Background(), "project_a", "public", "items", "", 0, 50)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("leaked %v", err)
 	}
 }

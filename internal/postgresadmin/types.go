@@ -28,12 +28,14 @@ type Catalog interface {
 	List(ctx context.Context) ([]CatalogRow, error)
 	Lookup(ctx context.Context, name string) (CatalogRow, error)
 	ListTables(ctx context.Context, database string) ([]TableItem, error)
+	ListRows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
 }
 
 type Inventory interface {
 	List(ctx context.Context) (ListResult, error)
 	Details(ctx context.Context, name string) (DatabaseDetails, error)
 	Tables(ctx context.Context, name string) (TableListResult, error)
+	Rows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
 }
 
 type ListItem struct {
@@ -82,6 +84,19 @@ type TableItem struct {
 type TableListResult struct {
 	Tables    []TableItem `json:"tables"`
 	Truncated bool        `json:"truncated"`
+}
+
+const (
+	defaultRowLimit  = 50
+	MaxRowQueryRunes = 128
+)
+
+type RowPage struct {
+	Columns []string         `json:"columns"`
+	Rows    []map[string]any `json:"rows"`
+	Total   int64            `json:"total"`
+	Offset  int              `json:"offset"`
+	Limit   int              `json:"limit"`
 }
 
 func vaultNotAvailable() SavedCredential {

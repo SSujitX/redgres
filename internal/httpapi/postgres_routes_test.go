@@ -294,3 +294,168 @@ func TestPostgresListCanaryErrorIsRedacted(t *testing.T) {
 		t.Fatalf("leaked %s", rec.Body.String())
 	}
 }
+
+func rowService(t *testing.T) *postgresadmin.Service {
+	t.Helper()
+	return postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		Rows: []postgresadmin.CatalogRow{{Name: "project_a", Owner: "project_a_role", AllowConn: true}},
+		TableData: map[string]postgresadmin.MemoryTable{
+			"project_a.public.items": {
+				Columns: []string{"id", "name"},
+				Rows:    []map[string]any{{"id": 1, "name": "a"}},
+			},
+		},
+	}, postgresadmin.NewPolicy(config.Config{PostgresDatabase: "postgres"}))
+}
+
+func TestPostgresRowsRequiresSession(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/postgres/databases/project_a/tables/public/items/rows", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestPostgresRowsUnavailableWithoutAdapter(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a/tables/public/items/rows", cookie, csrf, ""))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"rows"`) {
+		t.Fatal("unavailable rows must not look healthy")
+	}
+}
+
+func TestPostgresRowsReturnsPage(t *testing.T) {
+	srv := testServerWithPostgres(t, rowService(t))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a/tables/public/items/rows?limit=501&offset=-1", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("cache = %q", rec.Header().Get("Cache-Control"))
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["limit"] != float64(50) || body["offset"] != float64(0) || body["total"] != float64(1) {
+		t.Fatalf("page = %#v", body)
+	}
+	rows, _ := body["rows"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %#v", body["rows"])
+	}
+}
+
+func TestPostgresRowsProtectedDatabaseIsNotFound(t *testing.T) {
+	srv := testServerWithPostgres(t, rowService(t))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/postgres/tables/public/items/rows", cookie, csrf, ""))
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), `"not_found"`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostgresRowsRejectsInvalidNames(t *testing.T) {
+	srv := testServerWithPostgres(t, rowService(t))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"/api/v1/postgres/databases/bad-name/tables/public/items/rows", "Invalid database name"},
+		{"/api/v1/postgres/databases/project_a/tables/bad-name/items/rows", "Invalid schema name"},
+		{"/api/v1/postgres/databases/project_a/tables/public/bad-name/rows", "Invalid table name"},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodGet, tc.path, cookie, csrf, ""))
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tc.want) {
+			t.Fatalf("%s: %d %s", tc.path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestPostgresRowsRejectsLongQuery(t *testing.T) {
+	srv := testServerWithPostgres(t, rowService(t))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	q := strings.Repeat("x", 129)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a/tables/public/items/rows?q="+q, cookie, csrf, ""))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"q"`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostgresRowsRejectsBadLimit(t *testing.T) {
+	srv := testServerWithPostgres(t, rowService(t))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a/tables/public/items/rows?limit=abc", cookie, csrf, ""))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"limit"`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostgresRowsRejectsPOST(t *testing.T) {
+	srv := testServerWithPostgres(t, rowService(t))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/postgres/databases/project_a/tables/public/items/rows", cookie, csrf, `{}`))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestPostgresRowsMissingTableIsNotFound(t *testing.T) {
+	srv := testServerWithPostgres(t, rowService(t))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a/tables/public/missing/rows", cookie, csrf, ""))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostgresRowsCanaryErrorIsRedacted(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		Rows:    []postgresadmin.CatalogRow{{Name: "project_a", Owner: "project_a_role", AllowConn: true}},
+		RowsErr: errors.New("postgresql://canary:secret@127.0.0.1/db"),
+	}, postgresadmin.NewPolicy(config.Config{}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a/tables/public/items/rows", cookie, csrf, ""))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "canary") || strings.Contains(rec.Body.String(), "secret") || strings.Contains(rec.Body.String(), `"rows"`) {
+		t.Fatalf("leaked %s", rec.Body.String())
+	}
+}

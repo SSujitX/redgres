@@ -199,12 +199,9 @@ ORDER BY table_schema, table_name
 LIMIT 501
 `
 
-func (c PoolCatalog) ListTables(ctx context.Context, database string) ([]TableItem, error) {
-	if err := ValidateIdentifier(database); err != nil {
-		return nil, err
-	}
+func (c PoolCatalog) connectTarget(ctx context.Context, database string) (*pgx.Conn, context.Context, context.CancelFunc, error) {
 	if c.pool == nil {
-		return nil, ErrUnavailable
+		return nil, nil, func() {}, ErrUnavailable
 	}
 	cfg := c.pool.Config()
 	connCfg := cfg.ConnConfig.Copy()
@@ -216,15 +213,31 @@ func (c PoolCatalog) ListTables(ctx context.Context, database string) ([]TableIt
 	connCfg.RuntimeParams = params
 	connCfg.Database = database
 	connectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	conn, err := pgx.ConnectConfig(connectCtx, connCfg)
 	if err != nil {
-		return nil, ErrUnavailable
+		cancel()
+		return nil, nil, func() {}, ErrUnavailable
 	}
-	defer conn.Close(context.Background())
 	if _, err := conn.Exec(connectCtx, "SELECT pg_catalog.set_config('search_path', $1, false)", tableSearchPath); err != nil {
-		return nil, ErrUnavailable
+		_ = conn.Close(context.Background())
+		cancel()
+		return nil, nil, func() {}, ErrUnavailable
 	}
+	return conn, connectCtx, func() {
+		_ = conn.Close(context.Background())
+		cancel()
+	}, nil
+}
+
+func (c PoolCatalog) ListTables(ctx context.Context, database string) ([]TableItem, error) {
+	if err := ValidateIdentifier(database); err != nil {
+		return nil, err
+	}
+	conn, connectCtx, closeConn, err := c.connectTarget(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	defer closeConn()
 	rows, err := conn.Query(connectCtx, listTablesSQL)
 	if err != nil {
 		return nil, ErrUnavailable

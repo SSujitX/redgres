@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
+	"unicode/utf8"
 
 	"github.com/SSujitX/redgres/internal/postgresadmin"
 	"github.com/go-chi/chi/v5"
@@ -71,6 +73,65 @@ func (s *Server) handlePostgresTables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, r, http.StatusOK, postgresTablesBody{TableListResult: result, RequestID: requestID(r)})
+}
+
+type postgresRowsBody struct {
+	postgresadmin.RowPage
+	RequestID string `json:"request_id"`
+}
+
+func (s *Server) handlePostgresRows(w http.ResponseWriter, r *http.Request) {
+	database, err := decodePathIdentifier(chi.URLParam(r, "db"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid database name")
+		return
+	}
+	schema, err := decodePathIdentifier(chi.URLParam(r, "schema"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid schema name")
+		return
+	}
+	table, err := decodePathIdentifier(chi.URLParam(r, "table"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid table name")
+		return
+	}
+	q := r.URL.Query().Get("q")
+	if utf8.RuneCountInString(q) > postgresadmin.MaxRowQueryRunes {
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Query is too long", map[string]string{"q": "too_long"})
+		return
+	}
+	offset, ok := parseOptionalInt(r.URL.Query().Get("offset"), 0)
+	if !ok {
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid offset", map[string]string{"offset": "invalid"})
+		return
+	}
+	limit, ok := parseOptionalInt(r.URL.Query().Get("limit"), 0)
+	if !ok {
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid limit", map[string]string{"limit": "invalid"})
+		return
+	}
+	if s.postgres == nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	result, err := s.postgres.Rows(r.Context(), database, schema, table, q, offset, limit)
+	if err != nil {
+		s.writePostgresError(w, r, err)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, postgresRowsBody{RowPage: result, RequestID: requestID(r)})
+}
+
+func parseOptionalInt(raw string, fallback int) (int, bool) {
+	if raw == "" {
+		return fallback, true
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 func decodePathIdentifier(raw string) (string, error) {
