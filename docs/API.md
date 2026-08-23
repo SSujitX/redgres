@@ -89,9 +89,9 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/v1/postgres/databases` | Manageable databases only |
+| GET | `/api/v1/postgres/databases` | Manageable databases only (implemented) |
 | POST | `/api/v1/postgres/databases` | Create database/role; one-time credentials; `no-store` |
-| GET | `/api/v1/postgres/databases/{db}` | Details/security metadata |
+| GET | `/api/v1/postgres/databases/{db}` | Details/security metadata (implemented; vault status is `not_available`) |
 | GET | `/api/v1/postgres/databases/{db}/connection` | Masked URLs and saved status only |
 | POST | `/api/v1/postgres/databases/{db}/connection/reveal` | Full saved URLs; `no-store`; optionally fresh reauth by policy |
 | POST | `/api/v1/postgres/databases/{db}/credentials/rotate` | Rotate; typed confirmation; `no-store` |
@@ -104,6 +104,8 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 | GET | `/api/v1/postgres/security` | Cluster/project security overview |
 
 Database/role names in URL segments are decoded then validated. Transport validation never replaces PostgreSQL identifier quoting.
+
+**Implemented now:** `GET /api/v1/postgres/databases` and `GET /api/v1/postgres/databases/{db}` require a session and the `postgres.read` capability. List is unpaginated and hard-capped at 500 (`truncated: true` if more manageable names exist). Details include owner, size, collation/ctype, locale fields, connection count, and security flags. `saved_credential.status` is always `not_available` with reason `vault_not_implemented` in this slice; no vault query or decrypt occurs. Protected names, protected owners, templates, and `datallowconn=false` are omitted from the list and return the same `404` `not_found` as a missing database (not `protected_resource`). Invalid identifiers return `400` `validation_error` without querying. Missing or failed admin PostgreSQL returns `503` `dependency_unavailable` and never a healthy empty list. `GET /api/v1/healthz` does not ping PostgreSQL.
 
 ## Redis endpoints
 

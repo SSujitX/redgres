@@ -55,6 +55,27 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 	})
 }
 
+func hasCapability(name string) bool {
+	for _, item := range defaultCapabilities {
+		if item == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) requireCapability(name string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !hasCapability(name) {
+				s.writeError(w, r, http.StatusForbidden, CodeForbidden, "Forbidden")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func (s *Server) requireMutation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !auth.SameOrigin(r.Header.Get("Origin"), r.Header.Get("Referer"), s.cfg.BaseURL) {

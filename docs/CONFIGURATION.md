@@ -1,6 +1,6 @@
 # Configuration reference
 
-Wave 0 implements the Core table only. PostgreSQL, Redis, feature-gate, and tool-link keys remain target. Machine-checked reference generation from the config struct is still outstanding.
+Core keys and the PostgreSQL administrative connection keys listed as implemented below are loaded by `internal/config`. Redis, feature-gate, tool-link, URL-generation, and vault-secret keys remain target. Machine-checked reference generation from the config struct is still outstanding.
 
 ## Core
 
@@ -19,19 +19,23 @@ Status: implemented in `internal/config`.
 
 ## PostgreSQL
 
-| Variable | Purpose |
-|---|---|
-| `REDGRES_POSTGRES_HOST` / `PORT` / `DATABASE` / `USER` | Direct administrative connection components |
-| `REDGRES_POSTGRES_PASSWORD_FILE` | Password file/systemd credential path |
-| `REDGRES_POSTGRES_SSLMODE` | `verify-full` preferred remotely; local deployment policy explicit |
-| `REDGRES_POSTGRES_SSLROOTCERT` | Trusted CA path when verifying |
-| `REDGRES_POSTGRES_PUBLIC_HOST` | Host placed in project URLs |
-| `REDGRES_POSTGRES_DIRECT_PORT` | Usually 5432 |
-| `REDGRES_POSTGRES_POOLED_PORT` | Usually 6432 |
-| `REDGRES_POSTGRES_EXPECTED_MAJOR` | Optional identity assertion (`17` or `18` initially); detected version remains authoritative |
-| `REDGRES_POSTGRES_PROTECTED_DATABASES` | Additional comma-separated deny set |
-| `REDGRES_POSTGRES_PROTECTED_ROLES` | Additional deny set |
-| `REDGRES_LEGACY_VAULT_SECRET_FILE` | Exact legacy KDF secret source |
+Status: administrative connection + protected lists implemented for inventory. URL hosts/ports and vault secret remain target.
+
+| Variable | Status | Purpose |
+|---|---|---|
+| `REDGRES_POSTGRES_HOST` / `PORT` / `DATABASE` / `USER` | Implemented | Direct administrative connection components. Never a full admin DSN on the CLI. |
+| `REDGRES_POSTGRES_PASSWORD_FILE` | Implemented | Only password source. Production rejects missing, empty, or group/world-readable files. |
+| `REDGRES_POSTGRES_SSLMODE` | Implemented | Development default `prefer`. Production requires `require`, `verify-ca`, or `verify-full`. |
+| `REDGRES_POSTGRES_SSLROOTCERT` | Implemented | Trusted CA path when verifying |
+| `REDGRES_POSTGRES_EXPECTED_MAJOR` | Implemented | Optional identity assertion (`17` or `18`); detected `server_version_num` remains authoritative |
+| `REDGRES_POSTGRES_PROTECTED_DATABASES` | Implemented | Additional comma-separated deny set (plus hard-coded `postgres`, `template0`, `template1`, `database_console_vault`, and the admin catalog database) |
+| `REDGRES_POSTGRES_PROTECTED_ROLES` | Implemented | Additional owner deny set (plus hard-coded admin/builtin roles and `pg_*`) |
+| `REDGRES_POSTGRES_PUBLIC_HOST` | Target | Host placed in project URLs |
+| `REDGRES_POSTGRES_DIRECT_PORT` | Target | Usually 5432 |
+| `REDGRES_POSTGRES_POOLED_PORT` | Target | Usually 6432 |
+| `REDGRES_LEGACY_VAULT_SECRET_FILE` | Target | Exact legacy KDF secret source |
+
+Development may start without PostgreSQL; list/details then return `503` `dependency_unavailable` and do not fabricate an empty healthy cluster. Production `serve` fails closed if the administrative connection is incomplete or the password file is unusable. Connecting **to** the `postgres` catalog database is required; listing or detailing that database is forbidden.
 
 These are application connection settings, not authority to install PostgreSQL or change extensions. Installer-only lifecycle values such as `POSTGRES_MODE`, `POSTGRES_MAJOR`, `PGBOUNCER_MODE`, `POSTGRES_EXTENSION_POLICY`, and `POSTGRES_EXTENSION_PLAN_FILE` live in the protected install configuration and are validated under [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md). The application environment never accepts package names, repositories, arbitrary extension SQL or preload libraries.
 

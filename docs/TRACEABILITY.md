@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz` unit tests only; no `/status` or search | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | TODO | Planned |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP; PG-003–012 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | TODO | Planned |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -112,4 +112,33 @@ Reviewer/date: UI reviewer rejected (2026-08-23) on H1/H2; remediations re-revie
  and approved (2026-08-23). Residual Medium (rail tooltip under workspace) corrected
  by stacking `.app-sidebar` above `.app-main` at 768–1023. Not viewport sign-off:
  360/768/1280/1600 and 200% zoom were not opened.
+```
+
+## PostgreSQL inventory (2026-08-23)
+
+```text
+Requirement: PG-001, PG-002 (no vault)
+Decision/ADR: ADR-001, ADR-003, ADR-008 (majors 17/18 in code); ADR-004 deferred
+Source characterization: database-app list_databases / get_database_info / get_security_overview
+ at 1c3e8e2; Redgres deny set is stricter (SOURCE_SYSTEMS.md)
+Implementation files: internal/postgresadmin/*; internal/config/postgres.go;
+ internal/httpapi/postgres_routes.go; cmd/redgres/main.go; go.mod (pgx v5.10.0)
+Unit tests: internal/postgresadmin/*_test.go; internal/httpapi/postgres_routes_test.go;
+ internal/config postgres cases
+Integration tests: none run (no live PostgreSQL claimed)
+Security tests: protected/missing collapse to 404; canary DSN not returned; no-store;
+ no vault query; password file only
+Deployment/migration impact: none. 001_initial.sql unchanged. Production serve now
+ requires a complete admin PostgreSQL connection.
+Known limitations: UI still placeholder; PG-003–012 / AUTH-006 / Redis not started;
+ live PG 17/18 and race/CI unproven
+Commands executed locally (2026-08-23):
+  go list -m -versions github.com/jackc/pgx/v5 → newest stable v5.10.0
+  go list -m -json github.com/jackc/pgx/v5@v5.10.0 → 2026-06-03, Go 1.25.0, MIT pin
+  go test -count=1 ./... → ok (cmd/redgres, audit, auth, config, database, httpapi, postgresadmin, web)
+  go vet ./... → no findings
+  gofmt -l cmd internal migrations → empty
+  go build -o NUL ./cmd/redgres → success
+  Not run: go test -race, live PostgreSQL 17/18, CI, gitleaks, govulncheck
+Reviewer/date: security/verifier pending
 ```

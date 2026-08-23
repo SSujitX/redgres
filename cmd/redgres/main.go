@@ -13,6 +13,7 @@ import (
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/database"
 	"github.com/SSujitX/redgres/internal/httpapi"
+	"github.com/SSujitX/redgres/internal/postgresadmin"
 	"github.com/SSujitX/redgres/internal/web"
 	"github.com/SSujitX/redgres/migrations"
 )
@@ -59,9 +60,15 @@ func run(args []string) error {
 		return err
 	}
 
+	pg, closePG, err := postgresadmin.Open(context.Background(), cfg)
+	if err != nil {
+		return err
+	}
+	defer closePG()
+
 	srv := &http.Server{
 		Addr:              cfg.Address,
-		Handler:           httpapi.New(cfg, db, assets, log).Handler(),
+		Handler:           httpapi.New(cfg, db, assets, log, pg).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

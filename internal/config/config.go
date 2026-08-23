@@ -38,6 +38,17 @@ type Config struct {
 	AbsoluteSessionTTL time.Duration
 	CookieSecure       bool
 	LogLevel           string
+
+	PostgresHost               string
+	PostgresPort               string
+	PostgresDatabase           string
+	PostgresUser               string
+	PostgresPasswordFile       string
+	PostgresSSLMode            string
+	PostgresSSLRootCert        string
+	PostgresExpectedMajor      int
+	PostgresProtectedDatabases []string
+	PostgresProtectedRoles     []string
 }
 
 func Load(args []string) (Config, error) {
@@ -92,6 +103,9 @@ func Load(args []string) (Config, error) {
 	cfg.LogLevel = strings.ToLower(strings.TrimSpace(cfg.LogLevel))
 	if cfg.Environment == EnvironmentProduction && dotenvApplied {
 		return Config{}, errors.New("REDGRES_ENVIRONMENT: production cannot be selected from a dotenv file")
+	}
+	if err := cfg.loadPostgres(); err != nil {
+		return Config{}, err
 	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err

@@ -10,27 +10,29 @@ import (
 
 	"github.com/SSujitX/redgres/internal/audit"
 	"github.com/SSujitX/redgres/internal/config"
+	"github.com/SSujitX/redgres/internal/postgresadmin"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
 type Server struct {
-	cfg    config.Config
-	db     *sql.DB
-	assets fs.FS
-	log    *slog.Logger
-	audit  audit.Store
+	cfg      config.Config
+	db       *sql.DB
+	assets   fs.FS
+	log      *slog.Logger
+	audit    audit.Store
+	postgres postgresadmin.Inventory
 }
 
-func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger) *Server {
+func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger, postgres postgresadmin.Inventory) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if assets == nil {
 		assets = nopFS{}
 	}
-	return &Server{cfg: cfg, db: db, assets: assets, log: logger, audit: audit.Store{DB: db}}
+	return &Server{cfg: cfg, db: db, assets: assets, log: logger, audit: audit.Store{DB: db}, postgres: postgres}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -55,6 +57,8 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/api/v1/auth/login", s.handleLogin)
 	r.With(s.requireSession, s.requireMutation).Post("/api/v1/auth/logout", s.handleLogout)
 	r.With(s.requireSession).Get("/api/v1/session", s.handleSession)
+	r.With(s.requireSession, s.requireCapability("postgres.read")).Get("/api/v1/postgres/databases", s.handlePostgresDatabases)
+	r.With(s.requireSession, s.requireCapability("postgres.read")).Get("/api/v1/postgres/databases/{db}", s.handlePostgresDatabase)
 	return r
 }
 

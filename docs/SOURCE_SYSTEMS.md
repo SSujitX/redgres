@@ -52,6 +52,7 @@ The resulting 32 bytes are URL-safe base64 encoded and used as a Fernet key. Sto
 ### Known gaps Redgres must not copy
 
 - `drop_database` only explicitly blocks the vault. The final protected set must also block `postgres`, `template0`, `template1`, platform/admin databases, and operator-configured names.
+- `list_databases` / `get_database_info` also under-protect: list only excludes `postgres` and the vault, and details can fetch `postgres` by name. Redgres inventory is stricter (hard-coded + configured names and owners, templates, `datallowconn=false`) and returns identical `404` for protected and missing details.
 - The drop termination query does not exclude `pg_backend_pid()`; all termination logic must exclude the current backend.
 - Static environment credentials and signed client-side session state are weaker than the Redis app’s Argon2id/server-side session model.
 - Brute-force delay uses blocking `time.sleep(1)` and no durable per-IP/username rate-limit state.

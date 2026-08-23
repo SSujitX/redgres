@@ -112,7 +112,7 @@ Use browser-level automation for the responsive shell, search palette, login/ses
 | Gate | Required evidence |
 |---|---|
 | Pull request | Unit + HTTP + frontend, static checks, docs/traceability |
-| Merge to default branch | Wave 0 jobs, plus the PostgreSQL 17/18 × Redis 8.2/8.8 matrix and focused claimed-extension jobs when the change alters PostgreSQL/Redis adapter or installer behavior. Those matrix jobs are not run (and must not be claimed) before adapter code exists. |
+| Merge to default branch | Wave 0 jobs, plus the PostgreSQL 17/18 × Redis 8.2/8.8 matrix and focused claimed-extension jobs when the change alters PostgreSQL/Redis adapter or installer behavior. Redis matrix jobs stay blocked until `redis-ui` has Git provenance. PostgreSQL inventory (PG-001/002) may land with unit/HTTP tests and optional skippable live tests; that is not a COMPATIBILITY.md §6 claim. |
 | Release candidate | Fresh/existing install rehearsal, selected/default version checks, upgrade/rollback, backup/restore |
 | Production cutover | Live preflight, current backup, external TLS/Access tests, operator approval |
 | Legacy retirement | Observation window, parity signoff, restore test, rollback rehearsal |

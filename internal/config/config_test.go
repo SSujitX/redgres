@@ -307,6 +307,32 @@ func TestLoadRejectsSQLiteURIInjection(t *testing.T) {
 	}
 }
 
+func TestLoadIncompletePostgresFails(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_POSTGRES_HOST", "127.0.0.1")
+	_, err := Load(nil)
+	if err == nil || !strings.Contains(err.Error(), "REDGRES_POSTGRES_USER") && !strings.Contains(err.Error(), "REDGRES_POSTGRES_") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidProtectedList(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_POSTGRES_HOST", "127.0.0.1")
+	t.Setenv("REDGRES_POSTGRES_PORT", "5432")
+	t.Setenv("REDGRES_POSTGRES_DATABASE", "postgres")
+	t.Setenv("REDGRES_POSTGRES_USER", "redgres_console")
+	t.Setenv("REDGRES_POSTGRES_PASSWORD_FILE", "./secrets/pg")
+	t.Setenv("REDGRES_POSTGRES_PROTECTED_DATABASES", "bad-name")
+	_, err := Load(nil)
+	if err == nil || !strings.Contains(err.Error(), "REDGRES_POSTGRES_PROTECTED_DATABASES") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), "bad-name") {
+		t.Fatalf("echoed identifier: %v", err)
+	}
+}
+
 func TestLoadFlagErrorOmitsValue(t *testing.T) {
 	isolateConfig(t)
 	_, err := Load([]string{"-session-ttl", "not-a-duration"})

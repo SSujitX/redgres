@@ -58,7 +58,7 @@ Dependency direction is inward: transport depends on use cases; use cases depend
 
 - Go: `go 1.27.0` in `go.mod` (installed/local and CI via `go-version-file`). Official [Go 1.27 release notes](https://go.dev/doc/go1.27) (2026-08) keep the Go 1 compatibility promise. Wave 0 originally considered `go 1.26.7` as the previous-line newest patch; the operator installed 1.27 and Wave 0 builds/tests passed against it with `modernc.org/sqlite` v1.57.0 and `chi` v5.3.2.
 - Router: `github.com/go-chi/chi/v5` `v5.3.2`.
-- PostgreSQL: `github.com/jackc/pgx/v5` and `pgxpool` (not in Wave 0).
+- PostgreSQL: `github.com/jackc/pgx/v5` `v5.10.0` (`pgxpool`). Pin verified 2026-08-23 via `go list -m -versions` / `go list -m -json` against proxy.golang.org (newest stable; Go ≥1.25; MIT). Inventory lives in `internal/postgresadmin`; vault decrypt is not implemented.
 - Redis: `github.com/redis/go-redis/v9` (not in Wave 0).
 - SQLite: `modernc.org/sqlite` `v1.57.0`.
 - Passwords: `golang.org/x/crypto` `v0.55.0` (`argon2.IDKey`, version `0x13`). Interactive owner bootstrap uses `golang.org/x/term` `v0.45.0`. Both are official `go.googlesource.com` modules; `openpgp` is not imported.
