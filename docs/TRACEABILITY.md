@@ -280,5 +280,6 @@ Reviewer/date: Security review approved merge (2026-08-23): no Critical/High/Med
  Verifier approved remaining UI only (not full PG-007). UI reviewer requested
  M1/M2 then approved remediations (2026-08-23): bounded sticky pane; rows after
  selected table; Back to tables; hide other tables below 1024px. L1–L3 applied;
- L4/L5 accepted residuals. Not viewport sign-off. Not COMPATIBILITY.md §6.
+ L4/L5 accepted residuals. Local commit `095ae11` (not pushed). Not viewport
+ sign-off. Not COMPATIBILITY.md §6.
 ```
