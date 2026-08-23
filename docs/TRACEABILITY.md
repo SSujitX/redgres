@@ -219,6 +219,6 @@ Commands executed locally (2026-08-23):
   web: npm run test:run → 22 passed; npm run build → TypeScript 7.0.2 + Vite 8.2.2
 Reviewer/date: UI reviewer approved (2026-08-23) inspector list only; Lows L1–L5
  optional (card chrome, empty copy, truncation live region, schema/table spacing,
- 503 wording). Verifier approved (2026-08-23). Not viewport sign-off. Not full
- PG-007.
+ 503 wording). Verifier approved (2026-08-23) at `ce7cf8b` (not pushed). Not
+ viewport sign-off. Not full PG-007.
 ```
