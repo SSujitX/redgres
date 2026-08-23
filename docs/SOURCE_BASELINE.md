@@ -4,7 +4,7 @@ This file pins the exact source revisions used for Redgres parity work. Fill it 
 
 | System | Local path | Git remote | Commit | Working tree | Recorded at |
 |---|---|---|---|---|---|
-| Redgres | `D:\code\github\Redgres` | `https://github.com/SSujitX/redgres.git` | `52930bd` PG inventory on `master` (`528186a` login/shell; `1b54b01` owner auth) | AUTH-001–005, login/shell, PG-001/002 implemented; AUTH-006, vault, Redis, OPS not started | 2026-08-23 |
+| Redgres | `D:\code\github\Redgres` | `https://github.com/SSujitX/redgres.git` | `4aea8e5` table-list API on `master` (`b2992df` inventory UI; `52930bd` inventory API) | AUTH-001–005, login/shell, PG-001/002, PG-007 table-list API; no rows/UI for tables; AUTH-006, vault, Redis, OPS not started | 2026-08-23 |
 | PostgreSQL console | `D:\code\github\database-app` | `https://github.com/onelifeproject/database-app` | `1c3e8e2fe77345e6a40955a22a28b7bafe6fc4ad` | Clean when recorded | 2026-08-23 |
 | Redis console | `D:\code\github\redis-ui` | No `.git` directory observed during initial review | Establish/import provenance | Runtime artifacts present; source baseline not yet immutable | 2026-08-23 |
 

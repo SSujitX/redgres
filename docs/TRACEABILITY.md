@@ -155,7 +155,7 @@ Decision/ADR: ADR-001, ADR-003
 Source characterization: UI_DESIGN_SYSTEM ledger/inspector; consumes /api/v1/postgres/databases
 Implementation files: web/src/api/postgres.ts; web/src/features/postgres/DatabasesPage.tsx;
  web/src/features/pages/Placeholders.tsx; web/src/styles/globals.css; web/src/App.test.tsx
-Unit tests: App.test.tsx list + unavailable + stale-selection + security flags
+Unit tests: App.test.tsx list + unavailable cases
 Integration tests: none
 Security tests: no healthz; 503 is not an empty healthy cluster; saved credential
  always shown as Not available; no style={{}}; no localStorage
@@ -191,6 +191,7 @@ Commands executed locally (2026-08-23):
   gofmt -l cmd internal migrations → empty
   go build -o NUL ./cmd/redgres → success
   Not run: go test -race, live PostgreSQL 17/18, CI, gitleaks, govulncheck, frontend (no UI change)
-Reviewer/date: Verifier approved (2026-08-23) table-list API only (not full PG-007).
- Security review still pending. Do not treat as COMPATIBILITY.md §6 evidence.
+Reviewer/date: Verifier approved (2026-08-23) table-list API only (not full PG-007)
+ at `4aea8e5` (not pushed). Security review still pending. Do not treat as
+ COMPATIBILITY.md §6 evidence.
 ```
