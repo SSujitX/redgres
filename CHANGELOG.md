@@ -4,6 +4,10 @@ All notable changes to Redgres will be documented here. The project intends to f
 
 ## Unreleased
 
+### Fixed
+
+- Databases details ignore a slower prior selection; long identifiers wrap; details announce loading and show the full security flag set.
+
 ### Added
 
 - Wave 0 compiling foundation: `github.com/SSujitX/redgres` on Go 1.27.0, Chi v5.3.2, `modernc.org/sqlite` v1.57.0, fail-closed Core configuration, checksummed SQLite migrations, `/api/v1/healthz`, embedded React 19.2.8 boot document, and a SHA-pinned CI skeleton.

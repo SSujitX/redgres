@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   errorMessage,
   fetchPostgresDatabase,
@@ -6,6 +6,10 @@ import {
   type DatabaseDetails,
   type DatabaseListItem,
 } from "../../api/postgres";
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
 
 export default function DatabasesPage() {
   const [items, setItems] = useState<DatabaseListItem[] | null>(null);
@@ -15,10 +19,11 @@ export default function DatabasesPage() {
   const [details, setDetails] = useState<DatabaseDetails | null>(null);
   const [detailsError, setDetailsError] = useState("");
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const detailsAbort = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchPostgresDatabases()
+    fetchPostgresDatabases({ signal: controller.signal })
       .then((result) => {
         if (controller.signal.aborted) {
           return;
@@ -32,31 +37,49 @@ export default function DatabasesPage() {
         setItems(null);
         setListError(errorMessage(result.body, "PostgreSQL is unavailable"));
       })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setItems(null);
-          setListError("PostgreSQL is unavailable");
+      .catch((err) => {
+        if (controller.signal.aborted || isAbortError(err)) {
+          return;
         }
+        setItems(null);
+        setListError("PostgreSQL is unavailable");
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      detailsAbort.current?.abort();
+    };
   }, []);
 
   async function openDetails(name: string) {
+    detailsAbort.current?.abort();
+    const controller = new AbortController();
+    detailsAbort.current = controller;
     setSelected(name);
     setDetails(null);
     setDetailsError("");
     setLoadingDetails(true);
     try {
-      const result = await fetchPostgresDatabase(name);
-      if (result.status === 200 && result.body.database?.name) {
-        setDetails(result.body.database);
+      const result = await fetchPostgresDatabase(name, { signal: controller.signal });
+      if (controller.signal.aborted) {
         return;
       }
+      if (result.status === 200 && result.body.database?.name === name) {
+        setDetails(result.body.database);
+        setDetailsError("");
+        return;
+      }
+      setDetails(null);
       setDetailsError(errorMessage(result.body, "Database details are unavailable"));
-    } catch {
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setDetails(null);
       setDetailsError("PostgreSQL is unavailable");
     } finally {
-      setLoadingDetails(false);
+      if (!controller.signal.aborted) {
+        setLoadingDetails(false);
+      }
     }
   }
 
@@ -89,8 +112,8 @@ export default function DatabasesPage() {
                   aria-current={selected === name ? "true" : undefined}
                   onClick={() => void openDetails(name)}
                 >
-                  <span>{name}</span>
-                  <span className="muted-copy">{item.owner ?? ""}</span>
+                  <span className="identifier">{name}</span>
+                  <span className="muted-copy identifier">{item.owner ?? ""}</span>
                 </button>
               </li>
             );
@@ -99,9 +122,13 @@ export default function DatabasesPage() {
       )}
       {truncated ? <p className="form-warning">List truncated at 500 databases.</p> : null}
       {selected ? (
-        <section className="detail-panel" aria-label="Database details">
-          <h2>{selected}</h2>
-          {loadingDetails ? <p className="muted-copy">Loading details.</p> : null}
+        <section className="detail-panel" aria-label="Database details" aria-busy={loadingDetails}>
+          <h2 className="identifier">{selected}</h2>
+          {loadingDetails ? (
+            <p className="muted-copy" role="status">
+              Loading details.
+            </p>
+          ) : null}
           {detailsError ? (
             <p className="form-warning" role="alert">
               {detailsError}
@@ -117,23 +144,39 @@ export default function DatabasesPage() {
 function DetailsFacts({ details }: { details: DatabaseDetails }) {
   return (
     <dl className="fact-list">
-      <Fact label="Owner" value={details.owner ?? "—"} />
-      <Fact label="Size" value={details.size ?? "—"} />
-      <Fact label="Collation" value={details.collation ?? "—"} />
-      <Fact label="Ctype" value={details.ctype ?? "—"} />
-      <Fact label="Connections" value={String(details.connection_count ?? 0)} />
+      <Fact label="Owner" value={details.owner ?? "—"} kind="identifier" />
+      <Fact label="Size" value={details.size ?? "—"} kind="metric" />
+      <Fact label="Collation" value={details.collation ?? "—"} kind="identifier" />
+      <Fact label="Ctype" value={details.ctype ?? "—"} kind="identifier" />
+      <Fact
+        label="Connections"
+        value={details.connection_count == null ? "—" : String(details.connection_count)}
+        kind="metric"
+      />
       <Fact label="PUBLIC CONNECT" value={yesNo(details.security?.public_can_connect)} />
+      <Fact label="Owner is superuser" value={yesNo(details.security?.owner_is_superuser)} />
       <Fact label="Owner can log in" value={yesNo(details.security?.owner_can_login)} />
+      <Fact label="Owner can create databases" value={yesNo(details.security?.owner_createdb)} />
+      <Fact label="Owner can create roles" value={yesNo(details.security?.owner_createrole)} />
+      <Fact label="Owner replication" value={yesNo(details.security?.owner_replication)} />
       <Fact label="Saved credential" value="Not available" />
     </dl>
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({
+  label,
+  value,
+  kind,
+}: {
+  label: string;
+  value: string;
+  kind?: "identifier" | "metric";
+}) {
   return (
     <div>
       <dt>{label}</dt>
-      <dd>{value}</dd>
+      <dd className={kind === "identifier" ? "identifier" : kind === "metric" ? "metric" : undefined}>{value}</dd>
     </div>
   );
 }

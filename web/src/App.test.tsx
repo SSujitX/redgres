@@ -19,6 +19,9 @@ function stubFetch(
   impl: (url: string, init?: RequestInit) => ReturnType<typeof jsonResponse> | Promise<ReturnType<typeof jsonResponse>>,
 ) {
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
     const url = String(input);
     return impl(url, init);
   });
@@ -241,6 +244,15 @@ describe("App session and login", () => {
             name: "project_a",
             owner: "project_a_role",
             size: "12 MB",
+            connection_count: 3,
+            security: {
+              public_can_connect: false,
+              owner_is_superuser: true,
+              owner_can_login: true,
+              owner_createdb: true,
+              owner_createrole: false,
+              owner_replication: false,
+            },
             saved_credential: { status: "not_available", reason: "vault_not_implemented" },
           },
         });
@@ -253,8 +265,74 @@ describe("App session and login", () => {
     expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
     expect(await screen.findByText("Not available")).toBeInTheDocument();
+    expect(screen.getByText("Owner is superuser").closest("div")).toHaveTextContent("Yes");
+    expect(screen.getByText("Owner can create roles").closest("div")).toHaveTextContent("No");
+    expect(screen.getByRole("region", { name: "Database details" })).toHaveAttribute("aria-busy", "false");
     expect(screen.queryByText(/healthy/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
+  });
+
+  it("clears previous details and ignores a slower first selection", async () => {
+    const longName = `project_${"x".repeat(55)}`;
+    let releaseA: () => void = () => {};
+    const blockedA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "k".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, {
+          databases: [
+            { name: "project_a", owner: "owner_a" },
+            { name: longName, owner: "owner_b" },
+          ],
+          truncated: false,
+        });
+      }
+      if (url.includes("/api/v1/postgres/databases/project_a")) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedA.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "stale_owner_a", size: "1 MB" },
+        });
+      }
+      if (url.includes(`/api/v1/postgres/databases/${encodeURIComponent(longName)}`)) {
+        return jsonResponse(200, {
+          database: { name: longName, owner: "owner_b", size: "2 MB" },
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    expect(screen.getByText(longName)).toHaveClass("identifier");
+    fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading details.");
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(longName) }));
+    expect(screen.queryByText("stale_owner_a")).not.toBeInTheDocument();
+    expect(await screen.findByText("owner_b")).toBeInTheDocument();
+    releaseA();
+    await waitFor(() => {
+      expect(screen.queryByText("stale_owner_a")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("heading", { name: longName })).toBeInTheDocument();
   });
 
   it("shows an unavailable PostgreSQL inventory without a fake empty cluster", async () => {

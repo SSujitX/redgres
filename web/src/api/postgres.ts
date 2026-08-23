@@ -34,13 +34,14 @@ export type DatabaseDetails = {
   };
 };
 
-export async function fetchPostgresDatabases() {
-  return apiRequest<DatabaseListPayload & ApiErrorBody>("/api/v1/postgres/databases");
+export async function fetchPostgresDatabases(init: RequestInit = {}) {
+  return apiRequest<DatabaseListPayload & ApiErrorBody>("/api/v1/postgres/databases", init);
 }
 
-export async function fetchPostgresDatabase(name: string) {
+export async function fetchPostgresDatabase(name: string, init: RequestInit = {}) {
   return apiRequest<{ database?: DatabaseDetails } & ApiErrorBody>(
     `/api/v1/postgres/databases/${encodeURIComponent(name)}`,
+    init,
   );
 }
 

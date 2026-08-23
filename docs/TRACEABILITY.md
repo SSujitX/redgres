@@ -155,17 +155,19 @@ Decision/ADR: ADR-001, ADR-003
 Source characterization: UI_DESIGN_SYSTEM ledger/inspector; consumes /api/v1/postgres/databases
 Implementation files: web/src/api/postgres.ts; web/src/features/postgres/DatabasesPage.tsx;
  web/src/features/pages/Placeholders.tsx; web/src/styles/globals.css; web/src/App.test.tsx
-Unit tests: App.test.tsx list + unavailable cases
+Unit tests: App.test.tsx list + unavailable + stale-selection + security flags
 Integration tests: none
 Security tests: no healthz; 503 is not an empty healthy cluster; saved credential
  always shown as Not available; no style={{}}; no localStorage
 Deployment/migration impact: none
 Known limitations: no create/URLs/tables; jsdom cannot prove viewports
 Commands executed locally (2026-08-23):
-  web: npm run test:run → 17 passed; npm run build → TypeScript 7.0.2 + Vite 8.2.2
+  web: npm run test:run → 18 passed; npm run build → TypeScript 7.0.2 + Vite 8.2.2
 Reviewer/date: UI reviewer rejected (2026-08-23) on details race, long-name overflow,
- incomplete security facts, and silent details load. Remediations and re-review are
- uncommitted. Viewports 360/768/1280/1600 and 200% zoom were not opened.
+ incomplete security facts, and silent details load. Remediations: AbortController
+ isolation + name match; `.identifier` wrap; all security flags; aria-busy + status.
+ Re-review approved (2026-08-23). Not viewport sign-off: 360/768/1280/1600 and
+ 200% zoom were not opened.
 ```
 
 ## PostgreSQL table list API (2026-08-23)
