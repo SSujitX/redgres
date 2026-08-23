@@ -227,6 +227,53 @@ describe("App session and login", () => {
     expect(screen.getByLabelText("Username")).toHaveAttribute("aria-invalid", "true");
   });
 
+  it("lists manageable PostgreSQL databases without claiming they are healthy", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "i".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (url.includes("/api/v1/postgres/databases/project_a")) {
+        return jsonResponse(200, {
+          database: {
+            name: "project_a",
+            owner: "project_a_role",
+            size: "12 MB",
+            saved_credential: { status: "not_available", reason: "vault_not_implemented" },
+          },
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Not available")).toBeInTheDocument();
+    expect(screen.queryByText(/healthy/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
+  });
+
+  it("shows an unavailable PostgreSQL inventory without a fake empty cluster", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "j".repeat(64) });
+      }
+      if (url.includes("/api/v1/postgres/databases")) {
+        return jsonResponse(503, { error: { code: "dependency_unavailable", message: "PostgreSQL is unavailable" } });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("PostgreSQL is unavailable");
+    expect(screen.queryByText("No manageable project databases.")).not.toBeInTheDocument();
+  });
+
   it("opens and closes the navigation drawer", async () => {
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {

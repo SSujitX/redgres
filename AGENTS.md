@@ -6,7 +6,7 @@ Repository-local engineering skills are vendored under `.agents/skills`. Read [.
 
 ## Current truth
 
-Redgres has a compiling Wave 0 foundation, owner auth, a browser login/shell, and read-only PostgreSQL inventory (`GET /api/v1/postgres/databases`). No vault decrypt, mutations, Redis adapter, or installer is implemented. Target documentation is not evidence that those features exist.
+Redgres has a compiling Wave 0 foundation, owner auth, a browser login/shell, and read-only PostgreSQL inventory (API + Databases page). No vault decrypt, mutations, Redis adapter, or installer is implemented. Target documentation is not evidence that those features exist.
 
 The two source systems are local sibling repositories:
 

@@ -103,7 +103,7 @@ Security tests: login never calls healthz; generic 401; 429 Retry-After; CSRF he
  password not left in the form; no style={{}}; login catch is generic (no control-plane text)
 Deployment/migration impact: none. Vite login requires REDGRES_BASE_URL=http://127.0.0.1:5173
 Known limitations: no URL routes; no /status; no server search; jsdom cannot prove viewports
- or 200% zoom; Node 25.x local frontend evidence; AUTH-006 / PG / Redis still absent
+ or 200% zoom; Node 25.x local frontend evidence; AUTH-006 / Redis still absent
 Commands executed locally (2026-08-23):
   web: npm run test:run → 15 passed (App.test 13, nav.test 2); Node v25.3.0
   web: npm run build → TypeScript 7.0.2 + Vite 8.2.2; built index.html has
@@ -130,8 +130,7 @@ Security tests: protected/missing collapse to 404; canary DSN not returned; no-s
  no vault query; password file only
 Deployment/migration impact: none. 001_initial.sql unchanged. Production serve now
  requires a complete admin PostgreSQL connection.
-Known limitations: UI still placeholder; PG-003–012 / AUTH-006 / Redis not started;
- live PG 17/18 and race/CI unproven
+Known limitations: PG-003–012 / AUTH-006 / Redis not started; live PG 17/18 and race/CI unproven
 Commands executed locally (2026-08-23):
   go list -m -versions github.com/jackc/pgx/v5 → newest stable v5.10.0
   go list -m -json github.com/jackc/pgx/v5@v5.10.0 → 2026-06-03, Go 1.25.0, MIT pin
@@ -146,4 +145,23 @@ Reviewer/date: Verifier approved (2026-08-23) PG-001/002 at `52930bd` + pin `260
  (`TestLoadRejectsSSLRootCertKeywordInjection`). Residual Lows are owner-static
  capabilities, case-sensitive deny names, and unpinned search_path. Do not treat
  this as COMPATIBILITY.md §6 evidence.
+```
+
+## PostgreSQL inventory UI (2026-08-23)
+
+```text
+Requirement: PG-001/002 (UI only)
+Decision/ADR: ADR-001, ADR-003
+Source characterization: UI_DESIGN_SYSTEM ledger/inspector; consumes /api/v1/postgres/databases
+Implementation files: web/src/api/postgres.ts; web/src/features/postgres/DatabasesPage.tsx;
+ web/src/features/pages/Placeholders.tsx; web/src/styles/globals.css; web/src/App.test.tsx
+Unit tests: App.test.tsx list + unavailable cases
+Integration tests: none
+Security tests: no healthz; 503 is not an empty healthy cluster; saved credential
+ always shown as Not available; no style={{}}; no localStorage
+Deployment/migration impact: none
+Known limitations: no create/URLs/tables; jsdom cannot prove viewports
+Commands executed locally (2026-08-23):
+  web: npm run test:run → 17 passed; npm run build → TypeScript 7.0.2 + Vite 8.2.2
+Reviewer/date: UI reviewer pending
 ```
