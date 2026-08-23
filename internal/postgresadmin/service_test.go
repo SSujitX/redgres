@@ -124,6 +124,25 @@ func TestServiceTablesCapsAt500(t *testing.T) {
 	}
 }
 
+func TestMemoryCatalogListTablesValidatesName(t *testing.T) {
+	cat := &MemoryCatalog{}
+	if _, err := cat.ListTables(context.Background(), "bad-name"); !errors.Is(err, ErrInvalidIdentifier) {
+		t.Fatalf("err = %v", err)
+	}
+	if cat.LastTablesDB != "" {
+		t.Fatal("invalid name must not record LastTablesDB")
+	}
+}
+
+func TestListTablesSQLIsBounded(t *testing.T) {
+	if !strings.Contains(listTablesSQL, "LIMIT 501") {
+		t.Fatal("listTablesSQL must bound the adapter fetch")
+	}
+	if !strings.Contains(tableSearchPath, "pg_temp") {
+		t.Fatal("search_path must include pg_temp so it is not implicit-first")
+	}
+}
+
 func TestServiceTablesEmptyManageableDatabase(t *testing.T) {
 	got, err := NewService(&MemoryCatalog{
 		Rows: []CatalogRow{projectRow("project_a", "project_a_role")},

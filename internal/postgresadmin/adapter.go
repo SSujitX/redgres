@@ -188,20 +188,32 @@ func (c PoolCatalog) List(ctx context.Context) ([]CatalogRow, error) {
 	return out, nil
 }
 
+const tableSearchPath = "pg_catalog,information_schema,pg_temp"
+
 const listTablesSQL = `
 SELECT table_schema, table_name
 FROM information_schema.tables
 WHERE table_type = 'BASE TABLE'
   AND table_schema NOT IN ('pg_catalog', 'information_schema')
 ORDER BY table_schema, table_name
+LIMIT 501
 `
 
 func (c PoolCatalog) ListTables(ctx context.Context, database string) ([]TableItem, error) {
+	if err := ValidateIdentifier(database); err != nil {
+		return nil, err
+	}
 	if c.pool == nil {
 		return nil, ErrUnavailable
 	}
 	cfg := c.pool.Config()
 	connCfg := cfg.ConnConfig.Copy()
+	params := make(map[string]string, len(connCfg.RuntimeParams)+1)
+	for key, value := range connCfg.RuntimeParams {
+		params[key] = value
+	}
+	params["search_path"] = tableSearchPath
+	connCfg.RuntimeParams = params
 	connCfg.Database = database
 	connectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -210,7 +222,7 @@ func (c PoolCatalog) ListTables(ctx context.Context, database string) ([]TableIt
 		return nil, ErrUnavailable
 	}
 	defer conn.Close(context.Background())
-	if _, err := conn.Exec(connectCtx, "SELECT pg_catalog.set_config('search_path', 'pg_catalog,information_schema', false)"); err != nil {
+	if _, err := conn.Exec(connectCtx, "SELECT pg_catalog.set_config('search_path', $1, false)", tableSearchPath); err != nil {
 		return nil, ErrUnavailable
 	}
 	rows, err := conn.Query(connectCtx, listTablesSQL)
@@ -220,6 +232,9 @@ func (c PoolCatalog) ListTables(ctx context.Context, database string) ([]TableIt
 	defer rows.Close()
 	var out []TableItem
 	for rows.Next() {
+		if len(out) >= listCap+1 {
+			break
+		}
 		var item TableItem
 		if err := rows.Scan(&item.Schema, &item.Name); err != nil {
 			return nil, ErrUnavailable

@@ -32,6 +32,9 @@ func (m *MemoryCatalog) Lookup(_ context.Context, name string) (CatalogRow, erro
 }
 
 func (m *MemoryCatalog) ListTables(_ context.Context, database string) ([]TableItem, error) {
+	if err := ValidateIdentifier(database); err != nil {
+		return nil, err
+	}
 	m.LastTablesDB = database
 	if m.TablesErr != nil {
 		return nil, m.TablesErr

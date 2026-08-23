@@ -7,6 +7,7 @@ All notable changes to Redgres will be documented here. The project intends to f
 ### Fixed
 
 - Databases details ignore a slower prior selection; long identifiers wrap; details announce loading and show the full security flag set.
+- Table-list connections pin `search_path` (including `pg_temp`) at startup, re-validate the database name in the adapter, and fetch at most 501 catalog rows.
 
 ### Added
 
