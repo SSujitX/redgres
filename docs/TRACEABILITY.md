@@ -248,6 +248,9 @@ Commands executed locally (2026-08-23):
   Verifier also ran: go test -race -count=1 ./internal/postgresadmin/ ./internal/httpapi/ → ok
   Not run: full ./... race, live PostgreSQL 17/18, CI, frontend
 Reviewer/date: Verifier approved (2026-08-23) row-browse API only (not full PG-007)
- at `2dfaec7` (not pushed). Security review still pending. Do not treat as
+ at `2dfaec7` (not pushed). Security review approved merge (2026-08-23): no
+ Critical/High/Medium. Accepted Lows: L1 LIKE `%`/`_` remain wildcards (documented);
+ L2 adapter does not re-clamp limit/q (HTTP+service clamp today); L3 no HTTP test
+ that marshal failure never emits 200 (writeJSON is fail-closed). Do not treat as
  COMPATIBILITY.md §6 evidence.
 ```
