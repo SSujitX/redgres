@@ -50,6 +50,29 @@ func (s *Server) handlePostgresDatabase(w http.ResponseWriter, r *http.Request) 
 	s.writeJSON(w, r, http.StatusOK, postgresDetailsBody{Database: details, RequestID: requestID(r)})
 }
 
+type postgresTablesBody struct {
+	postgresadmin.TableListResult
+	RequestID string `json:"request_id"`
+}
+
+func (s *Server) handlePostgresTables(w http.ResponseWriter, r *http.Request) {
+	name, err := decodePathIdentifier(chi.URLParam(r, "db"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid database name")
+		return
+	}
+	if s.postgres == nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	result, err := s.postgres.Tables(r.Context(), name)
+	if err != nil {
+		s.writePostgresError(w, r, err)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, postgresTablesBody{TableListResult: result, RequestID: requestID(r)})
+}
+
 func decodePathIdentifier(raw string) (string, error) {
 	name, err := url.PathUnescape(raw)
 	if err != nil {

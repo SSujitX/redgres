@@ -101,6 +101,6 @@ The name had no obvious exact software-project collision in a quick web search, 
 
 ## Current status
 
-Status: **Wave 0 foundation, owner auth, login/shell, and PostgreSQL inventory**. Redis, vault decrypt, mutations, and installer behavior are not implemented. The unauthenticated login route does not call `/api/v1/healthz`.
+Status: **Wave 0 foundation, owner auth, login/shell, PostgreSQL inventory, and table-list API**. Redis, vault decrypt, mutations, row browse, and installer behavior are not implemented. The unauthenticated login route does not call `/api/v1/healthz`.
 
 No source code from either existing application has been copied into this repository. Do not decommission either application based only on these documents.

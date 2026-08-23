@@ -58,6 +58,7 @@ func (s *Server) Handler() http.Handler {
 	r.With(s.requireSession, s.requireMutation).Post("/api/v1/auth/logout", s.handleLogout)
 	r.With(s.requireSession).Get("/api/v1/session", s.handleSession)
 	r.With(s.requireSession, s.requireCapability("postgres.read")).Get("/api/v1/postgres/databases", s.handlePostgresDatabases)
+	r.With(s.requireSession, s.requireCapability("postgres.read")).Get("/api/v1/postgres/databases/{db}/tables", s.handlePostgresTables)
 	r.With(s.requireSession, s.requireCapability("postgres.read")).Get("/api/v1/postgres/databases/{db}", s.handlePostgresDatabase)
 	return r
 }

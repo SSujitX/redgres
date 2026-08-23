@@ -75,6 +75,38 @@ func (s *Service) Details(ctx context.Context, name string) (DatabaseDetails, er
 	}, nil
 }
 
+func (s *Service) Tables(ctx context.Context, name string) (TableListResult, error) {
+	if err := ValidateIdentifier(name); err != nil {
+		return TableListResult{}, err
+	}
+	if s == nil || s.catalog == nil {
+		return TableListResult{}, ErrUnavailable
+	}
+	if s.policy.DatabaseDenied(name) {
+		return TableListResult{}, ErrNotFound
+	}
+	row, err := s.catalog.Lookup(ctx, name)
+	if err != nil {
+		return TableListResult{}, mapCatalogError(err)
+	}
+	if !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate) {
+		return TableListResult{}, ErrNotFound
+	}
+	items, err := s.catalog.ListTables(ctx, row.Name)
+	if err != nil {
+		return TableListResult{}, mapCatalogError(err)
+	}
+	out := TableListResult{Tables: make([]TableItem, 0, len(items))}
+	for _, item := range items {
+		if len(out.Tables) >= listCap {
+			out.Truncated = true
+			break
+		}
+		out.Tables = append(out.Tables, item)
+	}
+	return out, nil
+}
+
 func mapCatalogError(err error) error {
 	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidIdentifier) || errors.Is(err, ErrUnavailable) {
 		return err

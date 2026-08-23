@@ -10,7 +10,7 @@ import (
 )
 
 func testService(rows []CatalogRow) *Service {
-	return NewService(MemoryCatalog{Rows: rows}, NewPolicy(config.Config{
+	return NewService(&MemoryCatalog{Rows: rows}, NewPolicy(config.Config{
 		PostgresDatabase: "postgres",
 		PostgresUser:     "redgres_console",
 	}))
@@ -63,11 +63,85 @@ func TestServiceUnavailableWithoutCatalog(t *testing.T) {
 	if _, err := svc.Details(context.Background(), "project_a"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("details: %v", err)
 	}
+	if _, err := svc.Tables(context.Background(), "project_a"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("tables: %v", err)
+	}
 }
 
 func TestServiceMapsCanaryErrors(t *testing.T) {
-	svc := NewService(MemoryCatalog{Err: errors.New("postgresql://canary:secret@127.0.0.1/db")}, NewPolicy(config.Config{}))
+	svc := NewService(&MemoryCatalog{Err: errors.New("postgresql://canary:secret@127.0.0.1/db")}, NewPolicy(config.Config{}))
 	_, err := svc.List(context.Background())
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("leaked %v", err)
+	}
+}
+
+func TestServiceTablesRequiresManageableDatabase(t *testing.T) {
+	cat := &MemoryCatalog{
+		Rows: []CatalogRow{projectRow("project_a", "project_a_role")},
+		Tables: map[string][]TableItem{
+			"project_a": {{Schema: "public", Name: "items"}},
+		},
+	}
+	svc := NewService(cat, NewPolicy(config.Config{PostgresDatabase: "postgres"}))
+	got, err := svc.Tables(context.Background(), "project_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tables) != 1 || got.Tables[0].Name != "items" || got.Truncated {
+		t.Fatalf("tables = %#v", got)
+	}
+	if cat.LastTablesDB != "project_a" {
+		t.Fatalf("LastTablesDB = %q", cat.LastTablesDB)
+	}
+	cat.LastTablesDB = ""
+	if _, err := svc.Tables(context.Background(), "postgres"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("protected: %v", err)
+	}
+	if cat.LastTablesDB != "" {
+		t.Fatal("ListTables must not run for a protected name")
+	}
+}
+
+func TestServiceTablesCapsAt500(t *testing.T) {
+	items := make([]TableItem, 501)
+	for i := range items {
+		items[i] = TableItem{Schema: "public", Name: "t"}
+	}
+	svc := NewService(&MemoryCatalog{
+		Rows:   []CatalogRow{projectRow("project_a", "project_a_role")},
+		Tables: map[string][]TableItem{"project_a": items},
+	}, NewPolicy(config.Config{}))
+	got, err := svc.Tables(context.Background(), "project_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tables) != 500 || !got.Truncated {
+		t.Fatalf("cap = %#v", got)
+	}
+}
+
+func TestServiceTablesEmptyManageableDatabase(t *testing.T) {
+	got, err := NewService(&MemoryCatalog{
+		Rows: []CatalogRow{projectRow("project_a", "project_a_role")},
+	}, NewPolicy(config.Config{})).Tables(context.Background(), "project_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tables == nil || len(got.Tables) != 0 || got.Truncated {
+		t.Fatalf("empty = %#v", got)
+	}
+}
+
+func TestServiceTablesMapsCanaryErrors(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows:      []CatalogRow{projectRow("project_a", "project_a_role")},
+		TablesErr: errors.New("postgresql://canary:secret@127.0.0.1/db"),
+	}, NewPolicy(config.Config{}))
+	_, err := svc.Tables(context.Background(), "project_a")
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v", err)
 	}
@@ -80,5 +154,8 @@ func TestServiceRejectsInvalidDetailsName(t *testing.T) {
 	svc := testService(nil)
 	if _, err := svc.Details(context.Background(), "bad-name"); !errors.Is(err, ErrInvalidIdentifier) {
 		t.Fatalf("err = %v", err)
+	}
+	if _, err := svc.Tables(context.Background(), "bad-name"); !errors.Is(err, ErrInvalidIdentifier) {
+		t.Fatalf("tables: %v", err)
 	}
 }

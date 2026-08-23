@@ -27,11 +27,13 @@ type CatalogRow struct {
 type Catalog interface {
 	List(ctx context.Context) ([]CatalogRow, error)
 	Lookup(ctx context.Context, name string) (CatalogRow, error)
+	ListTables(ctx context.Context, database string) ([]TableItem, error)
 }
 
 type Inventory interface {
 	List(ctx context.Context) (ListResult, error)
 	Details(ctx context.Context, name string) (DatabaseDetails, error)
+	Tables(ctx context.Context, name string) (TableListResult, error)
 }
 
 type ListItem struct {
@@ -70,6 +72,16 @@ type DatabaseDetails struct {
 	ConnectionCount int             `json:"connection_count"`
 	Security        SecurityStatus  `json:"security"`
 	SavedCredential SavedCredential `json:"saved_credential"`
+}
+
+type TableItem struct {
+	Schema string `json:"schema"`
+	Name   string `json:"name"`
+}
+
+type TableListResult struct {
+	Tables    []TableItem `json:"tables"`
+	Truncated bool        `json:"truncated"`
 }
 
 func vaultNotAvailable() SavedCredential {

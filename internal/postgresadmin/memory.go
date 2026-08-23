@@ -3,11 +3,14 @@ package postgresadmin
 import "context"
 
 type MemoryCatalog struct {
-	Rows []CatalogRow
-	Err  error
+	Rows         []CatalogRow
+	Err          error
+	Tables       map[string][]TableItem
+	TablesErr    error
+	LastTablesDB string
 }
 
-func (m MemoryCatalog) List(context.Context) ([]CatalogRow, error) {
+func (m *MemoryCatalog) List(context.Context) ([]CatalogRow, error) {
 	if m.Err != nil {
 		return nil, m.Err
 	}
@@ -16,7 +19,7 @@ func (m MemoryCatalog) List(context.Context) ([]CatalogRow, error) {
 	return out, nil
 }
 
-func (m MemoryCatalog) Lookup(_ context.Context, name string) (CatalogRow, error) {
+func (m *MemoryCatalog) Lookup(_ context.Context, name string) (CatalogRow, error) {
 	if m.Err != nil {
 		return CatalogRow{}, m.Err
 	}
@@ -26,4 +29,18 @@ func (m MemoryCatalog) Lookup(_ context.Context, name string) (CatalogRow, error
 		}
 	}
 	return CatalogRow{}, ErrNotFound
+}
+
+func (m *MemoryCatalog) ListTables(_ context.Context, database string) ([]TableItem, error) {
+	m.LastTablesDB = database
+	if m.TablesErr != nil {
+		return nil, m.TablesErr
+	}
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	items := m.Tables[database]
+	out := make([]TableItem, len(items))
+	copy(out, items)
+	return out, nil
 }

@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz` unit tests only; no `/status` or search | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP; PG-003–012 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API only; PG-003–006/008–012 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | TODO | Planned |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -155,7 +155,7 @@ Decision/ADR: ADR-001, ADR-003
 Source characterization: UI_DESIGN_SYSTEM ledger/inspector; consumes /api/v1/postgres/databases
 Implementation files: web/src/api/postgres.ts; web/src/features/postgres/DatabasesPage.tsx;
  web/src/features/pages/Placeholders.tsx; web/src/styles/globals.css; web/src/App.test.tsx
-Unit tests: App.test.tsx list + unavailable cases
+Unit tests: App.test.tsx list + unavailable + stale-selection + security flags
 Integration tests: none
 Security tests: no healthz; 503 is not an empty healthy cluster; saved credential
  always shown as Not available; no style={{}}; no localStorage
@@ -163,5 +163,34 @@ Deployment/migration impact: none
 Known limitations: no create/URLs/tables; jsdom cannot prove viewports
 Commands executed locally (2026-08-23):
   web: npm run test:run → 17 passed; npm run build → TypeScript 7.0.2 + Vite 8.2.2
-Reviewer/date: UI reviewer pending
+Reviewer/date: UI reviewer rejected (2026-08-23) on details race, long-name overflow,
+ incomplete security facts, and silent details load. Remediations and re-review are
+ uncommitted. Viewports 360/768/1280/1600 and 200% zoom were not opened.
+```
+
+## PostgreSQL table list API (2026-08-23)
+
+```text
+Requirement: PG-007 (table list only; no rows, search, truncate, or UI)
+Decision/ADR: ADR-001, ADR-003, ADR-008 (majors already gated on inventory Open)
+Source characterization: database-app list_tables at 1c3e8e2
+  (information_schema BASE TABLE, exclude pg_catalog/information_schema)
+Implementation files: internal/postgresadmin/{types,memory,service,adapter}.go;
+ internal/httpapi/{server,postgres_routes}.go
+Unit tests: internal/postgresadmin/service_test.go (manageable/protected/cap/empty/canary);
+ internal/httpapi/postgres_routes_test.go (session/503/200/404 collapse/400/405/canary)
+Integration tests: none run (no live PostgreSQL claimed)
+Security tests: protected/missing collapse to 404 before ListTables; canary DSN not returned;
+ no-store; identifier 400 before query; empty 200 only after successful policy+lookup
+Deployment/migration impact: none. 001_initial.sql unchanged. go.mod/config unchanged.
+Known limitations: no table UI, row browse, identifier quoting of schema/table names,
+ vault, mutations; live PG 17/18 and race/CI unproven
+Commands executed locally (2026-08-23):
+  go test -count=1 ./... → ok (cmd/redgres, audit, auth, config, database, httpapi, postgresadmin, web)
+  go vet ./... → no findings
+  gofmt -l cmd internal migrations → empty
+  go build -o NUL ./cmd/redgres → success
+  Not run: go test -race, live PostgreSQL 17/18, CI, gitleaks, govulncheck, frontend (no UI change)
+Reviewer/date: Verifier approved (2026-08-23) table-list API only (not full PG-007).
+ Security review still pending. Do not treat as COMPATIBILITY.md §6 evidence.
 ```

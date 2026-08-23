@@ -97,7 +97,7 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 | POST | `/api/v1/postgres/databases/{db}/credentials/rotate` | Rotate; typed confirmation; `no-store` |
 | POST | `/api/v1/postgres/databases/{db}/duplicate` | Starts bounded operation; may return 202 + operation ID |
 | DELETE | `/api/v1/postgres/databases/{db}` | Exact confirmation + owner password |
-| GET | `/api/v1/postgres/databases/{db}/tables` | Schemas/tables |
+| GET | `/api/v1/postgres/databases/{db}/tables` | BASE TABLE names (implemented; cap 500) |
 | GET | `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` | Bounded rows/search |
 | DELETE | `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` | PK values + confirmations/reauth |
 | POST | `/api/v1/postgres/databases/{db}/truncate` | Explicit target confirmation + reauth |
@@ -105,7 +105,7 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 
 Database/role names in URL segments are decoded then validated. Transport validation never replaces PostgreSQL identifier quoting.
 
-**Implemented now:** `GET /api/v1/postgres/databases` and `GET /api/v1/postgres/databases/{db}` require a session and the `postgres.read` capability. List is unpaginated and hard-capped at 500 (`truncated: true` if more manageable names exist). Details include owner, size, collation/ctype, locale fields, connection count, and security flags. `saved_credential.status` is always `not_available` with reason `vault_not_implemented` in this slice; no vault query or decrypt occurs. Protected names, protected owners, templates, and `datallowconn=false` are omitted from the list and return the same `404` `not_found` as a missing database (not `protected_resource`). Invalid identifiers return `400` `validation_error` without querying. Missing or failed admin PostgreSQL returns `503` `dependency_unavailable` and never a healthy empty list. `GET /api/v1/healthz` does not ping PostgreSQL.
+**Implemented now:** `GET /api/v1/postgres/databases`, `GET /api/v1/postgres/databases/{db}`, and `GET /api/v1/postgres/databases/{db}/tables` require a session and the `postgres.read` capability. List and table list are unpaginated and hard-capped at 500 (`truncated: true` if more rows exist). Details include owner, size, collation/ctype, locale fields, connection count, and security flags. `saved_credential.status` is always `not_available` with reason `vault_not_implemented` in this slice; no vault query or decrypt occurs. Table list returns `{schema,name}` for `information_schema` `BASE TABLE` rows outside `pg_catalog` and `information_schema`. Schema/table names are result columns; they are not used as SQL identifiers in this slice. An empty manageable database returns `200` with `tables: []`. Protected names, protected owners, templates, and `datallowconn=false` are omitted from the list and return the same `404` `not_found` as a missing database (not `protected_resource`); table list uses the same collapse and does not open a per-database connection for those names. Invalid identifiers return `400` `validation_error` without querying. Missing or failed admin PostgreSQL, or a failed per-database table connect/query, returns `503` `dependency_unavailable` and never a healthy empty list (empty `tables: []` is only for a successful query of a manageable database). `GET /api/v1/healthz` does not ping PostgreSQL.
 
 ## Redis endpoints
 

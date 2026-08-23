@@ -188,6 +188,50 @@ func (c PoolCatalog) List(ctx context.Context) ([]CatalogRow, error) {
 	return out, nil
 }
 
+const listTablesSQL = `
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_type = 'BASE TABLE'
+  AND table_schema NOT IN ('pg_catalog', 'information_schema')
+ORDER BY table_schema, table_name
+`
+
+func (c PoolCatalog) ListTables(ctx context.Context, database string) ([]TableItem, error) {
+	if c.pool == nil {
+		return nil, ErrUnavailable
+	}
+	cfg := c.pool.Config()
+	connCfg := cfg.ConnConfig.Copy()
+	connCfg.Database = database
+	connectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(connectCtx, connCfg)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	defer conn.Close(context.Background())
+	if _, err := conn.Exec(connectCtx, "SELECT pg_catalog.set_config('search_path', 'pg_catalog,information_schema', false)"); err != nil {
+		return nil, ErrUnavailable
+	}
+	rows, err := conn.Query(connectCtx, listTablesSQL)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	defer rows.Close()
+	var out []TableItem
+	for rows.Next() {
+		var item TableItem
+		if err := rows.Scan(&item.Schema, &item.Name); err != nil {
+			return nil, ErrUnavailable
+		}
+		out = append(out, item)
+	}
+	if rows.Err() != nil {
+		return nil, ErrUnavailable
+	}
+	return out, nil
+}
+
 func (c PoolCatalog) Lookup(ctx context.Context, name string) (CatalogRow, error) {
 	row, err := scanCatalogRow(c.pool.QueryRow(ctx, catalogSQL+" WHERE d.datname = $1", name))
 	if err != nil {

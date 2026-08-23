@@ -47,7 +47,7 @@ func TestPostgresListUnavailableWithoutAdapter(t *testing.T) {
 }
 
 func TestPostgresListReturnsManageableOnly(t *testing.T) {
-	svc := postgresadmin.NewService(postgresadmin.MemoryCatalog{Rows: []postgresadmin.CatalogRow{
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{Rows: []postgresadmin.CatalogRow{
 		{Name: "postgres", Owner: "postgres", AllowConn: true},
 		{Name: "project_a", Owner: "project_a_role", AllowConn: true},
 	}}, postgresadmin.NewPolicy(config.Config{PostgresDatabase: "postgres", PostgresUser: "redgres_console"}))
@@ -81,7 +81,7 @@ func TestPostgresListReturnsManageableOnly(t *testing.T) {
 }
 
 func TestPostgresDetailsProtectedIsNotFound(t *testing.T) {
-	svc := postgresadmin.NewService(postgresadmin.MemoryCatalog{Rows: []postgresadmin.CatalogRow{
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{Rows: []postgresadmin.CatalogRow{
 		{Name: "project_a", Owner: "project_a_role", AllowConn: true, SizePretty: "1 MB"},
 	}}, postgresadmin.NewPolicy(config.Config{PostgresDatabase: "postgres", PostgresProtectedDatabases: []string{"ops_extra"}}))
 	srv := testServerWithPostgres(t, svc)
@@ -101,7 +101,7 @@ func TestPostgresDetailsProtectedIsNotFound(t *testing.T) {
 }
 
 func TestPostgresDetailsRejectsInvalidName(t *testing.T) {
-	srv := testServerWithPostgres(t, postgresadmin.NewService(postgresadmin.MemoryCatalog{}, postgresadmin.NewPolicy(config.Config{})))
+	srv := testServerWithPostgres(t, postgresadmin.NewService(&postgresadmin.MemoryCatalog{}, postgresadmin.NewPolicy(config.Config{})))
 	seedOwner(t, srv)
 	h := srv.Handler()
 	cookie, csrf := login(t, h)
@@ -124,8 +124,163 @@ func TestPostgresListRejectsPOST(t *testing.T) {
 	}
 }
 
+func TestPostgresTablesRequiresSession(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/postgres/databases/project_a/tables", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestPostgresTablesUnavailableWithoutAdapter(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a/tables", cookie, csrf, ""))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "dependency_unavailable") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"tables"`) {
+		t.Fatal("unavailable tables must not look healthy")
+	}
+}
+
+func TestPostgresTablesReturnsManageableOnly(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		Rows: []postgresadmin.CatalogRow{
+			{Name: "project_a", Owner: "project_a_role", AllowConn: true},
+		},
+		Tables: map[string][]postgresadmin.TableItem{
+			"project_a": {{Schema: "public", Name: "items"}},
+		},
+	}, postgresadmin.NewPolicy(config.Config{PostgresDatabase: "postgres"}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a/tables", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("cache = %q", rec.Header().Get("Cache-Control"))
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	tables, _ := body["tables"].([]any)
+	if len(tables) != 1 {
+		t.Fatalf("tables = %#v", body["tables"])
+	}
+	row, _ := tables[0].(map[string]any)
+	if row["schema"] != "public" || row["name"] != "items" {
+		t.Fatalf("row = %#v", row)
+	}
+	if body["truncated"] != false {
+		t.Fatalf("truncated = %#v", body["truncated"])
+	}
+}
+
+func TestPostgresTablesEmptyIsHealthy(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		Rows: []postgresadmin.CatalogRow{
+			{Name: "project_a", Owner: "project_a_role", AllowConn: true},
+		},
+	}, postgresadmin.NewPolicy(config.Config{}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a/tables", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	tables, ok := body["tables"].([]any)
+	if !ok || len(tables) != 0 {
+		t.Fatalf("empty tables = %#v", body["tables"])
+	}
+}
+
+func TestPostgresTablesProtectedIsNotFound(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{Rows: []postgresadmin.CatalogRow{
+		{Name: "project_a", Owner: "project_a_role", AllowConn: true},
+	}}, postgresadmin.NewPolicy(config.Config{PostgresDatabase: "postgres", PostgresProtectedDatabases: []string{"ops_extra"}}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	for _, name := range []string{"postgres", "template0", "template1", "database_console_vault", "ops_extra", "missing_db"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/"+name+"/tables", cookie, csrf, ""))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s status = %d %s", name, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `"not_found"`) {
+			t.Fatalf("%s body = %s", name, rec.Body.String())
+		}
+	}
+}
+
+func TestPostgresTablesRejectsInvalidName(t *testing.T) {
+	srv := testServerWithPostgres(t, postgresadmin.NewService(&postgresadmin.MemoryCatalog{}, postgresadmin.NewPolicy(config.Config{})))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/bad-name/tables", cookie, csrf, ""))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostgresTablesRejectsPOST(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/postgres/databases/project_a/tables", cookie, csrf, `{}`))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestPostgresTablesCanaryErrorIsRedacted(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		Rows: []postgresadmin.CatalogRow{
+			{Name: "project_a", Owner: "project_a_role", AllowConn: true},
+		},
+		TablesErr: errors.New("postgresql://canary:secret@127.0.0.1/db"),
+	}, postgresadmin.NewPolicy(config.Config{}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a/tables", cookie, csrf, ""))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "canary") || strings.Contains(rec.Body.String(), "secret") {
+		t.Fatalf("leaked %s", rec.Body.String())
+	}
+}
+
 func TestPostgresListCanaryErrorIsRedacted(t *testing.T) {
-	svc := postgresadmin.NewService(postgresadmin.MemoryCatalog{Err: errors.New("postgresql://canary:secret@127.0.0.1/db")}, postgresadmin.NewPolicy(config.Config{}))
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{Err: errors.New("postgresql://canary:secret@127.0.0.1/db")}, postgresadmin.NewPolicy(config.Config{}))
 	srv := testServerWithPostgres(t, svc)
 	seedOwner(t, srv)
 	h := srv.Handler()
