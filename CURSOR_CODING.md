@@ -8,19 +8,19 @@ Open `D:\code\github\Redgres\Redgres.code-workspace` in Cursor and use Agent mod
 
 If project commands do not appear after pulling/creating them, reload the Cursor window and type `/` again.
 
-## Start or continue the roadmap
+## One command for normal development
 
-Use this on the first day or whenever no specific unfinished issue needs priority:
+Use this every time you open a new Cursor Agent chat, whether the repository is clean or has unfinished work:
 
 ```text
 /start-redgres
 ```
 
-It reconstructs state, chooses the next dependency-ready slice, plans, implements, verifies, updates documentation, and continues through safe local work.
+It reconstructs state, recovers the current unfinished slice first when necessary, then chooses dependency-ready slices, plans, implements, verifies, updates documentation, creates reviewed local checkpoint commits, and continues through safe local work. You do not need the previous chat.
 
 ## Resume after stopping yesterday
 
-Use this when files, a branch, worktree, or tests may be unfinished:
+This is an optional explicit recovery command when you want to emphasize that files, a branch, worktree, or tests are unfinished:
 
 ```text
 /resume-redgres
@@ -62,8 +62,8 @@ The fixer reproduces first, adds a regression test where practical, makes the sm
 
 | Situation | Command |
 |---|---|
-| New session; continue building the planned product | `/start-redgres` |
-| You stopped with unfinished changes | `/resume-redgres` |
+| New session, clean or unfinished; continue building the product | `/start-redgres` |
+| You specifically want a recovery-only emphasis | `/resume-redgres` |
 | You only want a report | `/status-redgres` |
 | You know a bug/error/test failure | `/fix-redgres <issue>` |
 
@@ -71,6 +71,6 @@ Do not run multiple writing commands against the same checkout simultaneously. `
 
 ## What remains automatic
 
-Every command uses the persistent Cursor rules, `AGENTS.md`, Git, roadmap, traceability, relevant skills, and complete context packets for subagents. Implementation agents must update canonical documentation in the same change; independent reviewers reject unsupported claims, stale docs, invented APIs, missing tests, and unsafe scope expansion.
+Every Agent chat in this repository also loads `.cursor/rules/06-continuous-orchestration.mdc`, so the parent continues safe local slices without waiting to be asked. `/start-redgres` remains the explicit human command for a new chat. Every command uses the persistent Cursor rules, `AGENTS.md`, Git, roadmap, traceability, relevant skills, and complete context packets for subagents. Implementation agents must update canonical documentation in the same change; independent reviewers reject unsupported claims, stale docs, invented APIs, missing tests, and unsafe scope expansion.
 
-The commands never authorize pushing, production changes, real credential use, DNS/Cloudflare changes, destructive data operations, or edits to either legacy repository. Cursor may still stop for a genuinely undecided architecture/product choice, missing access, repeated safety failure, or normal session/tool/context limits. After a normal stop, run `/resume-redgres` again.
+The commands never authorize pushing, production changes, real credential use, DNS/Cloudflare changes, destructive data operations, or edits to either legacy repository. Cursor may still stop for a genuinely undecided architecture/product choice, missing access, repeated safety failure, or normal session/tool/context limits. No prompt can make one Cursor session run forever. Progress survives through Git, roadmap/traceability evidence, and the visible working tree; after a normal limit stop, open a new Agent chat and run `/start-redgres` again.

@@ -8,6 +8,8 @@ Repository-local engineering skills are vendored under `.agents/skills`. Read [.
 
 Redgres has a compiling Wave 0 foundation, owner auth, a browser login/shell, read-only PostgreSQL inventory (API + Databases page), a table-list API plus inspector list, and a bounded row-browse API. No row UI, vault decrypt, mutations, Redis adapter, or installer is implemented. Target documentation is not evidence that those features exist.
 
+Agent turns follow `.cursor/rules/06-continuous-orchestration.mdc`: recover unfinished work, then continue the next dependency-ready PRD slice without asking. `/start-redgres` is the explicit human command for a new chat; the loop does not wait for it.
+
 The two source systems are local sibling repositories:
 
 | Source | Local path | Role |

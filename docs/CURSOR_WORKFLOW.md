@@ -9,7 +9,7 @@ Open `Redgres.code-workspace` in Cursor. It exposes:
 
 Cursor automatically loads project skills from `.agents/skills/`, project rules from `.cursor/rules/*.mdc`, and custom subagents from `.cursor/agents/`.
 
-Normal use is one command in Agent mode:
+Normal use is one command in Agent mode, for both clean starts and recovery:
 
 ```text
 /start-redgres
@@ -21,7 +21,7 @@ Human copy/paste commands for starting, resuming partial work, checking status, 
 
 ## Automatic context routing
 
-The always-applied core rule forces every agent to read `AGENTS.md`, `CONTEXT.md`, the docs index, and charter first. File-scoped rules then attach the appropriate backend, frontend, deployment, or testing context. Intelligent rules are pulled when multi-agent work is requested.
+The always-applied core rule forces every agent to read `AGENTS.md`, `CONTEXT.md`, the docs index, and charter first. The always-applied continuous-orchestration rule (`.cursor/rules/06-continuous-orchestration.mdc`) then keeps the parent advancing dependency-ready slices after each local checkpoint, even when `/start-redgres` was not typed. File-scoped rules attach backend, frontend, deployment, or testing context. Intelligent rules are pulled when multi-agent work is requested.
 
 This intentionally does not force every document into every context. Agents read the canonical document map and then only the documents relevant to their task.
 
@@ -64,6 +64,17 @@ The parent owns shared API wiring, `main.go`, dependency files, migration number
 
 Port PostgreSQL read-only behavior, then prove vault compatibility, then add mutations in the exact order from `docs/MIGRATION.md`. PostgreSQL installer/capability work must additionally read `docs/POSTGRESQL_PROVISIONING.md` and ADR-009 and must not invent package, preload, restart or extension behavior. Security and verification agents review every security-sensitive slice independently.
 
+## Checkpointed continuation loop
+
+`/start-redgres` and the always-applied continuous-orchestration rule run the same recovery-first loop:
+
+1. Reconstruct current state from Git, roadmap, traceability, tests, and configured tracker items.
+2. Recover an unfinished PRD slice before selecting new work.
+3. Plan, implement, review, test, document, and create a focused local commit for one bounded slice.
+4. Treat the completed slice as a checkpoint and immediately repeat from state reconstruction.
+
+The orchestrator does not ask whether to continue after a green slice. Before a voluntary stop caused by a normal session/tool/context limit, it records the active PRD slice, verified commits, passing and unrun checks, dirty-worktree state, and exact next action in its handoff. Durable state remains Git plus canonical roadmap/traceability evidence; no separate status ledger is created.
+
 ## Autonomous continuation boundaries
 
 `/start-redgres` tells the parent to continue through dependency-ready local slices without asking routine questions already answered by accepted documentation. It may create reviewed local commits and isolated worktrees, but it never pushes or changes live infrastructure.
@@ -72,7 +83,7 @@ No coding agent can literally run forever or guarantee uninterrupted execution. 
 
 The orchestrator stops for a genuinely new product/architecture choice, unresolved contract conflict, missing access/secret, repeated failing safety gate, destructive action, or external/production/DNS/Cloudflare operation. These stops protect the project; suppressing them would be unsafe automation.
 
-If a session stops for a normal limit, open a new Agent chat and run `/start-redgres` again. It resumes from repository evidence instead of requiring the old conversation.
+If a session stops for a normal limit, open a new Agent chat and run `/start-redgres` again. The recovery gate resumes from repository evidence instead of requiring the old conversation. `/resume-redgres` is available when you want to explicitly emphasize recovery, but it is not required for normal continuation.
 
 ## Useful Cursor controls
 

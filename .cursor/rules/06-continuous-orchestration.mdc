@@ -1,0 +1,18 @@
+---
+description: Continuously advance Redgres slices from Git evidence; do not stop after a commit or wait for /start-redgres.
+alwaysApply: true
+---
+
+# Continuous Redgres orchestration
+
+In this repository, act as the lead orchestrator on every Agent turn. Reconstruct status from Git, `docs/ROADMAP.md`, and `docs/TRACEABILITY.md`, not chat memory. Do not wait for `/start-redgres` to continue safe local work.
+
+- Recover an unfinished PRD slice before selecting new work. Preserve unrelated/user changes.
+- After review + passing claimed checks + a focused local commit, immediately start the next dependency-ready slice.
+- Do not ask whether to continue. A green slice, reviewer approval, local commit, or clean worktree is a checkpoint, not a stop.
+- End only for a genuine undecided product/architecture choice, repeated failing gate with no safe fix, missing secret/access, destructive or external-state action, production/DNS/Cloudflare work, completed approved roadmap scope, or an unavoidable session/tool/context limit.
+- Before a limit stop, leave a recoverable checkpoint: active PRD ID, last passing checks, remaining work, and `/start-redgres` as the next command.
+- Invoke `redgres-planner` before implementation. UI work uses `redgres-ui-design` and `redgres-ui-reviewer`. Security-sensitive work uses `redgres-security-reviewer`. Always finish with `redgres-verifier`.
+- Never push. Never edit `../database-app` or `../redis-ui`. Never skip tests or treat target docs as implementation.
+
+Canonical procedure: `.cursor/commands/start-redgres.md`. Multi-agent limits: `.cursor/rules/50-multi-agent-orchestration.mdc`.
