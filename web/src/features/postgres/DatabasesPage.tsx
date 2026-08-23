@@ -3,8 +3,10 @@ import {
   errorMessage,
   fetchPostgresDatabase,
   fetchPostgresDatabases,
+  fetchPostgresTables,
   type DatabaseDetails,
   type DatabaseListItem,
+  type TableItem,
 } from "../../api/postgres";
 
 function isAbortError(err: unknown): boolean {
@@ -19,7 +21,11 @@ export default function DatabasesPage() {
   const [details, setDetails] = useState<DatabaseDetails | null>(null);
   const [detailsError, setDetailsError] = useState("");
   const [loadingDetails, setLoadingDetails] = useState(false);
-  const detailsAbort = useRef<AbortController | null>(null);
+  const [tables, setTables] = useState<TableItem[] | null>(null);
+  const [tablesError, setTablesError] = useState("");
+  const [tablesTruncated, setTablesTruncated] = useState(false);
+  const [loadingTables, setLoadingTables] = useState(false);
+  const selectionAbort = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -46,18 +52,27 @@ export default function DatabasesPage() {
       });
     return () => {
       controller.abort();
-      detailsAbort.current?.abort();
+      selectionAbort.current?.abort();
     };
   }, []);
 
-  async function openDetails(name: string) {
-    detailsAbort.current?.abort();
+  function openDetails(name: string) {
+    selectionAbort.current?.abort();
     const controller = new AbortController();
-    detailsAbort.current = controller;
+    selectionAbort.current = controller;
     setSelected(name);
     setDetails(null);
     setDetailsError("");
     setLoadingDetails(true);
+    setTables(null);
+    setTablesError("");
+    setTablesTruncated(false);
+    setLoadingTables(true);
+    void loadDetails(name, controller);
+    void loadTables(name, controller);
+  }
+
+  async function loadDetails(name: string, controller: AbortController) {
     try {
       const result = await fetchPostgresDatabase(name, { signal: controller.signal });
       if (controller.signal.aborted) {
@@ -79,6 +94,35 @@ export default function DatabasesPage() {
     } finally {
       if (!controller.signal.aborted) {
         setLoadingDetails(false);
+      }
+    }
+  }
+
+  async function loadTables(name: string, controller: AbortController) {
+    try {
+      const result = await fetchPostgresTables(name, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 200 && Array.isArray(result.body.tables)) {
+        setTables(result.body.tables);
+        setTablesTruncated(result.body.truncated === true);
+        setTablesError("");
+        return;
+      }
+      setTables(null);
+      setTablesTruncated(false);
+      setTablesError(errorMessage(result.body, "Tables are unavailable"));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setTables(null);
+      setTablesTruncated(false);
+      setTablesError("Tables are unavailable");
+    } finally {
+      if (!controller.signal.aborted) {
+        setLoadingTables(false);
       }
     }
   }
@@ -122,7 +166,11 @@ export default function DatabasesPage() {
       )}
       {truncated ? <p className="form-warning">List truncated at 500 databases.</p> : null}
       {selected ? (
-        <section className="detail-panel" aria-label="Database details" aria-busy={loadingDetails}>
+        <section
+          className="detail-panel"
+          aria-label="Database details"
+          aria-busy={loadingDetails || loadingTables}
+        >
           <h2 className="identifier">{selected}</h2>
           {loadingDetails ? (
             <p className="muted-copy" role="status">
@@ -135,9 +183,49 @@ export default function DatabasesPage() {
             </p>
           ) : null}
           {details ? <DetailsFacts details={details} /> : null}
+          <h3>Tables</h3>
+          {loadingTables ? (
+            <p className="muted-copy" role="status">
+              Loading tables.
+            </p>
+          ) : null}
+          {tablesError ? (
+            <p className="form-warning" role="alert">
+              {tablesError}
+            </p>
+          ) : null}
+          {tablesTruncated ? <p className="form-warning">Table list truncated at 500 tables.</p> : null}
+          {tables && tables.length === 0 && !tablesError ? <p className="muted-copy">No tables.</p> : null}
+          {tables && tables.length > 0 ? <TableNameList tables={tables} /> : null}
         </section>
       ) : null}
     </article>
+  );
+}
+
+function TableNameList({ tables }: { tables: TableItem[] }) {
+  return (
+    <ul className="table-name-list">
+      {tables.map((table) => {
+        const schema = table.schema ?? "";
+        const name = table.name ?? "";
+        if (!schema || !name) {
+          return null;
+        }
+        return (
+          <li key={`${schema}.${name}`} className="table-name-item">
+            <span>
+              <span className="muted-copy">Schema </span>
+              <span className="identifier">{schema}</span>
+            </span>
+            <span>
+              <span className="muted-copy">Table </span>
+              <span className="identifier">{name}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

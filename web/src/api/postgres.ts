@@ -45,4 +45,21 @@ export async function fetchPostgresDatabase(name: string, init: RequestInit = {}
   );
 }
 
+export type TableItem = {
+  schema?: string;
+  name?: string;
+};
+
+export type TableListPayload = {
+  tables?: TableItem[];
+  truncated?: boolean;
+};
+
+export async function fetchPostgresTables(name: string, init: RequestInit = {}) {
+  return apiRequest<TableListPayload & ApiErrorBody>(
+    `/api/v1/postgres/databases/${encodeURIComponent(name)}/tables`,
+    init,
+  );
+}
+
 export { errorMessage };

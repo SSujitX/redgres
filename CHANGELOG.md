@@ -15,7 +15,8 @@ All notable changes to Redgres will be documented here. The project intends to f
 - Owner auth (AUTH-001–005, login/logout audit): CLI `create-owner`, Argon2id PHC hashes (`golang.org/x/crypto` v0.55.0), hashed sessions/CSRF, origin+CSRF mutations, username+IP lockout, and `/api/v1` login/logout/session.
 - Browser login and authenticated shell chrome (tokens.css). Login never calls `/api/v1/healthz`. Navigation search is client-side only. Redis pages remain “Not connected” placeholders.
 - PostgreSQL read-only inventory (PG-001/002): `GET /api/v1/postgres/databases` and `/{db}` via `pgx/v5` `v5.10.0`, plus a Databases ledger/details view. Protected names/owners 404 like missing databases. Vault status is `not_available`. No mutations.
-- PostgreSQL table list API (PG-007 partial): `GET /api/v1/postgres/databases/{db}/tables` lists `BASE TABLE` schema/name pairs (cap 500). No row browse, quoting of those names, or UI.
+- PostgreSQL table list API (PG-007 partial): `GET /api/v1/postgres/databases/{db}/tables` lists `BASE TABLE` schema/name pairs (cap 500). No row browse or quoting of those names.
+- Databases inspector table list (PG-007 partial): schema/name pairs, empty/503/truncated, and stale-selection isolation. Rows are not clickable.
 - Initial product, architecture, security, migration, deployment, backup, testing, operations, and open-source specifications.
 - Agent instructions, architecture decision records, contribution templates, and requirements traceability skeleton.
 

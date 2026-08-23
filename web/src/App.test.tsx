@@ -15,6 +15,15 @@ function jsonResponse(status: number, body: unknown, headers: Record<string, str
   };
 }
 
+function isTablesUrl(url: string, name: string): boolean {
+  return url.includes(`/api/v1/postgres/databases/${encodeURIComponent(name)}/tables`);
+}
+
+function isDetailsUrl(url: string, name: string): boolean {
+  const prefix = `/api/v1/postgres/databases/${encodeURIComponent(name)}`;
+  return url.includes(prefix) && !url.includes("/tables");
+}
+
 function stubFetch(
   impl: (url: string, init?: RequestInit) => ReturnType<typeof jsonResponse> | Promise<ReturnType<typeof jsonResponse>>,
 ) {
@@ -231,14 +240,20 @@ describe("App session and login", () => {
   });
 
   it("lists manageable PostgreSQL databases without claiming they are healthy", async () => {
-    stubFetch((url) => {
+    const fetch = stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "i".repeat(64) });
       }
       if (url.endsWith("/api/v1/postgres/databases")) {
         return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
       }
-      if (url.includes("/api/v1/postgres/databases/project_a")) {
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          tables: [{ schema: "public", name: "items" }],
+          truncated: false,
+        });
+      }
+      if (isDetailsUrl(url, "project_a")) {
         return jsonResponse(200, {
           database: {
             name: "project_a",
@@ -267,9 +282,13 @@ describe("App session and login", () => {
     expect(await screen.findByText("Not available")).toBeInTheDocument();
     expect(screen.getByText("Owner is superuser").closest("div")).toHaveTextContent("Yes");
     expect(screen.getByText("Owner can create roles").closest("div")).toHaveTextContent("No");
+    expect(await screen.findByText("items")).toBeInTheDocument();
+    expect(screen.getByText("public")).toHaveClass("identifier");
+    expect(screen.getByText("items").closest("button")).toBeNull();
     expect(screen.getByRole("region", { name: "Database details" })).toHaveAttribute("aria-busy", "false");
     expect(screen.queryByText(/healthy/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/rows"))).toBe(true);
   });
 
   it("clears previous details and ignores a slower first selection", async () => {
@@ -291,7 +310,10 @@ describe("App session and login", () => {
           truncated: false,
         });
       }
-      if (url.includes("/api/v1/postgres/databases/project_a")) {
+      if (isTablesUrl(url, "project_a") || isTablesUrl(url, longName)) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
         await new Promise<void>((resolve, reject) => {
           if (init?.signal?.aborted) {
             reject(new DOMException("The operation was aborted.", "AbortError"));
@@ -311,7 +333,7 @@ describe("App session and login", () => {
           database: { name: "project_a", owner: "stale_owner_a", size: "1 MB" },
         });
       }
-      if (url.includes(`/api/v1/postgres/databases/${encodeURIComponent(longName)}`)) {
+      if (isDetailsUrl(url, longName)) {
         return jsonResponse(200, {
           database: { name: longName, owner: "owner_b", size: "2 MB" },
         });
@@ -333,6 +355,155 @@ describe("App session and login", () => {
       expect(screen.queryByText("stale_owner_a")).not.toBeInTheDocument();
     });
     expect(screen.getByRole("heading", { name: longName })).toBeInTheDocument();
+  });
+
+  it("shows an empty table list without claiming the database is healthy", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "l".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a", size: "1 MB" } });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("No tables.")).toBeInTheDocument();
+    expect(screen.queryByText("Tables are unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText(/healthy/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a tables unavailable alert without an empty healthy table list", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "m".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(503, {
+          error: { code: "dependency_unavailable", message: "PostgreSQL is unavailable" },
+        });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a", size: "1 MB" } });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("owner_a")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("PostgreSQL is unavailable");
+    expect(screen.queryByText("No tables.")).not.toBeInTheDocument();
+  });
+
+  it("warns when the table list is truncated", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "n".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          tables: [{ schema: "public", name: "items" }],
+          truncated: true,
+        });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Table list truncated at 500 tables.")).toBeInTheDocument();
+    expect(screen.getByText("items")).toBeInTheDocument();
+  });
+
+  it("ignores a slower first table list after selection change", async () => {
+    const longSchema = `schema_${"y".repeat(56)}`;
+    const longTable = `table_${"z".repeat(57)}`;
+    let releaseA: () => void = () => {};
+    const blockedA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "o".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, {
+          databases: [
+            { name: "project_a", owner: "owner_a" },
+            { name: "project_b", owner: "owner_b" },
+          ],
+          truncated: false,
+        });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedA.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return jsonResponse(200, {
+          tables: [{ schema: "stale_schema", name: "stale_items" }],
+          truncated: false,
+        });
+      }
+      if (isTablesUrl(url, "project_b")) {
+        return jsonResponse(200, {
+          tables: [{ schema: longSchema, name: longTable }],
+          truncated: false,
+        });
+      }
+      if (isDetailsUrl(url, "project_a") || isDetailsUrl(url, "project_b")) {
+        const name = url.includes("project_b") ? "project_b" : "project_a";
+        return jsonResponse(200, { database: { name, owner: name === "project_b" ? "owner_b" : "owner_a" } });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Loading tables.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_b/ }));
+    expect(screen.queryByText("stale_items")).not.toBeInTheDocument();
+    expect(await screen.findByText(longTable)).toBeInTheDocument();
+    expect(screen.getByText(longSchema)).toHaveClass("identifier");
+    expect(screen.getByText(longTable)).toHaveClass("identifier");
+    releaseA();
+    await waitFor(() => {
+      expect(screen.queryByText("stale_items")).not.toBeInTheDocument();
+    });
   });
 
   it("shows an unavailable PostgreSQL inventory without a fake empty cluster", async () => {

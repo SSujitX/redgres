@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz` unit tests only; no `/status` or search | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API only; PG-003–006/008–012 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI; rows not started; PG-003–006/008–012 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | TODO | Planned |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -198,4 +198,27 @@ Reviewer/date: Verifier approved (2026-08-23) table-list API only (not full PG-0
  Critical/High/Medium. Lows L1–L3 corrected in `f13296b` (startup search_path including pg_temp,
  LIMIT 501, adapter ValidateIdentifier). Do not treat as COMPATIBILITY.md §6
  evidence.
+```
+
+## PostgreSQL table list UI (2026-08-23)
+
+```text
+Requirement: PG-007 (inspector list only; no rows, search, truncate)
+Decision/ADR: ADR-001, ADR-003
+Source characterization: consumes GET /api/v1/postgres/databases/{db}/tables;
+ database-app list_tables UI at 1c3e8e2 inspected, not copied
+Implementation files: web/src/api/postgres.ts; web/src/features/postgres/DatabasesPage.tsx;
+ web/src/styles/globals.css; web/src/App.test.tsx
+Unit tests: App.test.tsx happy/empty/503/truncated/stale tables + prior inventory cases
+Integration tests: none
+Security tests: no /rows fetch; table names are not buttons; 503 ≠ “No tables.”;
+ no localStorage; no style={{}}
+Deployment/migration impact: none
+Known limitations: no row browse; jsdom cannot prove viewports
+Commands executed locally (2026-08-23):
+  web: npm run test:run → 22 passed; npm run build → TypeScript 7.0.2 + Vite 8.2.2
+Reviewer/date: UI reviewer approved (2026-08-23) inspector list only; Lows L1–L5
+ optional (card chrome, empty copy, truncation live region, schema/table spacing,
+ 503 wording). Verifier approved (2026-08-23). Not viewport sign-off. Not full
+ PG-007.
 ```
