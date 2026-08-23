@@ -166,8 +166,8 @@ Commands executed locally (2026-08-23):
 Reviewer/date: UI reviewer rejected (2026-08-23) on details race, long-name overflow,
  incomplete security facts, and silent details load. Remediations: AbortController
  isolation + name match; `.identifier` wrap; all security flags; aria-busy + status.
- Re-review approved (2026-08-23). Not viewport sign-off: 360/768/1280/1600 and
- 200% zoom were not opened.
+ Re-review approved (2026-08-23) at `aff68d8` (not pushed). Not viewport
+ sign-off: 360/768/1280/1600 and 200% zoom were not opened.
 ```
 
 ## PostgreSQL table list API (2026-08-23)
