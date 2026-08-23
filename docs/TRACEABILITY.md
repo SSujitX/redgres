@@ -195,7 +195,7 @@ Commands executed locally (2026-08-23):
   Not run: go test -race, live PostgreSQL 17/18, CI, gitleaks, govulncheck, frontend (no UI change)
 Reviewer/date: Verifier approved (2026-08-23) table-list API only (not full PG-007)
  at `4aea8e5` (not pushed). Security review approved merge (2026-08-23): no
- Critical/High/Medium. Lows L1–L3 corrected in a follow-up (startup search_path
- including pg_temp, LIMIT 501, adapter ValidateIdentifier). Do not treat as
- COMPATIBILITY.md §6 evidence.
+ Critical/High/Medium. Lows L1–L3 corrected in `f13296b` (startup search_path including pg_temp,
+ LIMIT 501, adapter ValidateIdentifier). Do not treat as COMPATIBILITY.md §6
+ evidence.
 ```
