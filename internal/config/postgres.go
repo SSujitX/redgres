@@ -89,7 +89,7 @@ func (c *Config) validatePostgres() error {
 			return errors.New("REDGRES_POSTGRES_SSLMODE: invalid value")
 		}
 	}
-	if c.PostgresSSLRootCert != "" && strings.ContainsAny(c.PostgresSSLRootCert, "?#") {
+	if c.PostgresSSLRootCert != "" && (containsCertPathUnsafe(c.PostgresSSLRootCert) || strings.ContainsAny(c.PostgresSSLRootCert, "?#")) {
 		return errors.New("REDGRES_POSTGRES_SSLROOTCERT: invalid value")
 	}
 	return nil
@@ -148,5 +148,9 @@ func validProtectedIdent(value string) bool {
 }
 
 func containsKeywordUnsafe(value string) bool {
-	return strings.ContainsAny(value, " ='\"\\")
+	return strings.ContainsAny(value, " ='\"\\\t\r\n") || strings.ContainsRune(value, 0)
+}
+
+func containsCertPathUnsafe(value string) bool {
+	return strings.ContainsAny(value, "='\"\t\r\n") || strings.ContainsRune(value, 0)
 }

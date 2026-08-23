@@ -141,7 +141,9 @@ Commands executed locally (2026-08-23):
   go build -o NUL ./cmd/redgres → success
   Not run: go test -race, live PostgreSQL 17/18, CI, gitleaks, govulncheck
 Reviewer/date: Verifier approved (2026-08-23) PG-001/002 at `52930bd` + pin `260e45a`
- (not pushed). Residual gaps are non-blocking (no HTTP success-path/cap-500 test;
- `postgres.read` is owner-static; live PG 17/18 and race unproven). Security review
- of the adapter is still pending. Do not treat this as COMPATIBILITY.md §6 evidence.
+ (not pushed). Security review approved merge; Medium M1 (SSLROOTCERT libpq keyword
+ injection) corrected with tab/CR/LF/`=` reject + quoted sslrootcert
+ (`TestLoadRejectsSSLRootCertKeywordInjection`). Residual Lows are owner-static
+ capabilities, case-sensitive deny names, and unpinned search_path. Do not treat
+ this as COMPATIBILITY.md §6 evidence.
 ```

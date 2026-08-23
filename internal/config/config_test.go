@@ -316,6 +316,23 @@ func TestLoadIncompletePostgresFails(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsSSLRootCertKeywordInjection(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_POSTGRES_HOST", "127.0.0.1")
+	t.Setenv("REDGRES_POSTGRES_PORT", "5432")
+	t.Setenv("REDGRES_POSTGRES_DATABASE", "postgres")
+	t.Setenv("REDGRES_POSTGRES_USER", "redgres_console")
+	t.Setenv("REDGRES_POSTGRES_PASSWORD_FILE", "./secrets/pg")
+	t.Setenv("REDGRES_POSTGRES_SSLROOTCERT", "/etc/ssl/certs/ca.pem\tsslmode=disable")
+	_, err := Load(nil)
+	if err == nil || !strings.Contains(err.Error(), "REDGRES_POSTGRES_SSLROOTCERT") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), "sslmode") || strings.Contains(err.Error(), "ca.pem") {
+		t.Fatalf("error echoed value: %v", err)
+	}
+}
+
 func TestLoadRejectsInvalidProtectedList(t *testing.T) {
 	isolateConfig(t)
 	t.Setenv("REDGRES_POSTGRES_HOST", "127.0.0.1")

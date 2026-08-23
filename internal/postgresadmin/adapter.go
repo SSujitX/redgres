@@ -114,16 +114,20 @@ func keywordConnInfo(cfg config.Config) string {
 		"application_name=redgres",
 	}
 	if cfg.PostgresSSLRootCert != "" {
-		parts = append(parts, "sslrootcert="+keywordValue(cfg.PostgresSSLRootCert))
+		parts = append(parts, "sslrootcert="+quoteKeyword(cfg.PostgresSSLRootCert))
 	}
 	return strings.Join(parts, " ")
 }
 
 func keywordValue(value string) string {
 	if strings.ContainsAny(value, " \\'") {
-		return "'" + strings.ReplaceAll(value, `'`, `\'`) + "'"
+		return quoteKeyword(value)
 	}
 	return value
+}
+
+func quoteKeyword(value string) string {
+	return "'" + strings.ReplaceAll(value, `'`, `\'`) + "'"
 }
 
 func readPasswordFile(path string, production bool) (string, error) {
