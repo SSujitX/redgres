@@ -93,7 +93,7 @@ Deferred from Wave 0, with reasons:
 - SBOM and license checks: tied to a release artifact that does not exist yet.
 - ShellCheck / Bats: `deploy/` has no scripts yet.
 - Dev-dependency `npm audit` policy: Wave 0 audits production dependencies only.
-- Browser-level responsive automation: no shell exists to exercise.
+- Browser-level responsive automation: login/shell exists; Playwright/Cypress is not in the repository. jsdom covers login/session/search/drawer open-close, not overflow/zoom/rail-vs-sidebar.
 - `gitleaks-action` requires a `GITLEAKS_LICENSE` if the repository is transferred to a GitHub organization; fallback is the pinned gitleaks CLI with a recorded checksum.
 
 Dependency/toolchain update changes additionally record old/new exact versions, official release/security notes, compatibility or migration impact, lockfile/checksum diff, vulnerability/license result, and full affected test/build evidence. Automated update pull requests never merge solely because dependency resolution succeeds.

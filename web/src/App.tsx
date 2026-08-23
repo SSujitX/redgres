@@ -1,35 +1,92 @@
 import { useEffect, useState } from "react";
+import { errorMessage, fetchSession, logout } from "./api/auth";
+import AppShell from "./components/shell/AppShell";
+import LoginPage from "./features/auth/LoginPage";
 
-type HealthState = "loading" | "ok" | "unavailable";
+type View =
+  | { kind: "loading" }
+  | { kind: "login" }
+  | { kind: "shell"; username: string; csrf: string };
 
 export default function App() {
-  const [state, setState] = useState<HealthState>("loading");
+  const [view, setView] = useState<View>({ kind: "loading" });
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [sessionError, setSessionError] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/v1/healthz", { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) {
-          setState("unavailable");
+    fetchSession()
+      .then((result) => {
+        if (controller.signal.aborted) {
           return;
         }
-        const body = (await response.json()) as { status?: string };
-        setState(body.status === "ok" ? "ok" : "unavailable");
+        if (result.status === 200 && result.body.owner?.username && result.body.csrf_token) {
+          setView({
+            kind: "shell",
+            username: result.body.owner.username,
+            csrf: result.body.csrf_token,
+          });
+          return;
+        }
+        setView({ kind: "login" });
       })
       .catch(() => {
         if (!controller.signal.aborted) {
-          setState("unavailable");
+          setView({ kind: "login" });
         }
       });
     return () => controller.abort();
   }, []);
 
+  async function handleLogout() {
+    if (view.kind !== "shell") {
+      return;
+    }
+    setLoggingOut(true);
+    setSessionError("");
+    try {
+      const result = await logout(view.csrf);
+      if (result.status === 200) {
+        setView({ kind: "login" });
+        return;
+      }
+      if (result.status === 401) {
+        setView({ kind: "login" });
+        return;
+      }
+      setSessionError(errorMessage(result.body, "Sign-out failed"));
+    } finally {
+      setLoggingOut(false);
+    }
+  }
+
+  if (view.kind === "loading") {
+    return (
+      <div className="boot">
+        <p>Checking session.</p>
+      </div>
+    );
+  }
+
+  if (view.kind === "login") {
+    return (
+      <LoginPage
+        onSuccess={(username, csrf) => {
+          setSessionError("");
+          setView({ kind: "shell", username, csrf });
+        }}
+      />
+    );
+  }
+
   return (
-    <main>
-      <h1>Redgres</h1>
-      {state === "loading" ? <p>Checking control-plane storage.</p> : null}
-      {state === "ok" ? <p>Control-plane storage is reachable.</p> : null}
-      {state === "unavailable" ? <p>Control-plane storage is unavailable.</p> : null}
-    </main>
+    <>
+      {sessionError ? (
+        <p className="form-error shell-banner" role="alert">
+          {sessionError}
+        </p>
+      ) : null}
+      <AppShell username={view.username} onLogout={() => void handleLogout()} loggingOut={loggingOut} />
+    </>
   );
 }

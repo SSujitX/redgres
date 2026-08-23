@@ -39,6 +39,11 @@ Core error codes: `unauthorized`, `forbidden`, `csrf_invalid`, `rate_limited`, `
 | POST | `/api/v1/auth/login` | Authenticate owner and issue session + CSRF |
 | POST | `/api/v1/auth/logout` | Delete session |
 | GET | `/api/v1/session` | Return owner identity, rotated CSRF, enabled capabilities/tool links |
+| GET | `/api/v1/healthz` | Liveness/state DB health, no auth secrets |
+| GET | `/api/v1/status` | Authenticated component status |
+| GET | `/api/v1/search?q=&limit=` | Authenticated bounded search over manageable resource metadata/navigation; no secrets or destructive execution |
+| GET | `/api/v1/audit?cursor=&limit=` | Paginated redacted audit history |
+| GET | `/api/v1/operations/{id}` | Long-operation state/result summary |
 
 Session cookie name: `redgres_session` (opaque 64-hex token, `Path=/`, `HttpOnly`, `SameSite=Strict`, `Secure` from `REDGRES_COOKIE_SECURE`). Mutations send `X-CSRF-Token`. There is no HTTP bootstrap route.
 
@@ -69,11 +74,6 @@ Generic failure is `401` `unauthorized` with message `Invalid username or passwo
 ```
 
 `tool_links` stays empty until optional tool-link configuration exists.
-| GET | `/api/v1/healthz` | Liveness/state DB health, no auth secrets |
-| GET | `/api/v1/status` | Authenticated component status |
-| GET | `/api/v1/search?q=&limit=` | Authenticated bounded search over manageable resource metadata/navigation; no secrets or destructive execution |
-| GET | `/api/v1/audit?cursor=&limit=` | Paginated redacted audit history |
-| GET | `/api/v1/operations/{id}` | Long-operation state/result summary |
 
 ## Static asset delivery
 

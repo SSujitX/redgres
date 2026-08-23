@@ -1,0 +1,110 @@
+.login-page {
+  min-height: 100vh;
+  padding: max(var(--space-4), env(safe-area-inset-top, 0px))
+    max(var(--space-4), env(safe-area-inset-right, 0px))
+    max(var(--space-4), env(safe-area-inset-bottom, 0px))
+    max(var(--space-4), env(safe-area-inset-left, 0px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+}
+
+.login-identity {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  width: 100%;
+  max-width: 24rem;
+}
+
+.login-tagline {
+  margin-top: var(--space-2);
+  color: var(--muted);
+  max-width: 28rem;
+}
+
+.login-panel {
+  width: 100%;
+  max-width: 24rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-surface);
+  padding: var(--space-5);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.login-form label {
+  font-weight: 600;
+}
+
+.login-form input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-3);
+  background: var(--surface);
+}
+
+.password-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.access-note {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.service-rail {
+  display: flex;
+  width: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  flex-shrink: 0;
+  min-height: 48px;
+}
+
+.service-rail-postgres,
+.service-rail-redis {
+  flex: 1;
+}
+
+.service-rail-postgres {
+  background: var(--postgres);
+}
+
+.service-rail-redis {
+  background: var(--redis);
+}
+
+@media (min-width: 1024px) {
+  .login-page {
+    display: grid;
+    grid-template-columns: 1fr minmax(20rem, 24rem);
+    justify-content: stretch;
+    align-items: start;
+    padding: max(var(--space-6), env(safe-area-inset-top, 0px))
+      max(var(--space-6), env(safe-area-inset-right, 0px))
+      max(var(--space-6), env(safe-area-inset-bottom, 0px))
+      max(var(--space-6), env(safe-area-inset-left, 0px));
+  }
+
+  .login-identity {
+    max-width: none;
+  }
+
+  .login-panel {
+    justify-self: end;
+    margin-top: var(--space-6);
+    margin-right: var(--space-6);
+  }
+}

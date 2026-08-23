@@ -29,6 +29,7 @@ Use semantic tokens in CSS/Tailwind; feature code must not scatter raw color val
 | `warning` | `#A15C00` | Warning/degraded with icon and text |
 | `danger` | `#B42318` | Destructive/error semantics |
 | `focus` | `#2563EB` | Keyboard focus ring |
+| `overlay` | `color-mix(in srgb, ink 32%, transparent)` | Drawer and search dimming |
 
 PostgreSQL blue and Redis red identify service ownership; they do not replace success, warning, or danger semantics. Every status includes text/iconography and passes WCAG 2.2 AA contrast. A future dark theme is a separate tested deliverable, not automatic color inversion.
 
@@ -48,7 +49,7 @@ Do not fetch fonts from a third-party origin in production. Bundle approved font
 - Controls: 8px radius. Work surfaces: 10–12px radius. Pills are reserved for compact state/category labels.
 - Prefer borders and spacing over shadows. Floating menus/dialogs may use one restrained shadow token.
 - Minimum interactive target: 44×44 CSS px on touch layouts; dense desktop controls may be visually smaller while retaining an equivalent hit area.
-- Icons come from one reviewed icon family, use consistent stroke weight, and never carry meaning without a label or accessible name.
+- Icons come from one reviewed icon family, use consistent stroke weight, and never carry meaning without a label or accessible name. Until a licensed webfont/package is adopted, the shell uses the local 24×24, 1.75-stroke set in `web/src/components/icons.tsx`.
 
 ## 3. Authenticated application shell
 

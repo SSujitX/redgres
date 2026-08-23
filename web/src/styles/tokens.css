@@ -1,0 +1,35 @@
+:root {
+  --canvas: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #17202a;
+  --muted: #667085;
+  --line: #d8dee6;
+  --postgres: #336791;
+  --redis: #c9362b;
+  --success: #157a55;
+  --warning: #a15c00;
+  --danger: #b42318;
+  --focus: #2563eb;
+  --overlay: color-mix(in srgb, var(--ink) 32%, transparent);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --radius-control: 8px;
+  --radius-surface: 12px;
+  --topbar-height: 56px;
+  --sidebar-width: 248px;
+  --sidebar-wide: 264px;
+  --rail-width: 72px;
+  --motion-fast: 160ms;
+  --motion-drawer: 200ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-drawer: 0ms;
+  }
+}

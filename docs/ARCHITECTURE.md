@@ -75,7 +75,7 @@ PostgreSQL server adoption/install, extension host packages, per-database extens
 
 - Wave 0 frontend pins (locked in `web/package-lock.json`): React `19.2.8`, Vite `8.2.2`, `@vitejs/plugin-react` `6.1.0`, Vitest `4.1.11`, TypeScript `7.0.2`. Node build tool is Active LTS **24.19.0** (`web/.nvmrc`). Local Node 25.x is unsupported and is not release evidence.
 - Vite writes to `internal/web/dist/app` so `//go:embed all:dist` still compiles from the tracked `dist/.gitkeep`. `build.modulePreload.polyfill` is `false` so the HTML has no inline script under `script-src 'self'`.
-- TanStack Query, Tailwind CSS, and Radix remain target-only until the Wave 1 frontend slice; the parent owns `web/package.json` / lockfile.
+- Wave 1 login/shell ships with `tokens.css` and existing React 19.2.8. TanStack Query, Tailwind CSS, Radix, and a client router remain deferred; the parent owns `web/package.json` / lockfile.
 - Shared application shell and semantic tokens follow [UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md); feature folders do not define independent navigation, palettes, or breakpoints.
 - Small local state only; no credential in global stores, URL, localStorage, sessionStorage, IndexedDB, analytics, or error reporting.
 - Production build embedded through Go `embed`; Node.js is build-time only.

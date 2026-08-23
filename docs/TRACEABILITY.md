@@ -74,7 +74,7 @@ Unit tests: internal/auth/*_test.go; internal/audit/audit_test.go; internal/http
 Integration tests: none
 Security tests: hash-at-rest, generic login errors, canary audit redaction, origin/CSRF, no --password flag
 Deployment/migration impact: none deployed. 001_initial.sql unchanged (PHC bytes in existing BLOB).
-Known limitations: AUTH-006 not implemented; no login UI; first lockout is 1s (inherited redis-ui);
+Known limitations: AUTH-006 not implemented; first lockout is 1s (inherited redis-ui);
  RemoteAddr-only IP (tunnel clients may share 127.0.0.1); no pwned-password corpus;
  go test -race / CI / Node 24.19.0 still unproven
 Commands executed locally (2026-08-23):
@@ -83,5 +83,33 @@ Commands executed locally (2026-08-23):
   go vet ./... → no findings
   gofmt -l cmd internal migrations → empty
   go build -o NUL ./cmd/redgres → success
-Reviewer/date: Security review (2026-08-23) found no Critical/High. M1/L1/L2 corrected. Independent verifier started after those corrections.
+Reviewer/date: Security review (2026-08-23) found no Critical/High; M1/L1/L2 corrected. Verifier approved (2026-08-23) AUTH-001–005 and narrow PLAT-002; local commits `1b54b01` and `c3f72c0` (not pushed). Residual gaps are non-blocking (no HTTP assertion that success audit rows exist; first lockout 1s; race/CI unproven).
+```
+
+## Login and shell chrome (2026-08-23)
+
+```text
+Requirement: AUTH-003–005 (UI), NFR-004/012 (partial), PLAT-004 (navigation filter only)
+Decision/ADR: ADR-001, ADR-003 (exact origin; Vite BaseURL documented, SameOrigin unchanged)
+Source characterization: UI_DESIGN_SYSTEM.md / UX.md; redis-ui not copied
+Implementation files: web/src/App.tsx; web/src/api/{client,auth}.ts; web/src/nav.ts;
+ web/src/features/auth/LoginPage.tsx; web/src/features/pages/Placeholders.tsx;
+ web/src/components/shell/AppShell.tsx; web/src/components/search/NavigationSearch.tsx;
+ web/src/components/icons.tsx; web/src/hooks/useFocusTrap.ts;
+ web/src/styles/{tokens,globals,login,shell}.css; web/index.html
+Unit tests: web/src/App.test.tsx; web/src/nav.test.ts
+Integration tests: none
+Security tests: login never calls healthz; generic 401; 429 Retry-After; CSRF header on logout;
+ password not left in the form; no style={{}}; login catch is generic (no control-plane text)
+Deployment/migration impact: none. Vite login requires REDGRES_BASE_URL=http://127.0.0.1:5173
+Known limitations: no URL routes; no /status; no server search; jsdom cannot prove viewports
+ or 200% zoom; Node 25.x local frontend evidence; AUTH-006 / PG / Redis still absent
+Commands executed locally (2026-08-23):
+  web: npm run test:run → 15 passed (App.test 13, nav.test 2); Node v25.3.0
+  web: npm run build → TypeScript 7.0.2 + Vite 8.2.2; built index.html has
+  viewport-fit=cover and external script/link only (no inline style/script)
+Reviewer/date: UI reviewer rejected (2026-08-23) on H1/H2; remediations re-reviewed
+ and approved (2026-08-23). Residual Medium (rail tooltip under workspace) corrected
+ by stacking `.app-sidebar` above `.app-main` at 768–1023. Not viewport sign-off:
+ 360/768/1280/1600 and 200% zoom were not opened.
 ```
