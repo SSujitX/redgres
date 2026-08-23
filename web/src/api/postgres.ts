@@ -62,4 +62,32 @@ export async function fetchPostgresTables(name: string, init: RequestInit = {}) 
   );
 }
 
+export type RowPage = {
+  columns?: string[];
+  rows?: Array<Record<string, unknown>>;
+  total?: number;
+  offset?: number;
+  limit?: number;
+  request_id?: string;
+};
+
+export async function fetchPostgresRows(
+  db: string,
+  schema: string,
+  table: string,
+  params: { q?: string; offset?: number } = {},
+  init: RequestInit = {},
+) {
+  const search = new URLSearchParams();
+  if (params.q !== undefined && params.q !== "") {
+    search.set("q", params.q);
+  }
+  if (params.offset !== undefined && params.offset > 0) {
+    search.set("offset", String(params.offset));
+  }
+  const query = search.toString();
+  const path = `/api/v1/postgres/databases/${encodeURIComponent(db)}/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/rows`;
+  return apiRequest<RowPage & ApiErrorBody>(query ? `${path}?${query}` : path, init);
+}
+
 export { errorMessage };

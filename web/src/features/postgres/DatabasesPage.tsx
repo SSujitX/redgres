@@ -1,16 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   errorMessage,
   fetchPostgresDatabase,
   fetchPostgresDatabases,
+  fetchPostgresRows,
   fetchPostgresTables,
   type DatabaseDetails,
   type DatabaseListItem,
+  type RowPage,
   type TableItem,
 } from "../../api/postgres";
 
+const maxRowQueryRunes = 128;
+
+type SelectedTable = {
+  schema: string;
+  name: string;
+};
+
 function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === "AbortError";
+}
+
+function queryRuneCount(value: string): number {
+  return Array.from(value).length;
 }
 
 export default function DatabasesPage() {
@@ -25,7 +38,16 @@ export default function DatabasesPage() {
   const [tablesError, setTablesError] = useState("");
   const [tablesTruncated, setTablesTruncated] = useState(false);
   const [loadingTables, setLoadingTables] = useState(false);
+  const [selectedTable, setSelectedTable] = useState<SelectedTable | null>(null);
+  const [rowPage, setRowPage] = useState<RowPage | null>(null);
+  const [rowsError, setRowsError] = useState("");
+  const [rowsQueryError, setRowsQueryError] = useState("");
+  const [loadingRows, setLoadingRows] = useState(false);
+  const [queryDraft, setQueryDraft] = useState("");
+  const [appliedQuery, setAppliedQuery] = useState("");
   const selectionAbort = useRef<AbortController | null>(null);
+  const rowsAbort = useRef<AbortController | null>(null);
+  const rowsRegionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -53,11 +75,33 @@ export default function DatabasesPage() {
     return () => {
       controller.abort();
       selectionAbort.current?.abort();
+      rowsAbort.current?.abort();
     };
   }, []);
 
+  useEffect(() => {
+    if (!selectedTable) {
+      return;
+    }
+    const node = rowsRegionRef.current;
+    if (node && typeof node.scrollIntoView === "function") {
+      node.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }, [selectedTable]);
+
+  function clearRowState() {
+    setSelectedTable(null);
+    setRowPage(null);
+    setRowsError("");
+    setRowsQueryError("");
+    setQueryDraft("");
+    setAppliedQuery("");
+    setLoadingRows(false);
+  }
+
   function openDetails(name: string) {
     selectionAbort.current?.abort();
+    rowsAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
     setSelected(name);
@@ -68,6 +112,7 @@ export default function DatabasesPage() {
     setTablesError("");
     setTablesTruncated(false);
     setLoadingTables(true);
+    clearRowState();
     void loadDetails(name, controller);
     void loadTables(name, controller);
   }
@@ -127,6 +172,103 @@ export default function DatabasesPage() {
     }
   }
 
+  function openTable(table: SelectedTable) {
+    if (!selected) {
+      return;
+    }
+    rowsAbort.current?.abort();
+    const controller = new AbortController();
+    rowsAbort.current = controller;
+    setSelectedTable(table);
+    setQueryDraft("");
+    setAppliedQuery("");
+    setRowsQueryError("");
+    setRowPage(null);
+    setRowsError("");
+    setLoadingRows(true);
+    void loadRows(selected, table.schema, table.name, "", 0, controller);
+  }
+
+  function closeTable() {
+    rowsAbort.current?.abort();
+    clearRowState();
+  }
+
+  function applySearch() {
+    if (!selected || !selectedTable) {
+      return;
+    }
+    if (queryRuneCount(queryDraft) > maxRowQueryRunes) {
+      setRowsQueryError("Query is too long");
+      return;
+    }
+    rowsAbort.current?.abort();
+    const controller = new AbortController();
+    rowsAbort.current = controller;
+    setAppliedQuery(queryDraft);
+    setRowsQueryError("");
+    setRowPage(null);
+    setRowsError("");
+    setLoadingRows(true);
+    void loadRows(selected, selectedTable.schema, selectedTable.name, queryDraft, 0, controller);
+  }
+
+  function pageRows(nextOffset: number) {
+    if (!selected || !selectedTable || !rowPage) {
+      return;
+    }
+    rowsAbort.current?.abort();
+    const controller = new AbortController();
+    rowsAbort.current = controller;
+    setRowPage(null);
+    setRowsError("");
+    setLoadingRows(true);
+    void loadRows(selected, selectedTable.schema, selectedTable.name, appliedQuery, nextOffset, controller);
+  }
+
+  async function loadRows(
+    db: string,
+    schema: string,
+    table: string,
+    q: string,
+    offset: number,
+    controller: AbortController,
+  ) {
+    try {
+      const result = await fetchPostgresRows(db, schema, table, { q, offset }, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 200 && Array.isArray(result.body.columns) && Array.isArray(result.body.rows)) {
+        setRowPage(result.body);
+        setRowsError("");
+        setRowsQueryError("");
+        return;
+      }
+      setRowPage(null);
+      if (result.status === 400 && result.body.error?.fields?.q) {
+        setRowsQueryError(errorMessage(result.body, "Query is too long"));
+        setRowsError("");
+        return;
+      }
+      if (result.status === 404) {
+        setRowsError(errorMessage(result.body, "Not found"));
+        return;
+      }
+      setRowsError(errorMessage(result.body, "PostgreSQL is unavailable"));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setRowPage(null);
+      setRowsError("PostgreSQL is unavailable");
+    } finally {
+      if (!controller.signal.aborted) {
+        setLoadingRows(false);
+      }
+    }
+  }
+
   return (
     <article>
       <header className="page-header">
@@ -169,7 +311,7 @@ export default function DatabasesPage() {
         <section
           className="detail-panel"
           aria-label="Database details"
-          aria-busy={loadingDetails || loadingTables}
+          aria-busy={loadingDetails || loadingTables || loadingRows}
         >
           <h2 className="identifier">{selected}</h2>
           {loadingDetails ? (
@@ -196,37 +338,267 @@ export default function DatabasesPage() {
           ) : null}
           {tablesTruncated ? <p className="form-warning">Table list truncated at 500 tables.</p> : null}
           {tables && tables.length === 0 && !tablesError ? <p className="muted-copy">No tables.</p> : null}
-          {tables && tables.length > 0 ? <TableNameList tables={tables} /> : null}
+          {tables && tables.length > 0 ? (
+            <TableNameList
+              tables={tables}
+              selected={selectedTable}
+              onSelect={openTable}
+              onBack={closeTable}
+              rows={
+                selectedTable ? (
+                  <RowsPanel
+                    regionRef={rowsRegionRef}
+                    table={selectedTable}
+                    page={rowPage}
+                    error={rowsError}
+                    queryError={rowsQueryError}
+                    loading={loadingRows}
+                    queryDraft={queryDraft}
+                    onQueryDraftChange={setQueryDraft}
+                    onSearch={applySearch}
+                    onPrevious={() => pageRows(Math.max(0, (rowPage?.offset ?? 0) - (rowPage?.limit ?? 0)))}
+                    onNext={() => pageRows((rowPage?.offset ?? 0) + (rowPage?.limit ?? 0))}
+                  />
+                ) : null
+              }
+            />
+          ) : null}
         </section>
       ) : null}
     </article>
   );
 }
 
-function TableNameList({ tables }: { tables: TableItem[] }) {
+function TableNameList({
+  tables,
+  selected,
+  onSelect,
+  onBack,
+  rows,
+}: {
+  tables: TableItem[];
+  selected: SelectedTable | null;
+  onSelect: (table: SelectedTable) => void;
+  onBack: () => void;
+  rows: ReactNode;
+}) {
   return (
-    <ul className="table-name-list">
-      {tables.map((table) => {
-        const schema = table.schema ?? "";
-        const name = table.name ?? "";
-        if (!schema || !name) {
-          return null;
-        }
-        return (
-          <li key={`${schema}.${name}`} className="table-name-item">
-            <span>
-              <span className="muted-copy">Schema </span>
-              <span className="identifier">{schema}</span>
-            </span>
-            <span>
-              <span className="muted-copy">Table </span>
-              <span className="identifier">{name}</span>
-            </span>
-          </li>
-        );
-      })}
-    </ul>
+    <>
+      {selected ? (
+        <p>
+          <button type="button" className="text-button" onClick={onBack}>
+            Back to tables
+          </button>
+        </p>
+      ) : null}
+      <ul className={selected ? "table-name-list table-name-list-inspecting" : "table-name-list"}>
+        {tables.flatMap((table) => {
+          const schema = table.schema ?? "";
+          const name = table.name ?? "";
+          if (!schema || !name) {
+            return [];
+          }
+          const active = selected?.schema === schema && selected?.name === name;
+          return [
+            <li key={`${schema}.${name}`} className={active ? "is-selected" : undefined}>
+              <button
+                type="button"
+                className={active ? "table-name-item table-name-item-active" : "table-name-item"}
+                aria-label={`Schema ${schema} Table ${name}`}
+                aria-current={active ? "true" : undefined}
+                onClick={() => onSelect({ schema, name })}
+              >
+                <span>
+                  <span className="muted-copy">Schema </span>
+                  <span className="identifier">{schema}</span>
+                </span>
+                <span>
+                  <span className="muted-copy">Table </span>
+                  <span className="identifier">{name}</span>
+                </span>
+              </button>
+            </li>,
+            active ? (
+              <li key={`${schema}.${name}.rows`} className="table-rows-slot is-selected">
+                {rows}
+              </li>
+            ) : null,
+          ];
+        })}
+      </ul>
+    </>
   );
+}
+
+function RowsPanel({
+  regionRef,
+  table,
+  page,
+  error,
+  queryError,
+  loading,
+  queryDraft,
+  onQueryDraftChange,
+  onSearch,
+  onPrevious,
+  onNext,
+}: {
+  regionRef: RefObject<HTMLElement | null>;
+  table: SelectedTable;
+  page: RowPage | null;
+  error: string;
+  queryError: string;
+  loading: boolean;
+  queryDraft: string;
+  onQueryDraftChange: (value: string) => void;
+  onSearch: () => void;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  const columns = page?.columns ?? [];
+  const rows = page?.rows ?? [];
+  const offset = page?.offset ?? 0;
+  const total = page?.total ?? 0;
+  const previousDisabled = page == null || offset === 0;
+  const nextDisabled = page == null || offset + rows.length >= total;
+  const range = rows.length > 0 ? `${offset + 1}–${offset + rows.length} of ${total}` : "";
+
+  return (
+    <section
+      ref={regionRef}
+      className="rows-region"
+      aria-label={`Rows for ${table.schema}.${table.name}`}
+      aria-busy={loading}
+    >
+      <h3>
+        <span className="identifier">{table.schema}</span>
+        <span className="muted-copy">.</span>
+        <span className="identifier">{table.name}</span>
+      </h3>
+      <form
+        className="row-search"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSearch();
+        }}
+      >
+        <div className="row-search-field">
+          <label htmlFor="row-query">Search rows</label>
+          <input
+            id="row-query"
+            autoComplete="off"
+            value={queryDraft}
+            onChange={(event) => onQueryDraftChange(event.target.value)}
+            aria-invalid={queryError ? true : undefined}
+            aria-describedby={queryError ? "row-query-hint row-query-error" : "row-query-hint"}
+          />
+          <p id="row-query-hint" className="muted-copy">
+            Maximum 128 code points. Apply to search.
+          </p>
+        </div>
+        <button type="submit" className="text-button">
+          Apply
+        </button>
+      </form>
+      {queryError ? (
+        <p id="row-query-error" className="form-error" role="alert">
+          {queryError}
+        </p>
+      ) : null}
+      {loading ? (
+        <p className="muted-copy" role="status">
+          Loading rows.
+        </p>
+      ) : null}
+      {error ? (
+        <p className="form-warning" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {page && rows.length === 0 && !error ? (
+        <p className="muted-copy" role="status">
+          No rows.
+        </p>
+      ) : null}
+      {page && rows.length > 0 && !error ? (
+        <RowGrid schema={table.schema} table={table.name} columns={columns} rows={rows} />
+      ) : null}
+      {range ? (
+        <p className="muted-copy" role="status">
+          {range}
+        </p>
+      ) : null}
+      {page && !error ? (
+        <div className="row-pager">
+          <button type="button" className="text-button" disabled={previousDisabled} onClick={onPrevious}>
+            Previous
+          </button>
+          <button type="button" className="text-button" disabled={nextDisabled} onClick={onNext}>
+            Next
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RowGrid({
+  schema,
+  table,
+  columns,
+  rows,
+}: {
+  schema: string;
+  table: string;
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+}) {
+  return (
+    <div className="row-grid-wrap">
+      <table className="row-grid">
+        <caption className="visually-hidden">
+          Rows for {schema}.{table}
+        </caption>
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th key={column} scope="col">
+                <span className="identifier">{column}</span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={index}>
+              {columns.map((column) => {
+                const cell = formatCell(row[column]);
+                return (
+                  <td key={column} className={cell.nullish ? "muted-copy" : "identifier"}>
+                    {cell.text}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function formatCell(value: unknown): { text: string; nullish: boolean } {
+  if (value === null || value === undefined) {
+    return { text: "Null", nullish: true };
+  }
+  if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return { text: String(value), nullish: false };
+  }
+  try {
+    return { text: JSON.stringify(value), nullish: false };
+  } catch {
+    return { text: "Null", nullish: true };
+  }
 }
 
 function DetailsFacts({ details }: { details: DatabaseDetails }) {

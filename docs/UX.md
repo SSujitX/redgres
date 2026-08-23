@@ -47,6 +47,7 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 
 - Database ledger/list with owner, size, connections, saved credential state, security warnings.
 - Inspector/detail panel for connection URLs, tables, rows, and safe actions.
+- Selecting a table in the Databases inspector loads that table’s rows from the bounded rows API into a horizontally scrollable grid with a sticky header inside a bounded pane, Previous/Next pagination taken from the response `offset`, `limit`, and `total`, and an optional `q` search applied on submit (maximum 128 Unicode code points; empty `q` is omitted). The row grid is placed immediately after the selected table. A Back to tables control clears the selected table and row state. Below 1024px, other table names are hidden while a table is selected. An existing table with zero matching rows shows “No rows.” A missing or non-table target shows a not-found alert, never an empty healthy grid. PostgreSQL unavailability shows the API or “PostgreSQL is unavailable” alert, never “No rows.” Changing the selected database clears the selected table and all row state. Row values, `q`, and row payloads stay in memory only and are not written to `localStorage`, `sessionStorage`, or the location URL.
 - Creation wizard separates database name, new/existing project role, generated password behavior, and direct/pooled explanation.
 - Destructive operations live in a distinct danger area and disclose source connection termination/role cleanup.
 

@@ -16,7 +16,15 @@ function jsonResponse(status: number, body: unknown, headers: Record<string, str
 }
 
 function isTablesUrl(url: string, name: string): boolean {
-  return url.includes(`/api/v1/postgres/databases/${encodeURIComponent(name)}/tables`);
+  return (
+    url.includes(`/api/v1/postgres/databases/${encodeURIComponent(name)}/tables`) && !url.includes("/rows")
+  );
+}
+
+function isRowsUrl(url: string, db: string, schema: string, table: string): boolean {
+  return url.includes(
+    `/api/v1/postgres/databases/${encodeURIComponent(db)}/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/rows`,
+  );
 }
 
 function isDetailsUrl(url: string, name: string): boolean {
@@ -284,7 +292,7 @@ describe("App session and login", () => {
     expect(screen.getByText("Owner can create roles").closest("div")).toHaveTextContent("No");
     expect(await screen.findByText("items")).toBeInTheDocument();
     expect(screen.getByText("public")).toHaveClass("identifier");
-    expect(screen.getByText("items").closest("button")).toBeNull();
+    expect(screen.getByRole("button", { name: /Schema public Table items/ })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Database details" })).toHaveAttribute("aria-busy", "false");
     expect(screen.queryByText(/healthy/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
@@ -521,6 +529,442 @@ describe("App session and login", () => {
     fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("PostgreSQL is unavailable");
     expect(screen.queryByText("No manageable project databases.")).not.toBeInTheDocument();
+  });
+
+  it("loads bounded rows after a table is activated", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "p".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [{ schema: "public", name: "items" }], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+      }
+      if (isRowsUrl(url, "project_a", "public", "items")) {
+        return jsonResponse(200, {
+          columns: ["id", "name", "blob", "note"],
+          rows: [{ id: 1, name: "a", blob: "\\xdead", note: null }],
+          total: 1,
+          offset: 0,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByRole("columnheader", { name: "id" })).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("a")).toBeInTheDocument();
+    expect(screen.getByText("\\xdead")).toBeInTheDocument();
+    expect(screen.getByText("Null")).toBeInTheDocument();
+    expect(screen.getByText("1–1 of 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back to tables" })).toBeInTheDocument();
+    const rowsCall = fetch.mock.calls.find((call) => String(call[0]).includes("/rows"));
+    expect(rowsCall).toBeDefined();
+    expect(String(rowsCall?.[0])).toBe("/api/v1/postgres/databases/project_a/tables/public/items/rows");
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+    fireEvent.click(screen.getByRole("button", { name: "Back to tables" }));
+    expect(screen.queryByRole("region", { name: /Rows for/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("1–1 of 1")).not.toBeInTheDocument();
+  });
+
+  it("renders markup-looking cells as text and keeps q off the location bar", async () => {
+    const hrefBefore = window.location.href;
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "y".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [{ schema: "public", name: "items" }], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+      }
+      if (isRowsUrl(url, "project_a", "public", "items")) {
+        return jsonResponse(200, {
+          columns: ["note"],
+          rows: [{ note: "<img src=x onerror=alert(1)>" }],
+          total: 1,
+          offset: 0,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
+    expect(document.querySelector("img")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Search rows"), { target: { value: "tokenish" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(window.location.href).toBe(hrefBefore);
+    expect(window.location.search).not.toMatch(/[?&]q=/);
+  });
+
+  it("shows No rows for an empty existing table", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "q".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [{ schema: "public", name: "items" }], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+      }
+      if (isRowsUrl(url, "project_a", "public", "items")) {
+        return jsonResponse(200, { columns: ["id"], rows: [], total: 0, offset: 0, limit: 50 });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByText("No rows.")).toBeInTheDocument();
+    expect(screen.queryByText("PostgreSQL is unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not found")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("shows rows unavailable without an empty healthy grid", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "r".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [{ schema: "public", name: "items" }], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+      }
+      if (isRowsUrl(url, "project_a", "public", "items")) {
+        return jsonResponse(503, {
+          error: { code: "dependency_unavailable", message: "PostgreSQL is unavailable" },
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("PostgreSQL is unavailable");
+    expect(screen.queryByText("No rows.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("shows a not-found alert for a missing table without No rows", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "s".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [{ schema: "public", name: "items" }], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+      }
+      if (isRowsUrl(url, "project_a", "public", "items")) {
+        return jsonResponse(404, { error: { code: "not_found", message: "Not found" } });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not found");
+    expect(screen.queryByText("No rows.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("ignores a slower first row page after table change", async () => {
+    let releaseA: () => void = () => {};
+    const blockedA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "t".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          tables: [
+            { schema: "public", name: "items" },
+            { schema: "public", name: "orders" },
+          ],
+          truncated: false,
+        });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+      }
+      if (isRowsUrl(url, "project_a", "public", "items")) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedA.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return jsonResponse(200, {
+          columns: ["id"],
+          rows: [{ id: "stale_row" }],
+          total: 1,
+          offset: 0,
+          limit: 50,
+        });
+      }
+      if (isRowsUrl(url, "project_a", "public", "orders")) {
+        return jsonResponse(200, {
+          columns: ["id"],
+          rows: [{ id: "fresh_row" }],
+          total: 1,
+          offset: 0,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByText("Loading rows.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Schema public Table orders/ }));
+    expect(screen.queryByText("stale_row")).not.toBeInTheDocument();
+    expect(await screen.findByText("fresh_row")).toBeInTheDocument();
+    releaseA();
+    await waitFor(() => {
+      expect(screen.queryByText("stale_row")).not.toBeInTheDocument();
+    });
+  });
+
+  it("clears selected table and rows when the database changes", async () => {
+    let releaseA: () => void = () => {};
+    const blockedA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "u".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, {
+          databases: [
+            { name: "project_a", owner: "owner_a" },
+            { name: "project_b", owner: "owner_b" },
+          ],
+          truncated: false,
+        });
+      }
+      if (isTablesUrl(url, "project_a") || isTablesUrl(url, "project_b")) {
+        return jsonResponse(200, { tables: [{ schema: "public", name: "items" }], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a") || isDetailsUrl(url, "project_b")) {
+        const name = url.includes("project_b") ? "project_b" : "project_a";
+        return jsonResponse(200, { database: { name, owner: name === "project_b" ? "owner_b" : "owner_a" } });
+      }
+      if (isRowsUrl(url, "project_a", "public", "items")) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedA.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return jsonResponse(200, {
+          columns: ["secret"],
+          rows: [{ secret: "should-not-paint" }],
+          total: 1,
+          offset: 0,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByText("Loading rows.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_b/ }));
+    expect(screen.queryByText("should-not-paint")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /Rows for/ })).not.toBeInTheDocument();
+    releaseA();
+    await waitFor(() => {
+      expect(screen.queryByText("should-not-paint")).not.toBeInTheDocument();
+    });
+    expect(await screen.findByRole("heading", { name: "project_b" })).toBeInTheDocument();
+    expect(screen.getAllByText("owner_b").length).toBeGreaterThan(0);
+  });
+
+  it("rejects an overlong row search before fetching", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "v".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [{ schema: "public", name: "items" }], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+      }
+      if (isRowsUrl(url, "project_a", "public", "items")) {
+        return jsonResponse(200, { columns: ["id"], rows: [{ id: 1 }], total: 1, offset: 0, limit: 50 });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByText("1")).toBeInTheDocument();
+    const before = fetch.mock.calls.filter((call) => String(call[0]).includes("/rows")).length;
+    fireEvent.change(screen.getByLabelText("Search rows"), { target: { value: "🙂" + "x".repeat(128) } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByText("Query is too long")).toBeInTheDocument();
+    expect(screen.getByLabelText("Search rows")).toHaveAttribute("aria-invalid", "true");
+    expect(fetch.mock.calls.filter((call) => String(call[0]).includes("/rows"))).toHaveLength(before);
+  });
+
+  it("shows a server query validation error without a healthy grid", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "w".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [{ schema: "public", name: "items" }], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+      }
+      if (isRowsUrl(url, "project_a", "public", "items")) {
+        if (url.includes("q=")) {
+          return jsonResponse(400, {
+            error: { code: "validation_error", message: "Query is too long", fields: { q: "too_long" } },
+          });
+        }
+        return jsonResponse(200, { columns: ["id"], rows: [{ id: 1 }], total: 1, offset: 0, limit: 50 });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByText("1")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Search rows"), { target: { value: "ok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByText("Query is too long")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("requests the next row page from the last response offset and limit", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "x".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [{ schema: "public", name: "items" }], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+      }
+      if (isRowsUrl(url, "project_a", "public", "items")) {
+        if (url.includes("offset=50")) {
+          return jsonResponse(200, {
+            columns: ["id"],
+            rows: [{ id: "page_two" }],
+            total: 51,
+            offset: 50,
+            limit: 50,
+          });
+        }
+        return jsonResponse(200, {
+          columns: ["id"],
+          rows: [{ id: "page_one" }],
+          total: 51,
+          offset: 0,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByText("page_one")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("page_two")).toBeInTheDocument();
+    const nextCall = fetch.mock.calls.find((call) => String(call[0]).includes("offset=50"));
+    expect(nextCall).toBeDefined();
   });
 
   it("opens and closes the navigation drawer", async () => {

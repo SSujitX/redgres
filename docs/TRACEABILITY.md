@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz` unit tests only; no `/status` or search | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API; no row UI; PG-003–006/008–012 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | TODO | Planned |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -253,4 +253,32 @@ Reviewer/date: Verifier approved (2026-08-23) row-browse API only (not full PG-0
  L2 adapter does not re-clamp limit/q (HTTP+service clamp today); L3 no HTTP test
  that marshal failure never emits 200 (writeJSON is fail-closed). Do not treat as
  COMPATIBILITY.md §6 evidence.
+```
+
+## PostgreSQL row browse UI (2026-08-23)
+
+```text
+Requirement: PG-007 (inspector row grid/search/pager only; no DELETE)
+Decision/ADR: ADR-001, ADR-003
+Source characterization: consumes GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows;
+ database-app table view at 1c3e8e2 inspected, not copied. Submit-only q (not live search).
+ 200-empty vs 404 distinguished. No PK/delete/edit/title dump.
+Implementation files: web/src/api/{client,postgres}.ts;
+ web/src/features/postgres/DatabasesPage.tsx; web/src/styles/globals.css;
+ web/src/App.test.tsx; docs/UX.md
+Unit tests: App.test.tsx happy/empty/503/404/stale table/db-clear/q client+400/pager/XSS-text + prior cases
+Integration tests: none
+Security tests: no localStorage writes; q not placed in location; markup cell is a text node;
+ no /rows until a table is activated; 503/404 ≠ “No rows.”; search autoComplete=off
+Deployment/migration impact: none
+Known limitations: jsdom cannot prove viewports; no DELETE; live PG 17/18 unproven
+Assumptions recorded: changing table resets q/offset; Null label; omit empty q and offset 0;
+ Next offset is response.offset+limit; Next disabled when offset+rows.length>=total
+Commands executed locally (2026-08-23):
+  web: npm run test:run → 32 passed; npm run build → TypeScript 7.0.2 + Vite 8.2.2
+Reviewer/date: Security review approved merge (2026-08-23): no Critical/High/Medium.
+ Verifier approved remaining UI only (not full PG-007). UI reviewer requested
+ M1/M2 then approved remediations (2026-08-23): bounded sticky pane; rows after
+ selected table; Back to tables; hide other tables below 1024px. L1–L3 applied;
+ L4/L5 accepted residuals. Not viewport sign-off. Not COMPATIBILITY.md §6.
 ```
