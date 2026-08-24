@@ -1468,10 +1468,40 @@ Commands executed locally (2026-08-25) after FF API `07303be` then merge UI
    ../internal/web/dist/app/{index.html, assets/index-FsGibsca.css 14.75 kB,
    assets/index-B9gZve1k.js 240.65 kB}; built in 169ms
   Writer also ran gofmt/vet/build on API worktree and npm test 111 / build
-   on UI worktree. Not run: go test -race, gitleaks, govulncheck, CI, live
-   Redis, browser viewports, Playwright, frontend jobs on Node 24.19.0
-Reviewer/date: not yet reviewed. Keep PLAT-004 Partial.
- Local commits: `07303be` (API), `0756f87` (UI), `7c3fa0e` (merge UI).
+   on UI worktree.
+  Verifier (2026-08-25) on `b73a52c` additionally ran:
+  gofmt -l touched Go → empty
+  go test -count=1 ./internal/platform ./internal/redisadmin ./internal/httpapi
+   → 173 pass / 0 fail
+  go vet ./... → no findings
+  go test -count=1 ./... → 298 pass / 0 fail / 1 skip
+   (internal/web.TestOpenDoesNotFollowSymlinkOutOfRoot, pre-existing Windows)
+  go build -o NUL ./cmd/redgres → success
+  go test -race -count=1 ./... → ok
+  npm --prefix web run test:run → Test Files 3; Tests 111 passed (111);
+   Duration 17.93s; search-dialog role=status flake did not occur
+  npm --prefix web run build → 34 modules; index-FsGibsca.css 14.75 kB;
+   index-B9gZve1k.js 240.65 kB; built in 759ms
+  git diff --name-only 546fffd -- go.mod go.sum web/package.json
+   web/package-lock.json docs/PRD.md docs/COMPATIBILITY.md → empty
+  Not run: gitleaks, govulncheck, CI, live Redis, browser viewports,
+   Playwright, frontend jobs on Node 24.19.0
+Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
+ Confirmed session + platform.read, 401 has no groups, no-store, GET not
+ audited, no CSRF, hits id/type/label, protected omitted from search, canaries
+ absent, ACL LIST only, platform does not import redisadmin. Lows accepted
+ unfixed: future platform.read vs redis.read; search HTTP audit-count;
+ HTTP adminUser omit.
+ UI review (2026-08-25) approve Partial search hits UI; no blocking defects.
+ Redis group mirrors postgres; inspect-one in memory; count includes ACL
+ users; login never /search; secrets not rendered; Create absent. Explicitly
+ NOT viewport, zoom, or visual sign-off.
+ Evidence review (2026-08-25) keep Partial; REDIS-002 stale requirement
+ line corrected in `b73a52c`.
+ Verifier (2026-08-25) PASS on master `b73a52c`. Keep PLAT-004 Partial and
+ REDIS-002 Partial.
+ Local commits: `07303be` (API), `0756f87` (UI), `7c3fa0e` (merge UI),
+ `9af4b46` (docs record), `b73a52c` (REDIS-002 residual wording).
  Not pushed.
 ```
 
