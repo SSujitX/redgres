@@ -769,5 +769,6 @@ Verifier (2026-08-25) PASS on all ten items, recommending merge. It re-executed
  recommends deletion. That remains an outstanding user action from the
  single-port slice above.
 Reviewer/date: Security review 2026-08-25 (approve, docs-only changes applied);
- verifier 2026-08-25 (PASS, three corrections applied). Local commit pending.
+ verifier 2026-08-25 (PASS, three corrections applied).
+ Local commit `47b3e17` on `master` (not pushed).
 ```
