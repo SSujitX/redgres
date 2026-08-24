@@ -55,11 +55,13 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 
 ## Redis workflow
 
-- ACL user ledger with enabled state, key prefix, preset, protected/imported status.
-- Form defaults to safe preset and a project-specific prefix.
-- Queue preset requires Lists, Streams, or Sorted Sets selection.
-- Custom permissions show only allowed commands/categories and their effective expansion.
-- Externally managed rules Redgres cannot model exactly are labeled and not silently rewritten.
+- The ACL users page lists Redis ACL users and inspects one user’s modeled rules without secrets. The title is “ACL users” from navigation. There is no Create control in this slice.
+- Authenticated `GET /api/v1/redis/users` uses the session cookie, no query string, and no CSRF. Protected users are listed and inspectable. Ledger rows are buttons showing username (Protected badge), Enabled or Disabled, preset, key prefix, and Limited when `rule_fidelity` is `limited`.
+- `state: not_configured` is not an empty healthy list. `state: unavailable` with `unreachable`, `auth_failed`, or `permission_denied` uses copy distinct from “No ACL users.” HTTP 200 `state: ok` with `users: []` is “No ACL users.” Truncation is disclosed. Envelope 401 uses “Your session has expired. Sign in again to continue.”
+- Selecting a row loads `GET /api/v1/redis/users/{username}` with AbortController; a slower first selection is ignored. The inspector shows commands, categories, optional queue kind, and limited-rule copy when Redgres cannot model the rules exactly. It does not rewrite, create, rotate, or delete. A 404 is a not-found alert, never an empty healthy inspector.
+- Painted identifiers use `displayText()` plus bidi isolate. The Redis service rail is wayfinding; healthy and limited states do not use danger red. Login never fetches `/api/v1/redis/users`. List and inspector state stay in memory (no `localStorage`) and clear on logout.
+- Permission presets remain a placeholder. Redis ACL user search stays `not_implemented`.
+- Residual: create form (safe preset and project-specific prefix), queue-kind selection, custom allow-list editing, enable/disable/rotate/delete.
 
 ## Audit history
 

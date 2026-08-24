@@ -2,6 +2,7 @@ import { sectionTitle, type SectionId } from "../../nav";
 import AuditPage from "../audit/AuditPage";
 import OverviewPage from "../overview/OverviewPage";
 import DatabasesPage from "../postgres/DatabasesPage";
+import AclUsersPage from "../redis/AclUsersPage";
 
 type PageProps = {
   section: SectionId;
@@ -21,6 +22,10 @@ export function SectionPage({ section, focusDatabase = null, focusNonce = 0 }: P
 
   if (section === "audit") {
     return <AuditPage />;
+  }
+
+  if (section === "redis") {
+    return <AclUsersPage />;
   }
 
   const adapter =

@@ -167,6 +167,55 @@ input:focus-visible {
   box-shadow: inset 3px 0 0 var(--postgres);
 }
 
+.page-header-redis {
+  border-left: 3px solid var(--redis);
+  padding-left: var(--space-3);
+}
+
+.ledger-item-redis {
+  align-items: stretch;
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.ledger-item-redis.ledger-item-active {
+  box-shadow: inset 3px 0 0 var(--redis);
+}
+
+.ledger-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+}
+
+@media (min-width: 768px) {
+  .ledger-facts {
+    grid-template-columns: minmax(0, 1.5fr) auto minmax(0, 1fr) minmax(0, 1.2fr);
+    align-items: baseline;
+  }
+}
+
+.ledger-limited {
+  color: var(--warning);
+}
+
+.detail-panel-redis {
+  border-left: 3px solid var(--redis);
+  padding-left: var(--space-3);
+}
+
+.rule-list {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-2) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
 .detail-panel {
   margin-top: var(--space-5);
 }
