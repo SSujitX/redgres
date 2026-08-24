@@ -42,7 +42,7 @@ Core error codes: `unauthorized`, `forbidden`, `csrf_invalid`, `rate_limited`, `
 | GET | `/api/v1/healthz` | Liveness/state DB health, no auth secrets |
 | GET | `/api/v1/status` | Authenticated component status |
 | GET | `/api/v1/search?q=&limit=` | Authenticated bounded search over manageable resource metadata/navigation; no secrets or destructive execution |
-| GET | `/api/v1/audit?cursor=&limit=` | Paginated redacted audit history |
+| GET | `/api/v1/audit?cursor=&limit=` | Paginated redacted audit history (implemented) |
 | GET | `/api/v1/operations/{id}` | Long-operation state/result summary |
 
 Session cookie name: `redgres_session` (opaque 64-hex token, `Path=/`, `HttpOnly`, `SameSite=Strict`, `Secure` from `REDGRES_COOKIE_SECURE`). Mutations send `X-CSRF-Token`. There is no HTTP bootstrap route.
@@ -74,6 +74,39 @@ Generic failure is `401` `unauthorized` with message `Invalid username or passwo
 ```
 
 `tool_links` stays empty until optional tool-link configuration exists.
+
+**GET `/api/v1/audit`** requires a session cookie and the `audit.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
+
+Success `200`:
+
+```json
+{
+  "events": [
+    {
+      "id": 1421,
+      "actor": "admin",
+      "action": "owner.login",
+      "target": "admin",
+      "outcome": "success",
+      "request_id": "aabbccddeeff00112233445566778899",
+      "client_ip": "127.0.0.1",
+      "created_at": "2026-08-25T04:11:09.123456789Z"
+    }
+  ],
+  "has_more": true,
+  "next_cursor": "YTE6MTQyMQ",
+  "limit": 50,
+  "request_id": "…"
+}
+```
+
+Events are newest first. `events` is always an array; an empty page is `[]`, never `null`. `next_cursor` is present only when `has_more` is true, so `has_more` and a non-empty `next_cursor` always agree.
+
+The audit `metadata` column is **never returned and never selected**. Write-time redaction (`internal/audit.redactMetadata`) is a substring heuristic, so historical rows may hold whatever it allowed; excluding the column from the query keeps that content out of any response by construction rather than by filtering. A later slice may project an explicit allow-list of metadata keys; it must never return the raw column.
+
+`cursor` is opaque and must be treated as such by clients: it is base64url (unpadded) of a versioned `a1:<id>` payload. Paging orders by `id`, the SQLite rowid alias, because it is unique and assigned during the insert. `created_at` is not an ordering key: it is `TEXT` in RFC3339Nano form whose fractional second drops trailing zeros, so SQLite's string comparison is not chronological (`…05Z` sorts above `…05.5Z` while being earlier), and it is sampled before the insert. `id` is exposed as a stable per-event identifier for client keying only, not for ordering or arithmetic; ordering position is carried solely by `next_cursor`.
+
+The cursor is exclusive: a page returns events strictly older than it. A well-formed cursor whose row no longer exists is **not** an error; it returns whatever is older, possibly an empty page. Default `limit` is 50; `limit<=0` or `limit>500` clamps to 50 and the response echoes the effective `limit`. A non-integer `limit` is `400` `validation_error` with `fields.limit`, and a malformed `cursor` is `400` `validation_error` with `fields.cursor`; neither queries, and the submitted cursor value is never echoed back. `actor`, `target`, and `client_ip` are nullable in storage and are emitted as `""` when null. `created_at` is returned verbatim as stored. There is no `total`, because the table grows without bound. A storage failure is `503` `dependency_unavailable` with the fixed control-plane storage message and no driver, path, or SQL text.
 
 ## Static asset delivery
 

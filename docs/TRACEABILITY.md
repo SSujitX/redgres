@@ -5,7 +5,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
-| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz` unit tests only; no `/status` or search | Partial |
+| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz` unit tests; PLAT-003 audit read API store+HTTP tests (no UI); no `/status` or server search | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | TODO | Planned |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
@@ -539,4 +539,235 @@ Reviewer/date: Security review approved merge (2026-08-23): no Critical/High/Med
  selected table; Back to tables; hide other tables below 1024px. L1–L3 applied;
  L4/L5 accepted residuals. Local commit `095ae11` (not pushed). Not viewport
  sign-off. Not COMPATIBILITY.md §6.
+```
+
+## Paginated audit history read API (2026-08-25)
+
+```text
+Requirement: PLAT-003 (backend only). Also closes the PLAT-002 residual recorded
+ at the owner-auth entry above: "no HTTP assertion that success audit rows exist".
+Decision/ADR: ADR-001 (audit read stays behind internal/audit, transport in
+ internal/httpapi), ADR-005 (SQLite control state). No new ADR and none superseded:
+ the endpoint contract belongs in docs/API.md and the module graph is unchanged,
+ so docs/ARCHITECTURE.md needed no edit (line 49 already routes audit endpoints to
+ the audit service and the control-state repository).
+Source characterization: no source-system parity involved. docs/API.md already
+ reserved GET /api/v1/audit?cursor=&limit= and the audit.read capability but
+ defined no response shape, so the contract was written in this slice.
+Ordering-key finding (the load-bearing decision): created_at is NOT usable as the
+ paging key, for two independent reasons proven locally rather than assumed.
+ (a) It is not unique. (b) It is not lexicographically chronological: Store.Record
+ writes time.RFC3339Nano, whose fractional-second directive drops trailing zeros,
+ so the TEXT column has variable-length fractions and SQLite's string comparison
+ disagrees with time order wherever one fraction is a prefix of another, because
+ 'Z' (0x5A) sorts above every digit (0x30-0x39). Measured with a throwaway Go
+ program (Go 1.27.0, deleted after use):
+   "2026-08-25T04:11:05Z"   vs "2026-08-25T04:11:05.5Z"  → time_before=true  string_less=false
+   "2026-08-25T04:11:05.1Z" vs "2026-08-25T04:11:05.12Z" → time_before=true  string_less=false
+   "…05.000000001Z"         vs "…05.00000001Z"           → time_before=true  string_less=true
+ (c) created_at is also sampled by time.Now() before the INSERT, so it can
+ disagree with commit order. Paging therefore orders by id, the SQLite rowid
+ alias. TestCreatedAtStringOrderIsNotChronological pins case (a) inside the real
+ schema so the hazard cannot silently change.
+ Primary-source verification for id (https://www.sqlite.org/autoinc.html,
+ page last updated 2024-02-22): "a column with type INTEGER PRIMARY KEY is an
+ alias for the ROWID"; on INSERT without an explicit value it is "filled
+ automatically with an unused integer, usually one more than the largest ROWID
+ currently in use"; and the algorithm "will generate monotonically increasing
+ unique ROWIDs as long as you never use the maximum ROWID value and you never
+ delete the entry in the table with the largest ROWID". AUTOINCREMENT was NOT
+ added; it is not required for keyset paging and imposes overhead.
+Migration impact: NONE. migrations/001_initial.sql is unchanged and no 002_*.sql
+ was added. ORDER BY id DESC needs no new index because it does not sort:
+ TestListPlanUsesNoTemporaryBTree asserts EXPLAIN QUERY PLAN for both statements
+ is non-empty and contains no TEMP B-TREE, converting that from assertion to
+ evidence. Observed plans are "SCAN audit_events" and "SEARCH audit_events USING
+ INTEGER PRIMARY KEY (rowid<?)", with no sorter. Scan DIRECTION is deliberately
+ not claimed: EXPLAIN QUERY PLAN does not annotate it, so "reverse b-tree
+ traversal" would be an inference. The load-bearing fact — no sorter, therefore
+ no index and no migration — is directly proven. The existing
+ audit_events_created_at_idx is simply unused here and was left alone.
+ go.mod/go.sum unchanged; no new dependency. No configuration key — the page
+ bounds are code constants, as defaultRowLimit already is.
+Implementation files: internal/audit/list.go (EventSummary, Page, ClampListLimit,
+ Store.List); internal/httpapi/audit_routes.go (handleAuditEvents, opaque cursor
+ codec, limit clamp, error mapping); internal/httpapi/server.go (one route line,
+ gated by requireSession + requireCapability("audit.read")); docs/API.md.
+Contract: GET /api/v1/audit → {events,has_more,next_cursor?,limit,request_id},
+ newest first. cursor is opaque base64url-unpadded of a versioned "a1:<id>"
+ payload, exclusive. Default limit 50; limit<=0 or >500 clamps to 50 and the
+ response echoes the effective limit; non-integer limit is 400. events is always
+ an array, never null. next_cursor is present only when has_more is true.
+Metadata exclusion (deliberate): the metadata column is neither returned nor
+ SELECTed. redactMetadata is a substring heuristic that does not recurse into
+ nested maps/slices and deliberately keeps a key named "session" (the existing
+ fixture documents this), so historical rows may hold whatever it allowed.
+ Excluding the column keeps that content out of process memory by construction
+ instead of relying on a filter staying correct. Named follow-up: a later slice
+ may project an explicit allow-list of metadata keys, never the raw column.
+Unit tests: internal/audit/list_test.go — newest-first ordering; three-page walk
+ with no skip/repeat; stability across an insert between two page reads; tied
+ created_at strings paged deterministically; created_at string-order hazard;
+ empty slice not nil; cursor below the oldest id; NULL actor/target/client_ip read
+ as ""; ClampListLimit table; clamped limits honored; EXPLAIN QUERY PLAN;
+ query failure surfaced; context cancellation honored.
+ internal/httpapi/audit_routes_test.go — 14 tests: login success visible (the
+ PLAT-002 gap closer); failure and success both visible; stable HTTP paging with
+ an interleaved write and 5 distinct ids; limit clamp echo for 0/-3/501;
+ "events":[] literal on an empty table; well-formed cursor below the oldest id is
+ 200-empty not 400/404; 401 for absent and unknown cookies; 12 malformed cursor
+ forms; 4 malformed limit forms; 405 for POST/DELETE/PUT; storage failure; the
+ metadata canary; the capability gate; cursor round trip and URL safety.
+Integration tests: none. This slice touches no PostgreSQL or Redis adapter, so
+ the COMPATIBILITY.md §6 matrix is not applicable and no §6 evidence is claimed.
+Security tests: TestAuditListNeverReturnsMetadata inserts a row with raw SQL,
+ bypassing Store.Record and therefore the write-time redactor, containing a
+ postgresql:// DSN with a password, a "password" pair, a csrf_token and a
+ session_token; it first asserts the canary really is stored and that the canary
+ event is present in the returned page (so the test cannot pass vacuously), then
+ asserts audit.ContainsSecret(body) is false and that "canary", "secret",
+ "csrf_token", "postgresql://" and "metadata" are all absent. Malformed-cursor
+ cases assert the submitted value is never echoed back. Cache-Control: no-store
+ asserted on 200, 400, 401 and 503. Storage-failure test asserts 503
+ dependency_unavailable with the fixed storageUnavailable message and no db path,
+ "sqlite", "modernc", "audit_events" or "no such table" text, and no "events" key.
+ 401 responses asserted to expose no "events" key. All SQL is parameterized; the
+ cursor never reaches a statement as text.
+Storage-failure seam: the audit table is DROPped rather than the connection
+ closed, because closing srv.db makes requireSession fail first and the resulting
+ 503 would not exercise the handler's own error mapping.
+Known limitations: metadata is not exposed at all (deliberate, above). A
+ route-level 403 is unreachable because hasCapability tests the package-level
+ defaultCapabilities list which contains audit.read — the same pre-existing
+ residual already recorded for postgres.read; the gate is instead proven by a
+ hasCapability table test and a middleware-level 403 for an unknown capability,
+ and the capability model was not changed. No total count (the table grows without
+ bound, so NFR-002 forbids a COUNT(*)), and no UI — audit history is not yet
+ reachable from the browser. Rowid reuse is possible only if the highest rows are
+ deleted, which a future oldest-first retention policy would not do; the cursor is
+ opaque so its encoding can change without a contract break.
+ go test -race ./... in full, gitleaks, govulncheck, cross-compiles and the
+ frontend jobs remain CI-only and are not claimed here.
+SECURITY RESIDUAL — unauthenticated audit-row injection and flooding (Medium,
+ pre-existing in the AUTH/PLAT-002 login path, NOT introduced by this slice, and
+ deliberately NOT fixed here because internal/auth and internal/httpapi/
+ auth_routes.go login behavior is outside PLAT-003). Both login failure branches
+ let an unauthenticated caller add audit rows without bound, verified by reading
+ the code in this session:
+   (a) internal/httpapi/auth_routes.go:117-121 (invalid username) records an audit
+       row whose actor/target are the fixed literal "invalid_username" and never
+       calls store.Record, so it contributes nothing to lockout at all;
+   (b) internal/httpapi/auth_routes.go:136-147 (well-formed but unknown username)
+       records an audit row whose actor/target are the CALLER'S OWN string, and
+       although it does call store.Record, AttemptStore.LockoutRemaining keys on
+       (username, client_ip) (internal/auth/security.go:72-79), so a caller
+       varying the username never accumulates lockoutThreshold=5 failures for any
+       single key and is never locked out.
+ The practical throttle in both cases is only the argon2id cost of VerifyUnknown
+ (m=65536 KiB, t=3, p=4 — internal/auth/password.go:18-20, pinned by
+ password_test.go:13). Injected content is bounded by ValidateUsername to 64
+ runes with no Cc control characters and is lowercased, and JSON encoding makes it
+ inert in a response, so there is no injection or log-forging risk today (this
+ route logs nothing).
+ What THIS slice changes is the consequence, which is why it is recorded here:
+ audit history is now readable only as unfiltered newest-first pages, with no
+ filtering by action/outcome/actor/date and no retention policy (NFR-006 open).
+ An attacker can therefore push genuine security events off the operator's early
+ pages and grow the SQLite control-plane file without authenticating. That
+ degrades PLAT-003's own criterion that "failure events are visible". The
+ follow-up filtering slice is therefore a SECURITY requirement, not a
+ convenience feature, and should be scoped with retention (NFR-006) and with
+ making the invalid-username branch contribute to rate limiting.
+FUTURE-UI CONSTRAINT — bidirectional/format characters survive into actor/target.
+ ValidateUsername rejects only unicode.IsControl (category Cc,
+ internal/auth/security.go:40-44), so U+202E RIGHT-TO-LEFT OVERRIDE, other Cf
+ characters, and homoglyphs pass. Nothing is exploitable today: encoding/json
+ escapes safely and there is no UI consumer of this endpoint. The audit-history UI
+ slice MUST neutralize bidi/format controls at render time to prevent a
+ Trojan-Source-style display spoof against the operator reading the log.
+ ValidateUsername was deliberately not changed here; that would alter AUTH
+ behavior outside PLAT-003.
+Accepted residual: the 503 path discards the storage error with no server-side
+ log (internal/httpapi/audit_routes.go:44-47). Response hygiene is the point, and
+ this matches the existing writePostgresError pattern, so adding logging was left
+ out of this slice rather than diverging from the codebase-wide convention.
+Commands executed locally (2026-08-25):
+  go test -count=1 ./internal/audit/ → ok 1.028s
+  go test -count=1 ./internal/httpapi/ → ok 8.088s
+  go test -count=1 -run TestAudit ./internal/httpapi/ -v → 14 PASS, ok 2.350s
+  go test -count=1 ./... → ok (cmd/redgres, audit, auth, config, database,
+   httpapi, postgresadmin, web; migrations no test files)
+  go test -race -count=1 ./internal/audit/ ./internal/httpapi/ → ok 3.247s / 11.477s
+  go vet ./... → no findings (exit 0)
+  gofmt -l cmd internal migrations → empty
+  go build -o NUL ./cmd/redgres → success
+  git status --porcelain → exactly three modified (docs/API.md,
+   docs/TRACEABILITY.md, internal/httpapi/server.go) and the four new audit
+   files; no *.db, *.db-*, .env*, binary or exported BLOB is stageable
+  Not run: go test -race ./... in full, CI, gitleaks, govulncheck, live PostgreSQL,
+   any frontend command (web/** untouched)
+Reviewer/date: Security review (2026-08-25) approve-with-required-changes, both
+ documentation-only, no code change required: no Critical or High, and no
+ vulnerability introduced by this diff. Confirmed by the reviewer against the
+ code: metadata is unselectable on this path (a repository-wide grep finds it in
+ production code only in the write path) and the eight-destination scan would fail
+ loudly rather than leak if a column were added; the canary test is non-vacuous on
+ all four counts; the cursor is never echoed and this route logs nothing (the
+ router installs no request logger and recoverer logs only %T); the cursor decoder
+ bounds length before decoding and is parameterized so injection is impossible;
+ the 503 discards the error and emits a fixed constant; no-store holds
+ structurally on every status because writeJSON sets it unconditionally and all
+ error paths delegate to it; SameSite=Strict with no CORS blocks cross-origin
+ theft of this first authenticated historical-data GET. Required changes applied
+ in this entry: the M1 unauthenticated audit-row injection/flooding residual and
+ the L1 bidi-character UI constraint, both recorded above. The reviewer's
+ non-blocking docs/API.md point was also applied — the endpoint section now states
+ that the capability set is a static single-owner grant, so the contract is
+ literally true today. The parent independently verified and SHARPENED M1 before
+ recording it: the reviewer attributed the unbounded path to the invalid-username
+ branch, but reading internal/auth/security.go:72-79 shows lockout is keyed on
+ (username, client_ip), so the well-formed-unknown-username branch is ALSO
+ unbounded and it is the one carrying attacker-chosen actor/target. Accepted
+ Lows: L2 no server-side log on the 503 (codebase-wide convention), L3 the
+ unreachable "PostgreSQL is unavailable" marshal-failure fallback in
+ errors.go:39-41, and 405 preceding authentication on every route.
+ Reviewer environment caveat: shell execution was unavailable in the reviewer's
+ session, so it could not run git diff, git status, or go test and read the tree
+ statically; every command in this entry was executed in the parent session and
+ remains for the verifier to confirm.
+Verifier (2026-08-25) PASS on all ten items, recommending merge. It re-executed
+ every command in the block above (Go 1.27.0 windows/amd64) and found the recorded
+ results truthful, with only wall-clock differences: 14 PASS / 0 FAIL / 0 SKIP for
+ -run TestAudit, race green, vet clean, gofmt empty, build exit 0. Confirmed
+ byte-identical to 1e5d4c3: migrations/001_initial.sql, migrations/embed.go,
+ go.mod, go.sum, web/package-lock.json, and the five existing test files
+ (internal/audit/audit_test.go, internal/httpapi/{auth_routes,postgres_routes,
+ server}_test.go, internal/web/embed_test.go); no t.Skip or testing.Short() added.
+ All forbidden paths untouched and server.go is exactly one route line. It
+ reproduced the created_at ordering hazard INDEPENDENTLY and more strongly than
+ this entry did, performing the string comparison inside SQLite rather than only
+ in Go (modernc.org/sqlite v1.57.0, SQLite 3.53.3): all three recorded pairs
+ reproduce. It checked all 20 docs/API.md claims against the code and found no
+ overclaim, including computing that the documented cursor YTE6MTQyMQ is exactly
+ base64url-unpadded "a1:1421" matching the example id. It confirmed the parent's
+ sharpened M1 lockout-keying correction is right on every cited line. For item 10
+ it did not accept reading alone: in a scratch copy it mutated the code to select
+ metadata and observed TestAuditListNeverReturnsMetadata fail loudly printing the
+ canary DSN, and separately observed that adding the column without a scan
+ destination yields the fixed 503 with no leak — proving both the canary test's
+ load-bearing role and the "fail loudly rather than leak silently" claim.
+ Three verifier findings, all corrected in this entry: (a) the recorded
+ git status line omitted docs/TRACEABILITY.md and now lists all three modified
+ files; (b) TestListPlanUsesNoTemporaryBTree could have passed vacuously if
+ EXPLAIN returned zero rows, so it now also asserts the plan text is non-empty
+ and matches the expected access path; (c) "reverse b-tree traversal" was an
+ unprovable inference and has been replaced with the observed plans and an
+ explicit statement that scan direction is not claimed.
+ It also independently flagged the pre-existing untracked
+ redgres.db-x-owners-1-password_hash.bin owner password-hash BLOB export: ignored
+ by *.db-* and not stageable, so this slice's hygiene claim stands, but it
+ recommends deletion. That remains an outstanding user action from the
+ single-port slice above.
+Reviewer/date: Security review 2026-08-25 (approve, docs-only changes applied);
+ verifier 2026-08-25 (PASS, three corrections applied). Local commit pending.
 ```
