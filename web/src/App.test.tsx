@@ -193,7 +193,7 @@ function disconnectedSearch() {
         id: "redis_acl_users",
         label: "Redis ACL users",
         service: "redis",
-        status: "not_implemented",
+        status: "not_configured",
         truncated: false,
         hits: [],
       },
@@ -225,13 +225,45 @@ function postgresHitSearch(extra: Record<string, unknown> = {}) {
         id: "redis_acl_users",
         label: "Redis ACL users",
         service: "redis",
-        status: "not_implemented",
+        status: "not_configured",
         truncated: false,
         hits: [],
       },
     ],
     limit: 20,
     request_id: "dddddddddddddddddddddddddddddddd",
+  });
+}
+
+function redisHitSearch(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    groups: [
+      {
+        id: "postgres_databases",
+        label: "PostgreSQL databases",
+        service: "postgres",
+        status: "not_configured",
+        truncated: false,
+        hits: [],
+      },
+      {
+        id: "redis_acl_users",
+        label: "Redis ACL users",
+        service: "redis",
+        status: "ok",
+        truncated: false,
+        hits: [
+          {
+            id: "redis_acl_user:project_a",
+            type: "redis_acl_user",
+            label: "project_a",
+            ...extra,
+          },
+        ],
+      },
+    ],
+    limit: 20,
+    request_id: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
   });
 }
 
@@ -401,7 +433,7 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "audit" } });
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "audit" } });
     const dialog = screen.getByRole("dialog", { name: "Search" });
     expect(dialog.querySelector(".nav-result")).toHaveTextContent("Audit");
     await waitFor(() => {
@@ -411,8 +443,10 @@ describe("App session and login", () => {
     const method = searchCall?.[1]?.method;
     expect(method === undefined || method === "GET").toBe(true);
     expect(fetch.mock.calls.every((call) => !isAuditUrl(String(call[0])))).toBe(true);
-    expect(screen.getByText(/Redis ACL user search is not available yet/)).toBeInTheDocument();
-    expect(screen.queryByText(/No matching Redis ACL users/i)).not.toBeInTheDocument();
+    const redisGroup = within(dialog).getByRole("region", { name: "Redis ACL users" });
+    expect(await within(redisGroup).findByText("Not configured")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Redis ACL user search is not available yet/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/No matching Redis ACL users/i)).not.toBeInTheDocument();
   });
 
   it("hides nested PostgreSQL items until Databases is current", async () => {
@@ -465,7 +499,7 @@ describe("App session and login", () => {
     render(<App />);
     const search = await screen.findByRole("button", { name: "Search" });
     fireEvent.click(search);
-    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "audit" } });
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "audit" } });
     expect(screen.getByRole("status")).toHaveTextContent("1 matching page.");
     fireEvent.click(screen.getByRole("button", { name: "Close search" }));
     await waitFor(() => {
@@ -494,7 +528,7 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "project" } });
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
     const dialog = await screen.findByRole("dialog", { name: "Search" });
     expect(within(dialog).getByRole("region", { name: "PostgreSQL databases" })).toBeInTheDocument();
     expect(within(dialog).getByRole("region", { name: "Redis ACL users" })).toBeInTheDocument();
@@ -538,7 +572,7 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    const input = screen.getByLabelText("Search pages and databases");
+    const input = screen.getByLabelText("Search pages, databases, and ACL users");
     fireEvent.change(input, { target: { value: "project" } });
     expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
     fireEvent.change(input, { target: { value: "zzz" } });
@@ -575,13 +609,13 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "project" } });
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
     fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
     expect(await screen.findByRole("heading", { name: "project_a" })).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: /project_b/ }));
     expect(await screen.findByRole("heading", { name: "project_b" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "project" } });
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
     fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
     expect(await screen.findByRole("heading", { name: "project_a" })).toBeInTheDocument();
   });
@@ -595,11 +629,11 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "drop" } });
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "drop" } });
     await waitFor(() => {
       expect(fetch.mock.calls.some((call) => String(call[0]) === "/api/v1/search?q=drop")).toBe(true);
     });
-    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "truncate" } });
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "truncate" } });
     await waitFor(() => {
       expect(fetch.mock.calls.some((call) => String(call[0]) === "/api/v1/search?q=truncate")).toBe(true);
     });
@@ -621,7 +655,7 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    const input = screen.getByLabelText("Search pages and databases");
+    const input = screen.getByLabelText("Search pages, databases, and ACL users");
     fireEvent.change(input, { target: { value: "audit" } });
     const dialog = screen.getByRole("dialog", { name: "Search" });
     const audit = within(dialog).getByRole("button", { name: /Audit/ });
@@ -648,7 +682,7 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "ab" } });
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "ab" } });
     await waitFor(() => {
       expect(finish).toBeDefined();
     });
@@ -669,7 +703,7 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    const input = screen.getByLabelText("Search pages and databases");
+    const input = screen.getByLabelText("Search pages, databases, and ACL users");
     fireEvent.change(input, { target: { value: " " } });
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(fetch.mock.calls.every((call) => !isSearchUrl(String(call[0])))).toBe(true);
@@ -697,7 +731,7 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    const input = screen.getByLabelText("Search pages and databases");
+    const input = screen.getByLabelText("Search pages, databases, and ACL users");
     fireEvent.change(input, { target: { value: "project" } });
     expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
     fireEvent.change(input, { target: { value: "projec" } });
@@ -725,7 +759,7 @@ describe("App session and login", () => {
               id: "redis_acl_users",
               label: "Redis ACL users",
               service: "redis",
-              status: "not_implemented",
+              status: "not_configured",
               truncated: false,
               hits: [],
             },
@@ -737,7 +771,7 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "audit" } });
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "audit" } });
     const dialog = screen.getByRole("dialog", { name: "Search" });
     expect(within(dialog).getByRole("button", { name: /Audit/ })).toBeInTheDocument();
     await waitFor(() => {
@@ -770,7 +804,7 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "project" } });
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
     fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
     expect(await screen.findByRole("heading", { name: "project_a" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "admin" }));
@@ -778,6 +812,230 @@ describe("App session and login", () => {
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Search" })).not.toBeInTheDocument();
     expect(screen.queryByText("project_a")).not.toBeInTheDocument();
+  });
+
+  it("opens a redis ACL search hit and inspects that username", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-redis".padEnd(64, "0") });
+      }
+      if (isSearchUrl(url)) {
+        return redisHitSearch({
+          password: "canary-secret",
+          hash: "canary-secret",
+          acl_rule: "+@all canary-secret",
+          canary: "canary-secret",
+        });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ commands: ["get", "set"], categories: [] });
+      }
+      return unknownApi(url);
+    });
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
+    const dialog = await screen.findByRole("dialog", { name: "Search" });
+    expect(within(dialog).getByRole("region", { name: "Redis ACL users" })).toBeInTheDocument();
+    const hit = await screen.findByRole("button", { name: /project_a/ });
+    expect(hit.className).toContain("nav-result-redis");
+    expect(within(dialog).getByRole("status")).toHaveTextContent("1 matching ACL user.");
+    expect(within(dialog).queryByText(/Redis ACL user search is not available yet/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("canary-secret")).not.toBeInTheDocument();
+    expect(dialog.textContent).not.toContain("canary-secret");
+    fireEvent.click(hit);
+    expect(await screen.findByRole("heading", { name: "ACL users" })).toBeInTheDocument();
+    expect(await screen.findByText("get")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "ACL user details" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("canary-secret")).not.toBeInTheDocument();
+    expect(setItem).not.toHaveBeenCalled();
+    const urls = fetch.mock.calls.map((call) => String(call[0]));
+    const listIndex = urls.findIndex((url) => url === "/api/v1/redis/users");
+    const detailIndex = urls.findIndex((url) => url === "/api/v1/redis/users/project_a");
+    expect(listIndex).toBeGreaterThanOrEqual(0);
+    expect(detailIndex).toBeGreaterThan(listIndex);
+    setItem.mockRestore();
+  });
+
+  it("shows Unavailable for a redis search group and never unimplemented copy", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-redis-unavail".padEnd(64, "0") });
+      }
+      if (isSearchUrl(url)) {
+        return jsonResponse(200, {
+          groups: [
+            {
+              id: "postgres_databases",
+              label: "PostgreSQL databases",
+              service: "postgres",
+              status: "ok",
+              truncated: false,
+              hits: [],
+            },
+            {
+              id: "redis_acl_users",
+              label: "Redis ACL users",
+              service: "redis",
+              status: "unavailable",
+              truncated: false,
+              hits: [],
+            },
+          ],
+          limit: 20,
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "audit" } });
+    const dialog = screen.getByRole("dialog", { name: "Search" });
+    expect(await within(dialog).findByText("Unavailable")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Redis ACL user search is not available yet/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/No matching Redis ACL users/i)).not.toBeInTheDocument();
+  });
+
+  it("still shows redis search hits when postgres search is unavailable", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-pg-unavail-redis".padEnd(64, "0") });
+      }
+      if (isSearchUrl(url)) {
+        return jsonResponse(200, {
+          groups: [
+            {
+              id: "postgres_databases",
+              label: "PostgreSQL databases",
+              service: "postgres",
+              status: "unavailable",
+              truncated: false,
+              hits: [],
+            },
+            {
+              id: "redis_acl_users",
+              label: "Redis ACL users",
+              service: "redis",
+              status: "ok",
+              truncated: false,
+              hits: [{ id: "redis_acl_user:project_a", type: "redis_acl_user", label: "project_a" }],
+            },
+          ],
+          limit: 20,
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
+    const dialog = await screen.findByRole("dialog", { name: "Search" });
+    expect(await within(dialog).findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    expect(within(dialog).getByText("Unavailable")).toBeInTheDocument();
+    expect(within(dialog).getByRole("status")).toHaveTextContent("1 matching ACL user.");
+    expect(within(dialog).queryByText(/Redis ACL user search is not available yet/)).not.toBeInTheDocument();
+  });
+
+  it("moves focus through a redis search result with arrows and Enter", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-redis-keys".padEnd(64, "0") });
+      }
+      if (isSearchUrl(url)) {
+        return redisHitSearch();
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    const input = screen.getByLabelText("Search pages, databases, and ACL users");
+    fireEvent.change(input, { target: { value: "project" } });
+    const dialog = screen.getByRole("dialog", { name: "Search" });
+    const hit = await within(dialog).findByRole("button", { name: /project_a/ });
+    input.focus();
+    fireEvent.keyDown(dialog, { key: "ArrowDown" });
+    expect(hit).toHaveFocus();
+    fireEvent.keyDown(hit, { key: "Enter" });
+    fireEvent.click(hit);
+    expect(await screen.findByRole("heading", { name: "ACL users" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "ACL user details" })).toBeInTheDocument();
+  });
+
+  it("clears the redis inspector after arriving from search and logging out", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-redis-out".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (isSearchUrl(url)) {
+        return redisHitSearch();
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ commands: ["visible-acl-command"], categories: [] });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("visible-acl-command")).toBeInTheDocument();
+    expect(setItem).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByText("visible-acl-command")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "ACL users" })).not.toBeInTheDocument();
+    setItem.mockRestore();
+  });
+
+  it("reselects the same redis search hit after Back to users", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-redis-re".padEnd(64, "0") });
+      }
+      if (isSearchUrl(url)) {
+        return redisHitSearch();
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ commands: ["visible-acl-command"], categories: [] });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("visible-acl-command")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to users" }));
+    expect(screen.queryByText("visible-acl-command")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
+    const again = await screen.findByRole("dialog", { name: "Search" });
+    fireEvent.click(await within(again).findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("visible-acl-command")).toBeInTheDocument();
+    const detailCalls = fetch.mock.calls.filter((call) => String(call[0]) === "/api/v1/redis/users/project_a");
+    expect(detailCalls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("shows a generic message when sign-in cannot reach the server", async () => {
@@ -2938,13 +3196,19 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/redis/users"))).toBe(true);
   });
 
-  it("keeps Redis ACL user search copy unchanged from the ACL users page", async () => {
+  it("shows honest Redis ACL search states from the ACL users page", async () => {
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-search".padEnd(64, "0") });
       }
       if (isRedisUsersListUrl(url)) {
         return redisAclListOk([redisAclListItem()]);
+      }
+      if (isSearchUrl(url)) {
+        return redisHitSearch();
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
       }
       return unknownApi(url);
     });
@@ -2953,9 +3217,13 @@ describe("App session and login", () => {
     goToAclUsers();
     expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "acl" } });
-    expect(await screen.findByText(/Redis ACL user search is not available yet/)).toBeInTheDocument();
-    expect(screen.queryByText(/No matching Redis ACL users/i)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
+    const dialog = await screen.findByRole("dialog", { name: "Search" });
+    const hit = await within(dialog).findByRole("button", { name: /project_a/ });
+    expect(hit.className).toContain("nav-result-redis");
+    expect(within(dialog).getByRole("status")).toHaveTextContent("1 matching ACL user.");
+    expect(within(dialog).queryByText(/Redis ACL user search is not available yet/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/No matching Redis ACL users/i)).not.toBeInTheDocument();
   });
 
   it("does not persist ACL users and clears the inspector on logout", async () => {

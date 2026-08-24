@@ -26,11 +26,11 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 
 - Opens from the topbar, `/`, or `Ctrl/Cmd+K`, with a full-screen mobile treatment.
 - Groups results by PostgreSQL databases, Redis ACL users, navigation, and documentation; every result has explicit service/type context.
-- PostgreSQL hits come from authenticated `GET /api/v1/search` (manageable database names only). Navigation and documentation stay on the client `filterNav`. Redis ACL users render as an honest not-connected group (`not_implemented`, empty hits) with copy that they are not available yet — never a fake empty match list.
-- Selecting a PostgreSQL hit opens Databases and selects that name in memory. It does not write `location.search` or browser storage.
+- PostgreSQL hits come from authenticated `GET /api/v1/search` (manageable database names only). Redis ACL user hits come from the same endpoint (non-protected usernames). Navigation and documentation stay on the client `filterNav`. Degraded redis or postgres groups use `not_configured` / `unavailable` like each other — never “not available yet” for implemented statuses, and never a fake empty match list.
+- Selecting a PostgreSQL hit opens Databases and selects that name in memory. Selecting a Redis ACL user hit opens ACL users and inspects that username in memory. Neither writes `location.search` or browser storage.
 - Is read-only discovery/navigation. It never directly executes destructive actions or exposes credentials, protected resources, secret values, or raw audit metadata.
 - Supports keyboard traversal, screen-reader result counts, loading/degraded/no-results states, bounded results, cancellation, and safe focus restoration.
-- Residual: Redis ACL user hits, URL deep links, a documentation corpus, and command-palette actions.
+- Residual: URL deep links, a documentation corpus, and command-palette actions.
 
 ## Login and session entry
 
@@ -60,7 +60,7 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 - `state: not_configured` is not an empty healthy list. `state: unavailable` with `unreachable`, `auth_failed`, or `permission_denied` uses copy distinct from “No ACL users.” HTTP 200 `state: ok` with `users: []` is “No ACL users.” Truncation is disclosed. Envelope 401 uses “Your session has expired. Sign in again to continue.”
 - Selecting a row loads `GET /api/v1/redis/users/{username}` with AbortController; a slower first selection is ignored. Below 1024px, sibling ledger rows hide while one user is inspected (Back to users restores the list) and focus moves into the inspector. The inspector shows commands, categories, optional queue kind, and limited-rule copy when Redgres cannot model the rules exactly. It does not rewrite, create, rotate, or delete. A 404 is a not-found alert, never an empty healthy inspector. Detail `unavailable` uses the same typed Redis copy as the list.
 - Truncation is disclosed as an alert above the ledger. Painted identifiers use `displayText()` plus bidi isolate. The Redis service rail is wayfinding; healthy and limited states do not use danger red. Login never fetches `/api/v1/redis/users`. List and inspector state stay in memory (no `localStorage`) and clear on logout.
-- Permission presets remain a placeholder. Redis ACL user search stays `not_implemented`.
+- Permission presets remain a placeholder.
 - Residual: create form (safe preset and project-specific prefix), queue-kind selection, custom allow-list editing, enable/disable/rotate/delete.
 
 ## Audit history

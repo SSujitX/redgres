@@ -19,6 +19,7 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
   const [ownerOpen, setOwnerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [focusDatabase, setFocusDatabase] = useState<string | null>(null);
+  const [focusUsername, setFocusUsername] = useState<string | null>(null);
   const [focusNonce, setFocusNonce] = useState(0);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
@@ -71,6 +72,9 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
     if (id !== "postgres") {
       setFocusDatabase(null);
     }
+    if (id !== "redis") {
+      setFocusUsername(null);
+    }
     setSection(id);
     setDrawerOpen(false);
     setSearchOpen(false);
@@ -81,6 +85,12 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
     setFocusDatabase(name);
     setFocusNonce((n) => n + 1);
     go("postgres");
+  }
+
+  function selectAclUser(name: string) {
+    setFocusUsername(name);
+    setFocusNonce((n) => n + 1);
+    go("redis");
   }
 
   function openSearch() {
@@ -185,7 +195,12 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
             </div>
           </header>
           <main className="workspace">
-            <SectionPage section={section} focusDatabase={focusDatabase} focusNonce={focusNonce} />
+            <SectionPage
+              section={section}
+              focusDatabase={focusDatabase}
+              focusUsername={focusUsername}
+              focusNonce={focusNonce}
+            />
           </main>
         </div>
       </div>
@@ -213,6 +228,7 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
         onClose={() => setSearchOpen(false)}
         onSelect={go}
         onSelectDatabase={selectDatabase}
+        onSelectAclUser={selectAclUser}
         restoreFocusRef={searchButtonRef}
       />
     </div>

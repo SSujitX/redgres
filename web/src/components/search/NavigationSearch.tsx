@@ -9,6 +9,7 @@ type NavigationSearchProps = {
   onClose: () => void;
   onSelect: (id: SectionId) => void;
   onSelectDatabase: (name: string) => void;
+  onSelectAclUser: (name: string) => void;
   restoreFocusRef: RefObject<HTMLButtonElement | null>;
 };
 
@@ -16,7 +17,6 @@ const debounceMs = 200;
 const maxQueryRunes = 128;
 const sessionExpired = "Your session has expired. Sign in again to continue.";
 const searchUnavailable = "Search is unavailable. Navigation results are still shown.";
-const redisCopy = "Redis ACL user search is not available yet.";
 
 function queryRuneCount(value: string): number {
   return Array.from(value).length;
@@ -30,22 +30,36 @@ function groupById(groups: SearchGroup[] | null, id: string): SearchGroup | unde
   return groups?.find((group) => group.id === id);
 }
 
-function resultCountText(pages: number, databases: number, emptyQuery: boolean, tooLong: boolean): string {
+function isNotConfiguredStatus(status: string | undefined): boolean {
+  return status === "not_configured" || status === "not_implemented";
+}
+
+function resultCountText(
+  pages: number,
+  databases: number,
+  aclUsers: number,
+  emptyQuery: boolean,
+  tooLong: boolean,
+): string {
   if (emptyQuery) {
     return "Type at least one character to filter navigation.";
   }
   if (tooLong) {
     return "Query is too long.";
   }
-  const total = pages + databases;
+  const total = pages + databases + aclUsers;
   if (total === 0) {
-    return "No matching pages. Try Overview or PostgreSQL.";
+    return "No matching pages. Try Overview, PostgreSQL, or Redis.";
   }
-  if (databases === 0) {
-    return pages === 1 ? "1 matching page." : `${pages} matching pages.`;
-  }
-  if (pages === 0) {
-    return databases === 1 ? "1 matching database." : `${databases} matching databases.`;
+  const kinds = [pages > 0, databases > 0, aclUsers > 0].filter(Boolean).length;
+  if (kinds === 1) {
+    if (pages > 0) {
+      return pages === 1 ? "1 matching page." : `${pages} matching pages.`;
+    }
+    if (databases > 0) {
+      return databases === 1 ? "1 matching database." : `${databases} matching databases.`;
+    }
+    return aclUsers === 1 ? "1 matching ACL user." : `${aclUsers} matching ACL users.`;
   }
   return total === 1 ? "1 matching result." : `${total} matching results.`;
 }
@@ -55,6 +69,7 @@ export default function NavigationSearch({
   onClose,
   onSelect,
   onSelectDatabase,
+  onSelectAclUser,
   restoreFocusRef,
 }: NavigationSearchProps) {
   const [query, setQuery] = useState("");
@@ -141,10 +156,14 @@ export default function NavigationSearch({
   const postgresHits = (postgres?.hits ?? []).filter(
     (hit) => hit.type === "postgres_database" && typeof hit.label === "string" && hit.label !== "",
   );
+  const redis = groupById(groups, "redis_acl_users");
+  const redisHits = (redis?.hits ?? []).filter(
+    (hit) => hit.type === "redis_acl_user" && typeof hit.label === "string" && hit.label !== "",
+  );
   const pageCount = navResults.length + docResults.length;
-  const countText = resultCountText(pageCount, postgresHits.length, trimmed === "", tooLong);
+  const countText = resultCountText(pageCount, postgresHits.length, redisHits.length, trimmed === "", tooLong);
   const statusText =
-    searching && pageCount + postgresHits.length === 0
+    searching && pageCount + postgresHits.length + redisHits.length === 0
       ? "Searching."
       : searching
         ? `Searching. ${countText}`
@@ -152,6 +171,11 @@ export default function NavigationSearch({
 
   function activateDatabase(name: string) {
     onSelectDatabase(name);
+    onClose();
+  }
+
+  function activateAclUser(name: string) {
+    onSelectAclUser(name);
     onClose();
   }
 
@@ -211,8 +235,8 @@ export default function NavigationSearch({
           className="search-input"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search pages and databases"
-          aria-label="Search pages and databases"
+          placeholder="Search pages, databases, and ACL users"
+          aria-label="Search pages, databases, and ACL users"
           aria-describedby={countId}
           aria-invalid={tooLong || undefined}
         />
@@ -263,12 +287,38 @@ export default function NavigationSearch({
             </section>
             <section className="search-group" aria-label="Redis ACL users">
               <p className="nav-group-label">Redis ACL users</p>
-              <p className="not-connected">
-                <span className="warning-mark" aria-hidden="true">
-                  !
-                </span>
-                Not connected. {redisCopy}
-              </p>
+              {redis?.status === "unavailable" ? (
+                <p className="form-warning">Unavailable</p>
+              ) : null}
+              {isNotConfiguredStatus(redis?.status) ? (
+                <p className="not-connected">
+                  <span className="warning-mark" aria-hidden="true">
+                    !
+                  </span>
+                  Not configured
+                </p>
+              ) : null}
+              {redis?.truncated ? <p className="search-hint">Results truncated.</p> : null}
+              {redisHits.length > 0 ? (
+                <ul className="search-results">
+                  {redisHits.map((hit) => {
+                    const name = hit.label ?? "";
+                    return (
+                      <li key={hit.id ?? name}>
+                        <button
+                          type="button"
+                          className="nav-result nav-result-redis"
+                          data-search-result=""
+                          onClick={() => activateAclUser(name)}
+                        >
+                          <span className="bidi-isolate identifier">{displayText(name)}</span>
+                          <span className="nav-result-group">Redis ACL users</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
             </section>
             <section className="search-group" aria-label="Navigation">
               <p className="nav-group-label">Navigation</p>
