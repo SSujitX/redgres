@@ -1304,8 +1304,28 @@ Commands executed locally (2026-08-25) after merging redis-001-metrics-api
   Not run: go test -race ./..., gitleaks, govulncheck, CI, live Redis or
    PostgreSQL or PgBouncer, browser viewports, Playwright, frontend jobs on
    pinned Node 24.19.0
-Reviewer/date: not yet reviewed. Keep REDIS-001 Partial and PLAT-001 Partial.
+Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
+ Confirmed session + redis.read, 401 has no state/metrics/reason, no-store,
+ GET not audited, no CSRF, all-or-nothing metrics, typed reasons, skip_verify
+ fail-closed (config true|1 and Open InsecureSkipVerify), platform does not
+ import redisadmin/go-redis, Open does not Ping, search Redis stays
+ not_implemented, login never fetches /status or /redis/status. Lows: config
+ skip_verify parser is true|1 (matches go-redis v9.22.0; Open still
+ fail-closes when InsecureSkipVerify is set); HTTP tests omit a dedicated
+ WRONGPASS case (service covers it). Reviewer did not run tests.
+ UI review (2026-08-25) approve Overview Redis metrics card; no High/Medium.
+ Headline from /status; metrics/reasons from /redis/status; Reachable +
+ Metrics unavailable without fake zeros; not_configured omits rows; Refresh
+ both URLs; /redis/status failure does not blank PostgreSQL cards. Explicitly
+ NOT viewport, zoom, or visual sign-off: no browser tools, app not opened.
+ Lows (headline-only aria-label; degraded metrics no role=status; unknown
+ reason suppression untested) accepted unfixed.
+ Verifier (2026-08-25) PASS on master `2dc4d02`. Re-ran gofmt empty, focused
+ + ./... tests, vet, go build, npm test:run 86 passed, npm run build
+ (33 modules); forbidden paths empty vs `17e61e1`. Keep REDIS-001 Partial
+ and PLAT-001 Partial.
  Local commits: `6d3afc3` (API), `83826dc` (UI), `aa0a044` (merge API),
- `a5d88e2` (merge UI). Not pushed.
+ `a5d88e2` (merge UI), `2dc4d02` (docs). Not pushed.
+```
 ```
 
