@@ -996,6 +996,15 @@ Commands executed locally (2026-08-25), worktree
   Not run: go test -race ./..., gitleaks, govulncheck, CI, live PostgreSQL or
    Redis or PgBouncer, browser viewports 360×800 / 768×1024 / 1280×800 /
    1600×1000, 200% zoom, Playwright, frontend jobs on pinned Node 24.19.0
-Reviewer/date: implementer handoff; parent runs security/UI/verifier. Not merged
- to master. Not pushed.
+Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
+ Confirmed canary discard at adapter/service/Collect, 401 has no components,
+ no-store, session gate, 200 on postgres down, platform does not import
+ postgresadmin after `832fea5`, Overview does not persist. Reviewer could not
+ run tests. UI review (2026-08-25) approve; no required changes. Confirmed
+ shared tokens, independent rails, envelope alerts with no cards, login never
+ fetches status. Explicitly NOT viewport/zoom sign-off. Optional Lows
+ (aria-busy unobserved while list unmounted; Refresh layout jump) accepted.
+ Parent `832fea5` moved ErrNotConfigured into platform so Collect does not
+ import postgresadmin.
+ Verifier pending.
 ```
