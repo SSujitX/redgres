@@ -1570,24 +1570,26 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
   npm --prefix web run build → tsc --noEmit + vite v8.2.2; 36 modules;
    ../internal/web/dist/app/{index.html, assets/index-BmRbBVSX.css 15.65 kB,
    assets/index-BJ4gHUk2.js 245.33 kB}; built in 534ms
- Not run: live Redis, COMPATIBILITY §6, go test -race, gitleaks,
- govulncheck, CI, browser viewports, Playwright, frontend jobs on
- Node 24.19.0
+ Not run: live Redis, COMPATIBILITY §6, gitleaks, govulncheck, CI,
+ browser viewports, Playwright, frontend jobs on Node 24.19.0
 Known limitations: SETUSER-then-audit-fail residual (user exists, no
  credential returned); concurrent ACL LIST/SETUSER race (upsert);
  ticket alertdialog has no focus trap; 201 does not clear a prior
  inspector; no viewport/zoom sign-off; PRD on/off is on-only.
 Reviewer/date: Security review (2026-08-25) approve Partial; no
- Critical/High/Medium. L1 SETUSER modifier HTTP canary added after
- review. L2 MemoryClient plaintext ACLLines is test-double only.
+ Critical/High/Medium. L1 SETUSER modifier HTTP canary added in
+ `c6e70e6`. L2 MemoryClient plaintext ACLLines is test-double only.
  UI review (2026-08-25) approve Partial UI; no Critical/High. Medium
  ticket alertdialog without focus trap accepted unfixed. Medium leftover
  inspector after 201 accepted unfixed. Explicitly NOT viewport/zoom
  sign-off.
  Evidence review (2026-08-25) keep-Partial; no docs-correction-required.
- Verifier pending.
+ Verifier (2026-08-25) PASS Partial on master `c6e70e6`. Re-ran gofmt
+ empty, focused + ./... tests, race, vet, go build, npm test:run 122
+ passed, npm run build (36 modules; index-BJ4gHUk2.js 245.33 kB).
+ Forbidden paths empty vs `c322826`. Keep REDIS-003 Partial.
  Local commits: `6a93136` (API), `9652adf` (UI), `a79f67d` (merge UI),
- `016bae3` (docs record). Not pushed.
+ `016bae3` (docs record), `c6e70e6` (SETUSER canary). Not pushed.
 ```
 
 
