@@ -255,6 +255,57 @@ Reviewer/date: Verifier approved (2026-08-23) row-browse API only (not full PG-0
  COMPATIBILITY.md §6 evidence.
 ```
 
+## Embedded assets without a frontend build (2026-08-25)
+
+```text
+Requirement: No functional PRD ID; NFR-009 maintainability / release-gate
+ correctness. Fixes a pre-existing defect that made the CI backend job red.
+Decision/ADR: ADR-001. No new or superseded ADR: no contract, endpoint, or
+ configuration key changes, and the HTTP allow-list is untouched.
+Source characterization: none.
+Defect: web.Assets() was fs.Sub(dist, "dist/app"). Only internal/web/dist/.gitkeep
+ is tracked, so on a clean checkout dist/app does not exist and fs.Sub returns a
+ lazy subFS with no StatFS; fs.Stat(assets, ".") then returns ErrNotExist. The
+ pre-existing internal/web/embed_test.go:14 assertion — in a test literally named
+ TestAssetsAvailableWithoutFrontendBuild — therefore failed, and
+ .github/workflows/ci.yml runs go test ./... with no frontend build, so the
+ backend job was red. Discovered by redgres-verifier while checking the
+ single-port dev runtime slice and reproduced independently at HEAD.
+Implementation files: internal/web/embed.go — Assets() falls back to an emptyFS
+ when dist/app is absent. emptyFS implements Open/Stat/ReadDir and exposes only a
+ statable, readable, empty root; it serves no file, so the tracked dist/.gitkeep
+ never becomes reachable and no partial application can be served.
+Unit tests: internal/web/embed_test.go — existing
+ TestAssetsAvailableWithoutFrontendBuild now passes on a clean checkout;
+ new TestAssetsPlaceholderTreeIsEmptyButUsable pins the placeholder contract
+ (root is a directory, ReadDir returns zero entries, and index.html, .gitkeep and
+ assets/app.js are all unopenable).
+Integration tests: none
+Security tests: the placeholder tree exposes no file, so the frontend-unavailable
+ path cannot be turned into a partial or unexpected asset response. Verified end to
+ end on a clean checkout with no frontend build: GET / → 503 and
+ GET /api/v1/healthz → 200, so the dependency_unavailable behavior in
+ internal/httpapi/server.go:72 is preserved rather than replaced by a fallback.
+Deployment/migration impact: none. A release build still embeds the real
+ dist/app and takes the unchanged path. 001_initial.sql, go.mod, go.sum, and
+ web/package-lock.json unchanged.
+Known limitations: this does not make CI green by itself — gitleaks, govulncheck,
+ the Node 24.19.0 frontend jobs, and go test -race ./... remain unproven locally
+ and nothing has been pushed, so no GitHub Actions run has ever executed.
+Commands executed locally (2026-08-25):
+  reproduction at HEAD (no slice files): git archive -o head.zip HEAD;
+   Expand-Archive; go test -count=1 -v -run TestAssetsAvailableWithoutFrontendBuild
+   ./internal/web/ → FAIL embed_test.go:14 "embed root: open .: file does not exist"
+  clean checkout with the fix (dist contains only .gitkeep):
+   go test -count=1 ./... → all packages ok, EXIT=0
+   go build -o ci-redgres.exe ./cmd/redgres; serve on 127.0.0.1:8991 →
+   GET / → 503, GET /api/v1/healthz → 200
+  working tree: go test -count=1 ./... → ok; go vet ./... → no findings;
+   gofmt -l cmd internal migrations → empty; go build -o NUL ./cmd/redgres → success
+  Not run: CI, gitleaks, govulncheck, live PostgreSQL
+Reviewer/date: pending independent review.
+```
+
 ## Local single-port development runtime (2026-08-25)
 
 ```text
@@ -409,6 +460,14 @@ Reviewer/date: Security review (2026-08-25) approve-with-fixes: no Critical/High
  Outstanding user action: delete redgres.db-x-owners-1-password_hash.bin —
  .gitignore prevents accidental commit but not `git add -f`, and the file remains
  offline-crackable Argon2id material on disk.
+ Verifier (2026-08-25) returned FAIL on exactly one item: the clean-checkout claim
+ for internal/web tests. The parent reproduced the failure at HEAD, confirmed it is
+ pre-existing, removed the duplicate dependency from the new tests, and corrected
+ this entry. All other verified items passed: no functional PRD claim, internal/web
+ free of os.Getenv, config ownership with no CLI flag, existing httpapi/embed tests
+ preserved byte-identical, forbidden files untouched, the full local gate, the
+ gitignore resolution, production fail-closed, and documentation consistency.
+ Local commit `410ba4c` on `master` (not pushed).
 ```
 
 ## PostgreSQL row browse UI (2026-08-23)

@@ -32,3 +32,31 @@ func TestAssetsAvailableWithoutFrontendBuild(t *testing.T) {
 		}
 	}
 }
+
+// TestAssetsPlaceholderTreeIsEmptyButUsable pins the placeholder behavior that
+// TestAssetsAvailableWithoutFrontendBuild depends on: when dist/app is absent the
+// root is still statable and readable, and it exposes no file. The tracked
+// dist/.gitkeep must never become reachable.
+func TestAssetsPlaceholderTreeIsEmptyButUsable(t *testing.T) {
+	assets := emptyFS{}
+
+	info, err := fs.Stat(assets, ".")
+	if err != nil {
+		t.Fatalf("stat root: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal("root is not a directory")
+	}
+	entries, err := fs.ReadDir(assets, ".")
+	if err != nil {
+		t.Fatalf("read root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("root exposes %d entries", len(entries))
+	}
+	for _, name := range []string{"index.html", ".gitkeep", "assets/app.js"} {
+		if _, err := assets.Open(name); err == nil {
+			t.Fatalf("placeholder tree served %q", name)
+		}
+	}
+}
