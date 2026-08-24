@@ -1353,34 +1353,56 @@ Unit/HTTP tests: official LIST lines; hash/> canary absent; +@read →
  not_configured; ok list; detail 200; 404 Not found; 400 no echo; 405;
  no-store; /status and /redis/status unchanged
 Frontend App.test.tsx: placeholder gone; list URL exactly /api/v1/redis/users;
- select /users/project_a; protected+limited; not_configured/unavailable/empty
- distinct; truncated; 401; 404; canary not rendered; login does not fetch
- users; search Redis copy unchanged; no Storage.setItem; logout clears
- inspector
+ select /users/project_a; protected+limited badge; not_configured/unavailable/empty
+ distinct; truncated role=alert; inspect-one + Back to users + inspector focus;
+ detail unavailable auth_failed copy; 401; 404; canary not rendered; login does
+ not fetch users; search Redis copy unchanged; no Storage.setItem; logout
+ clears inspector
 Integration tests: none. COMPATIBILITY.md §6 not claimed. No live Redis.
 Security tests: canary #hash / >password absent; 401 omits users/user;
  protected visible not 404; GET not audited; no-store; no ACL GETUSER.
 Deployment/migration impact: none. go.mod unchanged. Application rollback
  binary/config only.
 Known limitations: inspect-only preset v1; limited ≠ expanded categories;
- list cap 500; search Redis still not_implemented; no viewport; no
- create/rotate/delete; redis-presets placeholder.
+ list cap 500; search Redis still not_implemented; no viewport/zoom sign-off;
+ no create/rotate/delete; redis-presets placeholder.
 Commands executed locally (2026-08-25) after fast-forward API `46637d0`
- then merge UI `18fa511` as `f61be71`, go1.27.0 windows/amd64, Node v25.3.0
- (web/.nvmrc pins 24.19.0):
+ then merge UI `18fa511` as `f61be71`, remediations `26286e3`/`9ac5757`/`338d88d`,
+ go1.27.0 windows/amd64, Node v25.3.0 (web/.nvmrc pins 24.19.0), verifier rerun
+ on `338d88d`:
+  gofmt -l redisadmin + redis users HTTP files → empty
   go test -count=1 ./... → ok cmd/redgres, audit, auth, config, database,
    httpapi, platform, postgresadmin, redisadmin, web; migrations no test files
   go vet ./... → no findings (exit 0)
   go build -o NUL ./cmd/redgres → success
-  npm --prefix web run test:run → Test Files 3 passed (3); Tests 103 passed (103);
-   Duration 19.15s (vitest 4.1.11)
+  go test -race -count=1 ./... → ok, same packages
+  npm --prefix web run test:run → first run 1 failed / 104 passed (unrelated
+   search-dialog focus flake: two role=status nodes); retry Test Files 3
+   passed (3); Tests 105 passed (105); Duration 19.82s (vitest 4.1.11)
   npm --prefix web run build → tsc --noEmit + vite v8.2.2; 34 modules;
-   ../internal/web/dist/app/{index.html, assets/index-DI6SDmuR.css 14.26 kB,
-   assets/index-BplyvmEO.js 238.93 kB}; built in 345ms
-  Not run: go test -race ./..., gitleaks, govulncheck, CI, live Redis,
-   browser viewports, Playwright, frontend jobs on pinned Node 24.19.0
-Reviewer/date: not yet reviewed. Keep REDIS-002 Partial.
- Local commits: `46637d0` (API), `18fa511` (UI), `f61be71` (merge UI).
+   ../internal/web/dist/app/{index.html, assets/index-FsGibsca.css 14.75 kB,
+   assets/index-BgawEhPf.js 239.45 kB}; built in 826ms
+  Not run: gitleaks, govulncheck, CI, live Redis, browser viewports,
+   Playwright, frontend jobs on pinned Node 24.19.0
+Reviewer/date: Security review (2026-08-25) approve inspect-only list/GET +
+ UI; no Critical/High/Medium. Confirmed session + redis.read, no CSRF,
+ no-store, GET not audited, 401 has no state/users/user/reason, typed
+ unavailable reasons, protected visible not 404, 400 no echo, password
+ material stripped, ACLList only, platform does not import redisadmin/
+ go-redis, login never fetches users, /status and /redis/status unchanged.
+ Lows: HTTP canary omits !… / Redis <password removal form (parser skips;
+ not a demonstrated leak); redis.read is a static owner grant.
+ UI review (2026-08-25) approve Partial UI at `338d88d`; no Critical/High/
+ Medium. Inspect-one below 1024px, 2-col 768–1023 / 4-col 1024+, Protected
+ badge, truncation alert, typed detail unavailable. Explicitly NOT viewport,
+ zoom, or visual sign-off. Optional polish (Back to users focus restore;
+ inspector list max-height; detail not_configured copy) accepted unfixed.
+ Verifier (2026-08-25) PASS on master `338d88d`. Re-ran gofmt empty, ./...
+ tests, race, vet, go build, npm test:run 105 passed (after unrelated flake
+ retry), npm run build (34 modules); forbidden paths empty vs `68d19fe`.
+ Keep REDIS-002 Partial.
+ Local commits: `46637d0` (API), `18fa511` (UI), `f61be71` (merge UI),
+ `5d754f5` (docs), `26286e3`/`9ac5757`/`338d88d` (inspect-one remediations).
  Not pushed.
 ```
 
