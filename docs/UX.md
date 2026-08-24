@@ -26,8 +26,11 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 
 - Opens from the topbar, `/`, or `Ctrl/Cmd+K`, with a full-screen mobile treatment.
 - Groups results by PostgreSQL databases, Redis ACL users, navigation, and documentation; every result has explicit service/type context.
+- PostgreSQL hits come from authenticated `GET /api/v1/search` (manageable database names only). Navigation and documentation stay on the client `filterNav`. Redis ACL users render as an honest not-connected group (`not_implemented`, empty hits) with copy that they are not available yet — never a fake empty match list.
+- Selecting a PostgreSQL hit opens Databases and selects that name in memory. It does not write `location.search` or browser storage.
 - Is read-only discovery/navigation. It never directly executes destructive actions or exposes credentials, protected resources, secret values, or raw audit metadata.
 - Supports keyboard traversal, screen-reader result counts, loading/degraded/no-results states, bounded results, cancellation, and safe focus restoration.
+- Residual: Redis ACL user hits, URL deep links, a documentation corpus, and command-palette actions.
 
 ## Login and session entry
 

@@ -40,6 +40,10 @@ function isStatusUrl(url: string): boolean {
   return url === "/api/v1/status" || url.startsWith("/api/v1/status?");
 }
 
+function isSearchUrl(url: string): boolean {
+  return url === "/api/v1/search" || url.startsWith("/api/v1/search?");
+}
+
 function disconnectedStatus() {
   return jsonResponse(200, {
     components: [
@@ -66,9 +70,69 @@ function mixedStatus() {
   });
 }
 
+function disconnectedSearch() {
+  return jsonResponse(200, {
+    groups: [
+      {
+        id: "postgres_databases",
+        label: "PostgreSQL databases",
+        service: "postgres",
+        status: "not_configured",
+        truncated: false,
+        hits: [],
+      },
+      {
+        id: "redis_acl_users",
+        label: "Redis ACL users",
+        service: "redis",
+        status: "not_implemented",
+        truncated: false,
+        hits: [],
+      },
+    ],
+    limit: 20,
+    request_id: "cccccccccccccccccccccccccccccccc",
+  });
+}
+
+function postgresHitSearch(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    groups: [
+      {
+        id: "postgres_databases",
+        label: "PostgreSQL databases",
+        service: "postgres",
+        status: "ok",
+        truncated: false,
+        hits: [
+          {
+            id: "postgres_database:project_a",
+            type: "postgres_database",
+            label: "project_a",
+            ...extra,
+          },
+        ],
+      },
+      {
+        id: "redis_acl_users",
+        label: "Redis ACL users",
+        service: "redis",
+        status: "not_implemented",
+        truncated: false,
+        hits: [],
+      },
+    ],
+    limit: 20,
+    request_id: "dddddddddddddddddddddddddddddddd",
+  });
+}
+
 function unknownApi(url: string) {
   if (isStatusUrl(url)) {
     return disconnectedStatus();
+  }
+  if (isSearchUrl(url)) {
+    return disconnectedSearch();
   }
   return jsonResponse(500, {});
 }
@@ -116,6 +180,7 @@ describe("App session and login", () => {
     expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/healthz"))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isStatusUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isSearchUrl(String(call[0])))).toBe(true);
   });
 
   it("shows the shell when the session is valid", async () => {
@@ -215,7 +280,7 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.some((call) => String(call[0]).includes("/api/v1/auth/logout"))).toBe(true);
   });
 
-  it("filters navigation locally without calling search", async () => {
+  it("filters navigation locally and still calls bounded search", async () => {
     const fetch = stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "d".repeat(64) });
@@ -224,9 +289,18 @@ describe("App session and login", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByLabelText("Search pages"), { target: { value: "audit" } });
-    expect(screen.getByRole("dialog", { name: "Search navigation" }).querySelector(".nav-result")).toHaveTextContent("Audit");
-    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/search"))).toBe(true);
+    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "audit" } });
+    const dialog = screen.getByRole("dialog", { name: "Search" });
+    expect(dialog.querySelector(".nav-result")).toHaveTextContent("Audit");
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => String(call[0]) === "/api/v1/search?q=audit")).toBe(true);
+    });
+    const searchCall = fetch.mock.calls.find((call) => String(call[0]) === "/api/v1/search?q=audit");
+    const method = searchCall?.[1]?.method;
+    expect(method === undefined || method === "GET").toBe(true);
+    expect(fetch.mock.calls.every((call) => !isAuditUrl(String(call[0])))).toBe(true);
+    expect(screen.getByText(/Redis ACL user search is not available yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/No matching Redis ACL users/i)).not.toBeInTheDocument();
   });
 
   it("hides nested PostgreSQL items until Databases is current", async () => {
@@ -279,12 +353,255 @@ describe("App session and login", () => {
     render(<App />);
     const search = await screen.findByRole("button", { name: "Search" });
     fireEvent.click(search);
-    fireEvent.change(screen.getByLabelText("Search pages"), { target: { value: "audit" } });
+    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "audit" } });
     expect(screen.getByRole("status")).toHaveTextContent("1 matching page.");
     fireEvent.click(screen.getByRole("button", { name: "Close search" }));
     await waitFor(() => {
       expect(search).toHaveFocus();
     });
+  });
+
+  it("opens a postgres search hit on Databases without mutating", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-pg".padEnd(64, "0") });
+      }
+      if (isSearchUrl(url)) {
+        return postgresHitSearch({ password: "canary-secret", url: "postgresql://canary-secret@10.0.0.1/db" });
+      }
+      if (url.includes("/api/v1/postgres/databases") && !url.includes("/tables")) {
+        if (isDetailsUrl(url, "project_a")) {
+          return jsonResponse(200, { database: { name: "project_a", owner: "project_a_role", size: "12 MB" } });
+        }
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "project" } });
+    const dialog = await screen.findByRole("dialog", { name: "Search" });
+    expect(within(dialog).getByRole("region", { name: "PostgreSQL databases" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("region", { name: "Redis ACL users" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("region", { name: "Navigation" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("region", { name: "Documentation" })).toBeInTheDocument();
+    const hit = await screen.findByRole("button", { name: /project_a/ });
+    expect(hit.className).toContain("nav-result-postgres");
+    expect(screen.queryByText("canary-secret")).not.toBeInTheDocument();
+    expect(dialog.querySelector("input[type=password]")).toBeNull();
+    fireEvent.click(hit);
+    expect(await screen.findByRole("heading", { name: "Databases" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "project_a" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Database details" })).toBeInTheDocument();
+    expect(
+      fetch.mock.calls.every((call) => {
+        const url = String(call[0]);
+        return !/drop|truncate/i.test(url);
+      }),
+    ).toBe(true);
+    expect(
+      fetch.mock.calls.every((call) => {
+        const method = call[1]?.method;
+        return method === undefined || method === "GET";
+      }),
+    ).toBe(true);
+  });
+
+  it("does not send mutations when searching for drop", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-drop".padEnd(64, "x") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "drop" } });
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => String(call[0]) === "/api/v1/search?q=drop")).toBe(true);
+    });
+    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "truncate" } });
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => String(call[0]) === "/api/v1/search?q=truncate")).toBe(true);
+    });
+    expect(
+      fetch.mock.calls.every((call) => {
+        const method = call[1]?.method;
+        const url = String(call[0]);
+        return (method === undefined || method === "GET") && !/drop|truncate/i.test(url.split("?")[0] ?? "");
+      }),
+    ).toBe(true);
+  });
+
+  it("moves focus through search results with arrows and Enter", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-keys".padEnd(64, "1") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    const input = screen.getByLabelText("Search pages and databases");
+    fireEvent.change(input, { target: { value: "audit" } });
+    const dialog = screen.getByRole("dialog", { name: "Search" });
+    const audit = within(dialog).getByRole("button", { name: /Audit/ });
+    input.focus();
+    fireEvent.keyDown(dialog, { key: "ArrowDown" });
+    expect(audit).toHaveFocus();
+    fireEvent.keyDown(audit, { key: "Enter" });
+    fireEvent.click(audit);
+    expect(await screen.findByRole("heading", { name: "Audit" })).toBeInTheDocument();
+  });
+
+  it("aborts an in-flight search when the dialog closes", async () => {
+    let finish: ((value: ReturnType<typeof disconnectedSearch>) => void) | undefined;
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-abort".padEnd(64, "2") });
+      }
+      if (isSearchUrl(url)) {
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "ab" } });
+    await waitFor(() => {
+      expect(finish).toBeDefined();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Close search" }));
+    finish?.(disconnectedSearch());
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Search" })).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /project_a/ })).not.toBeInTheDocument();
+  });
+
+  it("does not fetch search for too-short or too-long queries", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-len".padEnd(64, "3") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    const input = screen.getByLabelText("Search pages and databases");
+    fireEvent.change(input, { target: { value: " " } });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(fetch.mock.calls.every((call) => !isSearchUrl(String(call[0])))).toBe(true);
+    fireEvent.change(input, { target: { value: "x".repeat(129) } });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(fetch.mock.calls.every((call) => !isSearchUrl(String(call[0])))).toBe(true);
+    expect(screen.getByRole("status")).toHaveTextContent("Query is too long.");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("clears postgres hits when search returns 401", async () => {
+    let searches = 0;
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-401".padEnd(64, "4") });
+      }
+      if (isSearchUrl(url)) {
+        searches += 1;
+        if (searches === 1) {
+          return postgresHitSearch();
+        }
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    const input = screen.getByLabelText("Search pages and databases");
+    fireEvent.change(input, { target: { value: "project" } });
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "projec" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("button", { name: /project_a/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps local navigation when postgres search is unavailable", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-unavail".padEnd(64, "5") });
+      }
+      if (isSearchUrl(url)) {
+        return jsonResponse(200, {
+          groups: [
+            {
+              id: "postgres_databases",
+              label: "PostgreSQL databases",
+              service: "postgres",
+              status: "unavailable",
+              truncated: false,
+              hits: [],
+            },
+            {
+              id: "redis_acl_users",
+              label: "Redis ACL users",
+              service: "redis",
+              status: "not_implemented",
+              truncated: false,
+              hits: [],
+            },
+          ],
+          limit: 20,
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "audit" } });
+    const dialog = screen.getByRole("dialog", { name: "Search" });
+    expect(within(dialog).getByRole("button", { name: /Audit/ })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(dialog).getByText("Unavailable")).toBeInTheDocument();
+    });
+  });
+
+  it("clears search UI on logout", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-out".padEnd(64, "6") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("search-out".padEnd(64, "6"));
+        return jsonResponse(200, { ok: true });
+      }
+      if (isSearchUrl(url)) {
+        return postgresHitSearch();
+      }
+      if (url.includes("/api/v1/postgres/databases") && !url.includes("/tables")) {
+        if (isDetailsUrl(url, "project_a")) {
+          return jsonResponse(200, { database: { name: "project_a", owner: "project_a_role" } });
+        }
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "project" } });
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("heading", { name: "project_a" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Search" })).not.toBeInTheDocument();
+    expect(screen.queryByText("project_a")).not.toBeInTheDocument();
   });
 
   it("shows a generic message when sign-in cannot reach the server", async () => {

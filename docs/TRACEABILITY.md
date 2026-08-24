@@ -5,7 +5,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
-| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial); PLAT-003 audit read API + history UI; no server search | Partial |
+| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL hits unimplemented) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | TODO | Planned |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
@@ -1011,4 +1011,87 @@ Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
  byte-identical to `b2f155f`. Keep PLAT-001 Partial.
  Fast-forwarded `master` to `b767c38` (not pushed).
  Local commits: `6d06290` (feature), `832fea5`, `2e9c344`, `b767c38`.
+```
+
+## PLAT-004 authenticated bounded global search (2026-08-25)
+
+```text
+Requirement: PLAT-004 (Partial). Authenticated GET /api/v1/search returns
+ postgres_databases + redis_acl_users; UI groups those with client filterNav
+ navigation/documentation. Redis ACL hits stay not_implemented / empty.
+Decision/ADR: ADR-001 modular monolith; platform.ResourceGroups is the search
+ aggregator and does not import postgresadmin/redisadmin. No new module,
+ migration, dependency, or COMPATIBILITY §6 claim.
+Source characterization: none for Redis ACL search (adapter not implemented).
+ Postgres matching reuses List manageability; no new catalog SQL.
+Implementation files: internal/platform/{search.go,search_test.go};
+ internal/postgresadmin/{types,service,service_test}.go (Search);
+ internal/httpapi/{server.go,search_routes.go,search_routes_test.go};
+ web/src/api/search.ts; web/src/components/search/NavigationSearch.tsx;
+ web/src/components/shell/AppShell.tsx; web/src/features/pages/Placeholders.tsx;
+ web/src/features/postgres/DatabasesPage.tsx (focusDatabase);
+ web/src/App.test.tsx; web/src/styles/shell.css;
+ docs/{API,ARCHITECTURE,UX,TRACEABILITY}.md
+Unit tests:
+ postgresadmin: TestServiceSearchOmitsProtectedNames;
+ TestServiceSearchIsCaseInsensitiveOnName;
+ TestServiceSearchRespectsLimitAndTruncation;
+ TestServiceSearchUnavailableWithoutCatalog;
+ TestServiceSearchMapsCanaryErrors
+ platform: TestResourceGroupsAlwaysTwoWithEmptyRedis;
+ TestResourceGroupsPostgresUnavailableKeepsRedis;
+ TestResourceGroupsHitFieldsOnlyAndOmitsCanary
+ httpapi: TestSearchRequiresSession;
+ TestSearchRejectsMissingQueryWithoutListing;
+ TestSearchRejectsLongQueryWithoutListing;
+ TestSearchRejectsNonIntegerLimit; TestSearchClampsLimit;
+ TestSearchNilPostgresIsNotConfigured;
+ TestSearchOmitsProtectedAndReturnsManageableHit;
+ TestSearchUnavailablePostgresKeepsRedisGroup;
+ TestSearchRejectsMutatingMethods; TestSearchOmitsForbiddenKeys
+ frontend App.test.tsx: login never calls /search /status /healthz;
+ typing audit calls GET /api/v1/search?q=audit, Audit from local nav, no
+ /api/v1/audit from the palette, Redis not-available copy;
+ postgres hit project_a opens Databases inspector; extra password/URL fields
+ ignored and canary-secret not rendered; drop/truncate only search GET;
+ ArrowDown+Enter; abort on close; too-short/too-long no fetch;
+ 401 clears hits; postgres unavailable keeps Audit nav; logout clears
+ search UI and project_a.
+Integration tests: none. COMPATIBILITY.md §6 is not applicable and is not claimed.
+ No live PostgreSQL/Redis in this slice.
+Security tests: protected postgres omitted; canary secret/host absent from HTTP
+ body; 401 has no groups key; q not echoed; no-store; mutations 405; hits only
+ id/type/label; Redis never fabricated; login path never fetches /search;
+ GET is not audited.
+Deployment/migration impact: none. No go.mod/go.sum, package.json/lockfile,
+ migrations, REDGRES_* keys, or COMPATIBILITY.md change. Application rollback
+ is binary/config only.
+Known limitations / residuals: Redis ACL user hits, URL deep links, docs corpus,
+ command-palette actions, AUTH-005, COMPATIBILITY.md §6. jsdom cannot prove
+ 360/768/1280/1600 viewports or 200% zoom. Local Node is v25.3.0 so pinned
+ Node 24.19.0 frontend evidence remains CI-only. Search TRACEABILITY stays
+ Partial; do not mark Complete.
+Commands executed locally (2026-08-25), worktree
+ D:\code\github\Redgres-worktrees\plat-004-search, branch feat/plat-004-global-search,
+ baseline 5f92059, go1.27.0 windows/amd64, Node v25.3.0 (web/.nvmrc pins 24.19.0):
+  gofmt -l internal/platform internal/postgresadmin internal/httpapi → empty
+  go vet ./internal/platform ./internal/postgresadmin ./internal/httpapi → no findings
+  go test -count=1 ./internal/platform ./internal/postgresadmin ./internal/httpapi
+   → ok platform 0.409s; postgresadmin 0.542s; httpapi 7.454s
+  go test -count=1 ./... → ok cmd/redgres, audit, auth, config, database,
+   httpapi, platform, postgresadmin, web; migrations no test files
+  go vet ./... → no findings (exit 0)
+  go build -o NUL ./cmd/redgres → success (no stdout)
+  npm --prefix web run test:run → Test Files 3 passed (3); Tests 72 passed (72);
+   Duration 10.90s (vitest 4.1.11)
+  npm --prefix web run build → tsc --noEmit + vite v8.2.2; 32 modules;
+   ../internal/web/dist/app/{index.html, assets/index-CKrIdaLU.css 12.89 kB,
+   assets/index-C4h8VCwz.js 228.79 kB}; built in 168ms
+  git diff --name-only HEAD -- go.mod go.sum web/package.json web/package-lock.json
+   docs/PRD.md docs/COMPATIBILITY.md → empty
+  git status --porcelain → owned source/docs only (dist not stageable)
+  Not run: go test -race ./..., gitleaks, govulncheck, CI, live PostgreSQL or
+   Redis, browser viewports 360×800 / 768×1024 / 1280×800 / 1600×1000,
+   200% zoom, Playwright, frontend jobs on pinned Node 24.19.0
+Reviewer/date: pending security, UI, and verifier on this worktree.
 ```

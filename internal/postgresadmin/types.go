@@ -34,10 +34,20 @@ type Catalog interface {
 
 type Inventory interface {
 	List(ctx context.Context) (ListResult, error)
+	Search(ctx context.Context, q string, limit int) (SearchResult, error)
 	Details(ctx context.Context, name string) (DatabaseDetails, error)
 	Tables(ctx context.Context, name string) (TableListResult, error)
 	Rows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
 	Ping(ctx context.Context) error
+}
+
+type SearchHit struct {
+	Name string
+}
+
+type SearchResult struct {
+	Hits      []SearchHit
+	Truncated bool
 }
 
 type ListItem struct {

@@ -5,16 +5,17 @@ import DatabasesPage from "../postgres/DatabasesPage";
 
 type PageProps = {
   section: SectionId;
+  focusDatabase?: string | null;
 };
 
-export function SectionPage({ section }: PageProps) {
+export function SectionPage({ section, focusDatabase = null }: PageProps) {
   const title = sectionTitle(section);
   if (section === "overview") {
     return <OverviewPage />;
   }
 
   if (section === "postgres") {
-    return <DatabasesPage />;
+    return <DatabasesPage focusDatabase={focusDatabase} />;
   }
 
   if (section === "audit") {

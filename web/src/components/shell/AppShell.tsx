@@ -18,6 +18,7 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [ownerOpen, setOwnerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [focusDatabase, setFocusDatabase] = useState<string | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -66,10 +67,18 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
   }, [ownerOpen]);
 
   function go(id: SectionId) {
+    if (id !== "postgres") {
+      setFocusDatabase(null);
+    }
     setSection(id);
     setDrawerOpen(false);
     setSearchOpen(false);
     setOwnerOpen(false);
+  }
+
+  function selectDatabase(name: string) {
+    setFocusDatabase(name);
+    go("postgres");
   }
 
   function openSearch() {
@@ -174,7 +183,7 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
             </div>
           </header>
           <main className="workspace">
-            <SectionPage section={section} />
+            <SectionPage section={section} focusDatabase={focusDatabase} />
           </main>
         </div>
       </div>
@@ -201,6 +210,7 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         onSelect={go}
+        onSelectDatabase={selectDatabase}
         restoreFocusRef={searchButtonRef}
       />
     </div>

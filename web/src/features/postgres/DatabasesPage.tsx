@@ -26,7 +26,11 @@ function queryRuneCount(value: string): number {
   return Array.from(value).length;
 }
 
-export default function DatabasesPage() {
+type DatabasesPageProps = {
+  focusDatabase?: string | null;
+};
+
+export default function DatabasesPage({ focusDatabase = null }: DatabasesPageProps) {
   const [items, setItems] = useState<DatabaseListItem[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [listError, setListError] = useState("");
@@ -116,6 +120,13 @@ export default function DatabasesPage() {
     void loadDetails(name, controller);
     void loadTables(name, controller);
   }
+
+  useEffect(() => {
+    if (!focusDatabase) {
+      return;
+    }
+    openDetails(focusDatabase);
+  }, [focusDatabase]);
 
   async function loadDetails(name: string, controller: AbortController) {
     try {

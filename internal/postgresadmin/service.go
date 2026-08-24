@@ -3,6 +3,7 @@ package postgresadmin
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 type Service struct {
@@ -42,6 +43,30 @@ func (s *Service) List(ctx context.Context) (ListResult, error) {
 			break
 		}
 		out.Databases = append(out.Databases, ListItem{Name: row.Name, Owner: row.Owner})
+	}
+	return out, nil
+}
+
+func (s *Service) Search(ctx context.Context, q string, limit int) (SearchResult, error) {
+	listed, err := s.List(ctx)
+	if err != nil {
+		return SearchResult{}, err
+	}
+	needle := strings.ToLower(q)
+	out := SearchResult{Hits: make([]SearchHit, 0)}
+	matched := 0
+	for _, item := range listed.Databases {
+		if needle == "" || !strings.Contains(strings.ToLower(item.Name), needle) {
+			continue
+		}
+		matched++
+		if limit > 0 && len(out.Hits) >= limit {
+			continue
+		}
+		out.Hits = append(out.Hits, SearchHit{Name: item.Name})
+	}
+	if listed.Truncated || (limit > 0 && matched > limit) {
+		out.Truncated = true
 	}
 	return out, nil
 }

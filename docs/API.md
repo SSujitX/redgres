@@ -108,6 +108,50 @@ Independent checks, sequential, each with a 2s timeout:
 
 This GET is not a mutation and does not write an audit event.
 
+**GET `/api/v1/search`** requires a session cookie and the `platform.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
+
+Query `q` is required after trim. Minimum 1 Unicode code point; more than 128 returns `400` `validation_error` with `fields.q` `too_long`. Missing, empty, or whitespace-only `q` returns `fields.q` `too_short`. The submitted `q` is never echoed in the error body, never written to slog, and never audited. `limit` is optional; a non-integer value returns `400` with `fields.limit` `invalid`. Values `<= 0` or `> 50` clamp to `20`. The effective limit is echoed.
+
+When `q` and `limit` are valid the handler always returns `200` with both resource groups, even if PostgreSQL is down. Partial failure is per group; it is not a `503`. `503` `dependency_unavailable` happens only when `requireSession` cannot read SQLite. Missing session is `401` `unauthorized` with no `groups` key. `POST`, `PUT`, `PATCH`, and `DELETE` are `405` `method_not_allowed`. The response is `Cache-Control: no-store`.
+
+Success `200`:
+
+```json
+{
+  "groups": [
+    {
+      "id": "postgres_databases",
+      "label": "PostgreSQL databases",
+      "service": "postgres",
+      "status": "ok",
+      "truncated": false,
+      "hits": [
+        { "id": "postgres_database:project_a", "type": "postgres_database", "label": "project_a" }
+      ]
+    },
+    {
+      "id": "redis_acl_users",
+      "label": "Redis ACL users",
+      "service": "redis",
+      "status": "not_implemented",
+      "truncated": false,
+      "hits": []
+    }
+  ],
+  "limit": 20,
+  "request_id": "<32 lowercase hex>"
+}
+```
+
+`groups` is always an array of length 2 in this fixed order, never `null`. Hits contain only `id`, `type`, and `label`. The payload never includes owner, size, credential, password, DSN, URL, SQL, `err.Error()`, audit `events`/`metadata`, or CSRF tokens.
+
+| `id` | Behavior |
+|---|---|
+| `postgres_databases` | Absent adapter → `not_configured`, `hits: []`. Else `Inventory.Search` (existing List manageability, case-insensitive name substring, 2s timeout): success → `ok` plus matching names; `ErrNotConfigured` → `not_configured`; any other error → `unavailable` and empty hits. Protected databases are omitted the same way as list. |
+| `redis_acl_users` | Always `not_implemented` and `hits: []` in this slice. Never `ok`. Never fabricated names. |
+
+Navigation and documentation matches are client-side `filterNav` only; they are not in this response. This GET is not a mutation and does not write an audit event.
+
 **GET `/api/v1/healthz`** is unchanged: unauthenticated liveness that pings the state DB only. Success `200` is `{"status":"ok","request_id":"…"}` with `Cache-Control: no-store`. It has no `components` array, does not require a session, and does not ping PostgreSQL, Redis, or PgBouncer.
 
 **GET `/api/v1/audit`** requires a session cookie and the `audit.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.

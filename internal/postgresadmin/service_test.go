@@ -273,3 +273,88 @@ func TestServiceRowsMapsCanaryErrors(t *testing.T) {
 		t.Fatalf("leaked %v", err)
 	}
 }
+
+func protectedSearchCatalog() []CatalogRow {
+	return []CatalogRow{
+		projectRow("postgres", "postgres"),
+		projectRow("database_console_vault", "postgres"),
+		{Name: "template0", Owner: "postgres", AllowConn: false, IsTemplate: true},
+		projectRow("owned_by_admin", "redgres_console"),
+		{Name: "no_connect", Owner: "app_role", AllowConn: false},
+		projectRow("project_a", "project_a_role"),
+	}
+}
+
+func TestServiceSearchOmitsProtectedNames(t *testing.T) {
+	svc := testService(protectedSearchCatalog())
+	got, err := svc.Search(context.Background(), "project", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Hits) != 1 || got.Hits[0].Name != "project_a" || got.Truncated {
+		t.Fatalf("project = %#v", got)
+	}
+	for _, q := range []string{"postgres", "template", "vault"} {
+		empty, err := svc.Search(context.Background(), q, 20)
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		if len(empty.Hits) != 0 || empty.Truncated {
+			t.Fatalf("%s = %#v", q, empty)
+		}
+	}
+	owner, err := svc.Search(context.Background(), "project_a_role", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owner.Hits) != 0 {
+		t.Fatalf("owner match = %#v", owner)
+	}
+}
+
+func TestServiceSearchIsCaseInsensitiveOnName(t *testing.T) {
+	svc := testService(protectedSearchCatalog())
+	got, err := svc.Search(context.Background(), "PROJECT", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Hits) != 1 || got.Hits[0].Name != "project_a" {
+		t.Fatalf("search = %#v", got)
+	}
+}
+
+func TestServiceSearchRespectsLimitAndTruncation(t *testing.T) {
+	svc := testService([]CatalogRow{
+		projectRow("project_a", "project_a_role"),
+		projectRow("project_b", "project_b_role"),
+	})
+	got, err := svc.Search(context.Background(), "project", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Hits) != 1 || got.Hits[0].Name != "project_a" || !got.Truncated {
+		t.Fatalf("limit = %#v", got)
+	}
+}
+
+func TestServiceSearchUnavailableWithoutCatalog(t *testing.T) {
+	svc := NewService(nil, NewPolicy(config.Config{}))
+	if _, err := svc.Search(context.Background(), "project", 20); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	var nilSvc *Service
+	if _, err := nilSvc.Search(context.Background(), "project", 20); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("nil service: %v", err)
+	}
+}
+
+func TestServiceSearchMapsCanaryErrors(t *testing.T) {
+	svc := NewService(&MemoryCatalog{Err: errors.New("postgresql://canary:secret@127.0.0.1/db")}, NewPolicy(config.Config{}))
+	_, err := svc.Search(context.Background(), "project", 20)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("leaked %v", err)
+	}
+}

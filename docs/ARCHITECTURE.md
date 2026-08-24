@@ -48,6 +48,7 @@ HTTP transport
   ├── auth endpoints ─────► auth service ─────► control-state repository (SQLite)
   ├── audit endpoints ────► audit service ────► control-state repository (SQLite)
   ├── status endpoint ────► platform.Collect ──► SQLite ping + postgresadmin.Ping
+  ├── search endpoint ────► platform.ResourceGroups ► postgresadmin.Search names
   ├── postgres endpoints ─► postgres use cases ► PostgreSQL adapter (pgxpool)
   │                              └──────────────► vault adapter (PostgreSQL/Fernet)
   └── redis endpoints ────► redis use cases ───► Redis ACL adapter (go-redis)
@@ -55,7 +56,7 @@ HTTP transport
 
 Dependency direction is inward: transport depends on use cases; use cases depend on interfaces; infrastructure adapters implement interfaces. `postgresadmin` and `redisadmin` do not import each other. Cross-system dashboard aggregation belongs in a platform/status service.
 
-`internal/platform.Collect` is that aggregator: it probes Redgres state and PostgreSQL direct through `PingFunc` values and always appends static `pgbouncer`, `redis`, and `tool_links` entries. Redis and PgBouncer probes are unimplemented in this slice (`not_implemented`). `platform` does not import `postgresadmin` or `redisadmin`; the HTTP layer maps adapter sentinels onto `platform.ErrNotConfigured`.
+`internal/platform.Collect` is that aggregator: it probes Redgres state and PostgreSQL direct through `PingFunc` values and always appends static `pgbouncer`, `redis`, and `tool_links` entries. Redis and PgBouncer probes are unimplemented in this slice (`not_implemented`). `platform.ResourceGroups` is the bounded search aggregator: HTTP maps `postgresadmin.Search` names (or `not_configured` / `unavailable`) into a postgres group and always appends a static Redis ACL group with empty hits and `not_implemented`. Navigation and documentation are not server search results. `platform` does not import `postgresadmin` or `redisadmin`; the HTTP layer maps adapter sentinels onto `platform.ErrNotConfigured`.
 
 ## 4. Backend stack
 
