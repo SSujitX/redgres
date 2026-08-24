@@ -716,6 +716,28 @@ func TestRedisUsersCreateProtectedConflictUnavailable(t *testing.T) {
 		assertCreateUnavailable(t, rec)
 		assertNoRedisUsersCanary(t, rec.Body.String())
 	})
+	t.Run("setuser_modifier", func(t *testing.T) {
+		srv := testServerWithRedis(t, redisadmin.NewService(&redisadmin.MemoryClient{
+			ACLSetUserErr: errors.New("ERR Error in ACL SETUSER modifier '>canary-secret': Syntax error"),
+		}))
+		seedOwner(t, srv)
+		h := srv.Handler()
+		cookie, csrf := login(t, h)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/redis/users", cookie, csrf, redisCreateBody))
+		assertCreateUnavailable(t, rec)
+		assertNoRedisUsersCanary(t, rec.Body.String())
+		if strings.Contains(rec.Body.String(), "SETUSER") || strings.Contains(rec.Body.String(), "Syntax error") {
+			t.Fatalf("503 echoed Redis SETUSER text: %s", rec.Body.Bytes())
+		}
+		var metadata string
+		if err := srv.db.QueryRow(`SELECT metadata FROM audit_events WHERE action = 'redis.user.create' ORDER BY id DESC LIMIT 1`).Scan(&metadata); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(metadata, "canary-secret") || strings.Contains(metadata, ">") || strings.Contains(metadata, "SETUSER") {
+			t.Fatalf("audit leaked SETUSER modifier: %s", metadata)
+		}
+	})
 }
 
 func TestRedisUsersCreateAuditFailClosed(t *testing.T) {

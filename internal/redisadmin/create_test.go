@@ -68,6 +68,19 @@ func TestCreateUserMapsRedisFailure(t *testing.T) {
 	}
 }
 
+func TestCreateUserMapsSetUserModifierError(t *testing.T) {
+	svc := NewService(&MemoryClient{
+		ACLSetUserErr: errors.New("ERR Error in ACL SETUSER modifier '>canary-secret': Syntax error"),
+	})
+	_, err := svc.CreateUser(context.Background(), "project_a", "project_a")
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), "canary-secret") || strings.Contains(err.Error(), ">") {
+		t.Fatalf("leaked SETUSER modifier: %v", err)
+	}
+}
+
 func assertCreateRules(t *testing.T, rules []string, password, pattern string) {
 	t.Helper()
 	joined := strings.Join(rules, " ")

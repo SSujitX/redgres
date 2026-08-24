@@ -1542,7 +1542,9 @@ Unit/HTTP tests: username/prefix validation; password 32 chars unique;
  HTTP 201 no-store; CSRF; 401/403/400/409/503; unknown fields; GET still
  no audit; canary/password absent from audit JSON; GET after create has
  no password; public URL only when both host and port set; audit-fail
- after SETUSER returns 503 without credential.
+ after SETUSER returns 503 without credential; SETUSER modifier
+ ERR containing >canary-secret is typed 503 with no canary in body
+ or audit.
 Frontend App.test.tsx: POST {username,key_pattern} + CSRF, no password;
  ticket shows password and ignores extra secrets; URL copy only when
  urls.primary present; dismiss clears password then inspects; ticket
@@ -1573,12 +1575,19 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
  Node 24.19.0
 Known limitations: SETUSER-then-audit-fail residual (user exists, no
  credential returned); concurrent ACL LIST/SETUSER race (upsert);
- no explicit HTTP canary for SETUSER modifier text containing
- >password (classifyRedisError maps to typed ErrUnavailable);
- ticket alertdialog has no focus trap; no viewport/zoom sign-off.
-Reviewer/date: pending independent security, UI, and evidence review.
- Local commits: `6a93136` (API), `9652adf` (UI), `a79f67d` (merge UI).
- Not pushed.
+ ticket alertdialog has no focus trap; 201 does not clear a prior
+ inspector; no viewport/zoom sign-off; PRD on/off is on-only.
+Reviewer/date: Security review (2026-08-25) approve Partial; no
+ Critical/High/Medium. L1 SETUSER modifier HTTP canary added after
+ review. L2 MemoryClient plaintext ACLLines is test-double only.
+ UI review (2026-08-25) approve Partial UI; no Critical/High. Medium
+ ticket alertdialog without focus trap accepted unfixed. Medium leftover
+ inspector after 201 accepted unfixed. Explicitly NOT viewport/zoom
+ sign-off.
+ Evidence review (2026-08-25) keep-Partial; no docs-correction-required.
+ Verifier pending.
+ Local commits: `6a93136` (API), `9652adf` (UI), `a79f67d` (merge UI),
+ `016bae3` (docs record). Not pushed.
 ```
 
 
