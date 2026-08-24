@@ -289,9 +289,9 @@ Security tests: the placeholder tree exposes no file, so the frontend-unavailabl
 Deployment/migration impact: none. A release build still embeds the real
  dist/app and takes the unchanged path. 001_initial.sql, go.mod, go.sum, and
  web/package-lock.json unchanged.
-Known limitations: this does not make CI green by itself — gitleaks, govulncheck,
- the Node 24.19.0 frontend jobs, and go test -race ./... remain unproven locally
- and nothing has been pushed, so no GitHub Actions run has ever executed.
+Known limitations: none outstanding for this defect. CI has since run green on this
+ commit (see the CI evidence entry below), which is the first time the backend job
+ has passed.
 Commands executed locally (2026-08-25):
   reproduction at HEAD (no slice files): git archive -o head.zip HEAD;
    Expand-Archive; go test -count=1 -v -run TestAssetsAvailableWithoutFrontendBuild
@@ -302,8 +302,50 @@ Commands executed locally (2026-08-25):
    GET / → 503, GET /api/v1/healthz → 200
   working tree: go test -count=1 ./... → ok; go vet ./... → no findings;
    gofmt -l cmd internal migrations → empty; go build -o NUL ./cmd/redgres → success
-  Not run: CI, gitleaks, govulncheck, live PostgreSQL
-Reviewer/date: pending independent review.
+  Not run locally: live PostgreSQL. CI evidence is recorded below.
+Reviewer/date: pending independent review. CI green on `f10eb19`.
+```
+
+## First green CI run (2026-08-25)
+
+```text
+Requirement: NFR-007/NFR-010 release-gate evidence. No functional PRD ID.
+Purpose: replace the "CI has never run / unproven" caveats carried by every
+ earlier entry in this file with one authoritative record.
+Evidence: GitHub Actions run 32764658544 on `f10eb19` (branch `master`, event
+ push, ubuntu-latest) completed with conclusion success. All six jobs passed:
+  backend (2m54s)        — go mod verify; gofmt -l cmd internal migrations;
+                           go vet ./...; go test ./...; go test -race ./...;
+                           go build ./cmd/redgres
+  cross-compile (1m41s)  — CGO_ENABLED=0 GOOS=linux GOARCH=amd64 and arm64 builds
+  frontend (21s)         — Node from web/.nvmrc (24.19.0, the pinned runtime);
+                           npm ci; npm run test:run; npm run build; the inline
+                           script/style rejection check on the built index.html;
+                           npm audit --omit=dev --audit-level=high
+  embedded-build (58s)   — frontend build + go build, then a healthz smoke test
+                           asserting {"status":"ok"} on 127.0.0.1:8790
+  secret-scan (9s)       — gitleaks-action v3.0.0 over full history (fetch-depth 0)
+  vulnerability (26s)    — govulncheck v1.7.0 ./...
+What this resolves: full `go test -race ./...`, linux/amd64 and linux/arm64
+ cross-compiles, frontend tests and build on pinned Node 24.19.0, gitleaks,
+ govulncheck, and npm audit were previously recorded as CI-only and unproven in the
+ Wave 0, owner auth, login/shell, PostgreSQL inventory, table-list, row-browse, and
+ single-port dev runtime entries. They are now proven for the tree at `f10eb19`.
+Prior state: run 32627397991 on `da59ada` failed in the backend job at
+ `go test ./...` with "--- FAIL: TestAssetsAvailableWithoutFrontendBuild /
+ embed_test.go:14: embed root: open .: file does not exist" — the same failure the
+ parent reproduced locally and fixed in `f10eb19`. The Linux CI log confirms the
+ diagnosis independently of the Windows reproduction.
+Known limitations: this proves the checks in .github/workflows/ci.yml only. It is
+ not COMPATIBILITY.md §6 evidence: no live PostgreSQL 17/18, Redis, or PgBouncer
+ job exists yet, and no CI job exercises the dev:full workflow. Evidence is
+ commit-scoped; later commits require their own run.
+Commands executed locally (2026-08-25):
+  gh run list --limit 5
+  gh run view 32627397991 --log-failed  → the embed_test.go:14 failure above
+  gh run view 32764658544               → all six jobs green, conclusion success
+Note: `f10eb19` and `410ba4c` were pushed by the user, not by an agent.
+Reviewer/date: CI is machine evidence; no reviewer sign-off required.
 ```
 
 ## Local single-port development runtime (2026-08-25)
