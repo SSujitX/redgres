@@ -66,6 +66,7 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 - Correlate incidents using the full `request_id`. Timestamps are the stored UTC strings; they are not converted to local time.
 - Source address is the address Redgres observed on the connection. Behind Cloudflare Tunnel this is the tunnel connector, not the browser’s public address. That disclosure stays visible in the page header; it is not hover-only.
 - Empty actor, target, or source address values show an em dash with an accessible “Not recorded” name. Errors (session expired, unusable cursor, control-plane storage unavailable, or a network failure) take precedence over an empty log. An empty state appears only after HTTP 200 with `events: []`.
+- Actor, action, target, outcome, request ID, source address, and timestamp are sanitized at render time: bidirectional and other format/control characters become U+FFFD, then the visible value is isolated LTR. The stored row is unchanged. Homoglyphs are not detected.
 - Below 768px each event is a labeled label/value list. At 768px and above, a bounded table with a sticky header owns horizontal/vertical scroll so the viewport does not scroll sideways. Audit uses neutral ink, not a PostgreSQL or Redis service rail.
 
 ## Credential ticket

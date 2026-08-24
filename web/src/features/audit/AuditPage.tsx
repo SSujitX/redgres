@@ -282,9 +282,10 @@ function RecordedText({ value, identifier }: { value: string; identifier?: boole
 }
 
 function WhenStamp({ value }: { value: string }) {
+  const shown = displayText(value);
   return (
-    <time className="bidi-isolate identifier" dateTime={value}>
-      {displayText(value)} UTC
+    <time className="bidi-isolate identifier" dateTime={shown}>
+      {shown} UTC
     </time>
   );
 }
