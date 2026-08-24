@@ -155,6 +155,7 @@ Every page header has one title, optional concise description, service/status co
 ### Status and metrics
 
 - Prefer compact labeled facts and short trends only when historical data exists. Do not invent charts from one instantaneous value.
+- Overview Redis metrics are a compact labeled list on the Redis card only. Labels stay visible at 360px; numeric values use tabular numbers.
 - Dependency failures are independent and actionable. PostgreSQL down must not blank Redis management, and vice versa.
 - Reserve red danger styling for errors/destructive actions; Redis identity red cannot make a healthy Redis panel look failed.
 

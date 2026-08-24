@@ -173,6 +173,41 @@
   box-shadow: inset 3px 0 0 var(--redis);
 }
 
+.status-card-redis .redis-metrics {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.status-card-redis .redis-metrics > div {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 11rem) minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-items: baseline;
+}
+
+.status-card-redis .redis-metrics dt {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.status-card-redis .redis-metrics dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.status-card-redis .redis-metrics-note {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.status-card-redis .redis-metrics-note p {
+  margin: 0;
+}
+
 .status-ok {
   color: var(--success);
 }

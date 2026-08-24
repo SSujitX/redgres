@@ -40,6 +40,10 @@ function isStatusUrl(url: string): boolean {
   return url === "/api/v1/status" || url.startsWith("/api/v1/status?");
 }
 
+function isRedisStatusUrl(url: string): boolean {
+  return url === "/api/v1/redis/status";
+}
+
 function isSearchUrl(url: string): boolean {
   return url === "/api/v1/search" || url.startsWith("/api/v1/search?");
 }
@@ -67,6 +71,57 @@ function mixedStatus() {
       { id: "tool_links", state: "not_configured" },
     ],
     request_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  });
+}
+
+function disconnectedRedisStatus() {
+  return jsonResponse(200, {
+    state: "not_configured",
+    request_id: "99999999999999999999999999999999",
+  });
+}
+
+function redisOkMetrics(extra: Record<string, unknown> = {}) {
+  return {
+    version: "8.2.1",
+    uptime_seconds: 123,
+    connected_clients: 4,
+    used_memory_bytes: 1048576,
+    max_memory_bytes: 0,
+    ops_per_sec: 12,
+    db_size: 50,
+    latency_ms: 1.25,
+    ...extra,
+  };
+}
+
+function redisOkStatus(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    state: "ok",
+    metrics: redisOkMetrics(),
+    request_id: "22222222222222222222222222222222",
+    ...extra,
+  });
+}
+
+function redisUnavailableStatus(reason: "unreachable" | "auth_failed" | "permission_denied") {
+  return jsonResponse(200, {
+    state: "unavailable",
+    reason,
+    request_id: "33333333333333333333333333333333",
+  });
+}
+
+function overviewOkStatus() {
+  return jsonResponse(200, {
+    components: [
+      { id: "redgres_state", state: "ok" },
+      { id: "postgres_direct", state: "ok" },
+      { id: "pgbouncer", state: "not_implemented" },
+      { id: "redis", state: "ok" },
+      { id: "tool_links", state: "not_configured" },
+    ],
+    request_id: "11111111111111111111111111111111",
   });
 }
 
@@ -128,6 +183,9 @@ function postgresHitSearch(extra: Record<string, unknown> = {}) {
 }
 
 function unknownApi(url: string) {
+  if (isRedisStatusUrl(url)) {
+    return disconnectedRedisStatus();
+  }
   if (isStatusUrl(url)) {
     return disconnectedStatus();
   }
@@ -180,6 +238,7 @@ describe("App session and login", () => {
     expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/healthz"))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isStatusUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isRedisStatusUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isSearchUrl(String(call[0])))).toBe(true);
   });
 
@@ -2062,9 +2121,14 @@ describe("App session and login", () => {
     expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
-    const statusCalls = fetch.mock.calls.map((call) => String(call[0])).filter((url) => isStatusUrl(url));
+    const urls = fetch.mock.calls.map((call) => String(call[0]));
+    const statusCalls = urls.filter((url) => isStatusUrl(url));
+    const redisStatusCalls = urls.filter((url) => isRedisStatusUrl(url));
+    expect(isStatusUrl("/api/v1/redis/status")).toBe(false);
     expect(statusCalls.length).toBeGreaterThanOrEqual(2);
     expect(statusCalls.every((url) => url === "/api/v1/status")).toBe(true);
+    expect(redisStatusCalls.length).toBeGreaterThanOrEqual(2);
+    expect(redisStatusCalls.every((url) => url === "/api/v1/redis/status")).toBe(true);
   });
 
   it("clears Overview cards on logout", async () => {
@@ -2230,5 +2294,251 @@ describe("App session and login", () => {
     expect(await screen.findByLabelText("Redis: Reachable")).toBeInTheDocument();
     expect(screen.getByLabelText("PostgreSQL direct: Reachable")).toBeInTheDocument();
     expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+  });
+
+  it("shows Redis metrics when /status and /redis/status are both ok", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "redis-metrics-ok".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return overviewOkStatus();
+      }
+      if (isRedisStatusUrl(url)) {
+        return redisOkStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const redis = await screen.findByLabelText("Redis: Reachable");
+    expect(redis).toHaveClass("status-card-redis");
+    expect(within(redis).getByText("Reachable")).toHaveClass("status-ok");
+    expect(within(redis).getByText("Version")).toBeInTheDocument();
+    expect(within(redis).getByText("8.2.1")).toHaveClass("bidi-isolate");
+    expect(within(redis).getByText("8.2.1")).toHaveClass("identifier");
+    expect(within(redis).getByText("Uptime")).toBeInTheDocument();
+    expect(within(redis).getByText("2m 3s")).toHaveClass("metric");
+    expect(within(redis).getByText("Clients")).toBeInTheDocument();
+    expect(within(redis).getByText("4")).toHaveClass("metric");
+    expect(within(redis).getByText("Used / max memory")).toBeInTheDocument();
+    expect(within(redis).getByText("1.0 MiB / Unlimited")).toHaveClass("metric");
+    expect(within(redis).getByText("Ops/s")).toBeInTheDocument();
+    expect(within(redis).getByText("12")).toHaveClass("metric");
+    expect(within(redis).getByText("DB size")).toBeInTheDocument();
+    expect(within(redis).getByText("50")).toHaveClass("metric");
+    expect(within(redis).getByText("Latency")).toBeInTheDocument();
+    expect(within(redis).getByText("1.25 ms")).toHaveClass("metric");
+    expect(screen.queryByText("Metrics unavailable")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+    const postgres = screen.getByLabelText("PostgreSQL direct: Reachable");
+    expect(within(postgres).queryByText("Ops/s")).not.toBeInTheDocument();
+    expect(within(postgres).queryByText("Used / max memory")).not.toBeInTheDocument();
+  });
+
+  it("shows Authentication failed from /redis/status auth_failed", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "redis-auth-fail".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "ok" },
+            { id: "pgbouncer", state: "not_implemented" },
+            { id: "redis", state: "unavailable" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "44444444444444444444444444444444",
+        });
+      }
+      if (isRedisStatusUrl(url)) {
+        return redisUnavailableStatus("auth_failed");
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const redis = await screen.findByLabelText("Redis: Unavailable");
+    expect(within(redis).getByText("Authentication failed")).toBeInTheDocument();
+    expect(within(redis).queryByText("Permission denied")).not.toBeInTheDocument();
+    expect(within(redis).queryByText("Unreachable")).not.toBeInTheDocument();
+    expect(within(redis).queryByText("Ops/s")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+  });
+
+  it("shows Permission denied from /redis/status permission_denied", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "redis-perm-fail".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "ok" },
+            { id: "pgbouncer", state: "not_implemented" },
+            { id: "redis", state: "unavailable" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "55555555555555555555555555555555",
+        });
+      }
+      if (isRedisStatusUrl(url)) {
+        return redisUnavailableStatus("permission_denied");
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const redis = await screen.findByLabelText("Redis: Unavailable");
+    expect(within(redis).getByText("Permission denied")).toBeInTheDocument();
+    expect(within(redis).queryByText("Authentication failed")).not.toBeInTheDocument();
+    expect(within(redis).queryByText("Unreachable")).not.toBeInTheDocument();
+  });
+
+  it("shows Unreachable from /redis/status unreachable", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "redis-unreach".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "ok" },
+            { id: "pgbouncer", state: "not_implemented" },
+            { id: "redis", state: "unavailable" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "66666666666666666666666666666666",
+        });
+      }
+      if (isRedisStatusUrl(url)) {
+        return redisUnavailableStatus("unreachable");
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const redis = await screen.findByLabelText("Redis: Unavailable");
+    expect(within(redis).getByText("Unreachable")).toBeInTheDocument();
+    expect(within(redis).queryByText("Authentication failed")).not.toBeInTheDocument();
+    expect(within(redis).queryByText("Permission denied")).not.toBeInTheDocument();
+  });
+
+  it("keeps Reachable and shows Metrics unavailable without fake zeros", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "redis-metrics-unavail".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return overviewOkStatus();
+      }
+      if (isRedisStatusUrl(url)) {
+        return redisUnavailableStatus("auth_failed");
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const redis = await screen.findByLabelText("Redis: Reachable");
+    expect(within(redis).getByText("Reachable")).toHaveClass("status-ok");
+    expect(within(redis).getByText("Metrics unavailable")).toBeInTheDocument();
+    expect(within(redis).getByText("Authentication failed")).toBeInTheDocument();
+    expect(within(redis).queryByText("Ops/s")).not.toBeInTheDocument();
+    expect(within(redis).queryByText("Unlimited")).not.toBeInTheDocument();
+    expect(within(redis).queryByText("0")).not.toBeInTheDocument();
+    expect(within(redis).queryByText("8.2.1")).not.toBeInTheDocument();
+  });
+
+  it("omits Redis metric rows when /redis/status is not_configured", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "redis-metrics-omit".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "ok" },
+            { id: "pgbouncer", state: "not_implemented" },
+            { id: "redis", state: "not_configured" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "77777777777777777777777777777777",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const redis = await screen.findByLabelText("Redis: Not configured");
+    expect(within(redis).queryByText("Version")).not.toBeInTheDocument();
+    expect(within(redis).queryByText("Uptime")).not.toBeInTheDocument();
+    expect(within(redis).queryByText("Ops/s")).not.toBeInTheDocument();
+    expect(within(redis).queryByText("Metrics unavailable")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+  });
+
+  it("keeps PostgreSQL cards when /redis/status fails alone", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "redis-fail-alone".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      if (isRedisStatusUrl(url)) {
+        throw new TypeError("Failed to fetch");
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("PostgreSQL direct: Unavailable")).toBeInTheDocument();
+    const redis = screen.getByLabelText("Redis: Reachable");
+    expect(within(redis).getByText("Metrics unavailable")).toBeInTheDocument();
+    expect(within(redis).queryByText("Ops/s")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+  });
+
+  it("does not render a canary secret from /redis/status", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "redis-canary".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return overviewOkStatus();
+      }
+      if (isRedisStatusUrl(url)) {
+        return redisOkStatus({ password: "canary-secret", url: "rediss://canary-secret@10.0.0.1/0" });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Redis: Reachable")).toBeInTheDocument();
+    expect(screen.getByText("8.2.1")).toBeInTheDocument();
+    expect(screen.queryByText("canary-secret")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("canary-secret");
+  });
+
+  it("keeps postgres Unavailable and Redis Reachable independent with Redis-only metrics", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "redis-indep".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      if (isRedisStatusUrl(url)) {
+        return redisOkStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const postgres = await screen.findByLabelText("PostgreSQL direct: Unavailable");
+    const redis = screen.getByLabelText("Redis: Reachable");
+    expect(within(postgres).queryByText("Ops/s")).not.toBeInTheDocument();
+    expect(within(postgres).queryByText("8.2.1")).not.toBeInTheDocument();
+    expect(within(redis).getByText("8.2.1")).toBeInTheDocument();
+    expect(within(redis).getByText("1.0 MiB / Unlimited")).toBeInTheDocument();
+    expect(redis).toHaveClass("status-card-redis");
+    expect(postgres).not.toHaveClass("status-card-redis");
   });
 });
