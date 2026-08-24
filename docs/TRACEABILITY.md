@@ -1109,5 +1109,9 @@ Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
  M1 (status is only “Searching.” while pending with no page hits). Final UI
  pass approve; no remaining High/Medium. Explicitly NOT viewport, zoom, or
  visual sign-off: no browser tools, app not opened. Lows (empty group headers,
- nested nav in palette, non-sticky input) accepted unfixed. Verifier pending.
+ nested nav in palette, non-sticky input) accepted unfixed.
+ Verifier (2026-08-25) PASS on worktree HEAD `28d2313`. Re-ran go test ./...,
+ vet, gofmt empty, npm test:run 74 passed, npm run build; forbidden paths
+ empty vs HEAD and vs `5f92059`. Keep PLAT-004 Partial. Fast-forward `master`
+ allowed (not pushed).
 ```
