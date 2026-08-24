@@ -7,7 +7,25 @@ alwaysApply: false
 
 Use a lead parent agent. Before spawning writers, invoke `redgres-planner` to identify dependencies, shared files, test seams, and merge order.
 
-Start with at most three concurrent subagents. Parallelize only work with non-overlapping ownership and explicit contracts. Foundation changes to module files, entry points, migrations, shared API types, or frontend bootstrap run sequentially first.
+## Parallelism gate
+
+At the start of every implementation slice, the parent and planner must classify the execution graph into:
+
+1. sequential contract work owned by the parent;
+2. independent editing packets with disjoint files and frozen interfaces;
+3. independent read-only research/review/verification packets.
+
+Start two or three concurrent subagents whenever at least two packets can run without sharing writable files or depending on an unfinished contract. If only one packet is safe, state the exact dependency or overlapping file that prevents parallel writers; “the task is small” or habit is not enough.
+
+The parent does not wait idly. It performs sequential shared-contract/integration work or another non-overlapping critical-path task while background agents run. Start with at most three concurrent subagents. Foundation changes to module files, entry points, migrations, shared API types, or frontend bootstrap run sequentially first.
+
+Useful concurrency patterns:
+
+- backend adapter/use case and frontend UI against a parent-frozen API fixture/contract;
+- independent Redis and PostgreSQL packages with no shared HTTP/config/dependency files;
+- implementation plus independent fixture/source characterization when implementation does not depend on its result;
+- security and UI review in parallel after integration, followed by final verification;
+- independent test-matrix or documentation evidence checks that write no shared files.
 
 Every delegated context packet must include:
 
@@ -22,7 +40,9 @@ Every delegated context packet must include:
 
 Editing agents must use isolated Git worktrees/branches. Read-only analysis agents may share the checkout. Never allow two writers to own the same files, migration numbers, API schemas, or dependency manifests. The parent reviews and integrates branches in dependency order, reruns complete tests, then invokes `redgres-security-reviewer` and `redgres-verifier` independently.
 
-Use `redgres-implementer` for bounded writing packets. Subagents start with clean context and do not know the parent conversation; committed documentation plus the explicit context packet is the shared context. Require each implementer to update its owned canonical docs and traceability evidence before handoff.
+Use `redgres-implementer` for bounded writing packets. Subagents start with clean context and do not know the parent conversation; committed documentation plus the explicit context packet is the shared context. In parallel runs the parent owns shared files such as `docs/TRACEABILITY.md`, dependency manifests, route wiring, and migration numbering. Each implementer updates only explicitly owned canonical docs and returns an exact traceability evidence block for the parent to integrate.
+
+Every subagent handoff reports: fixed commit, branch/commit, PRD IDs, files changed, tests and exact results, documentation/evidence proposed, limitations, risks, and integration order. The parent validates the actual diff and reruns checks; reputation-language is not evidence.
 
 Worktrees require a committed baseline. Do not start parallel editing from an unborn branch or a dirty uncommitted specification tree.
 
