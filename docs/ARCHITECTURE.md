@@ -55,7 +55,7 @@ HTTP transport
 
 Dependency direction is inward: transport depends on use cases; use cases depend on interfaces; infrastructure adapters implement interfaces. `postgresadmin` and `redisadmin` do not import each other. Cross-system dashboard aggregation belongs in a platform/status service.
 
-`internal/platform.Collect` is that aggregator: it probes Redgres state and PostgreSQL direct through `PingFunc` values and always appends static `pgbouncer`, `redis`, and `tool_links` entries. Redis and PgBouncer probes are unimplemented in this slice (`not_implemented`). There is no `redisadmin` import or arrow from `platform`.
+`internal/platform.Collect` is that aggregator: it probes Redgres state and PostgreSQL direct through `PingFunc` values and always appends static `pgbouncer`, `redis`, and `tool_links` entries. Redis and PgBouncer probes are unimplemented in this slice (`not_implemented`). `platform` does not import `postgresadmin` or `redisadmin`; the HTTP layer maps adapter sentinels onto `platform.ErrNotConfigured`.
 
 ## 4. Backend stack
 

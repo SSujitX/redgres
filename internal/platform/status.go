@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/SSujitX/redgres/internal/postgresadmin"
 )
+
+// ErrNotConfigured is returned by a PingFunc when the probe target is absent.
+// Collect maps it to state not_configured rather than unavailable.
+var ErrNotConfigured = errors.New("not configured")
 
 type Component struct {
 	ID     string `json:"id"`
@@ -36,7 +38,7 @@ func postgresResult(ctx context.Context, ping PingFunc) Component {
 	if err == nil {
 		return Component{ID: "postgres_direct", State: "ok"}
 	}
-	if errors.Is(err, postgresadmin.ErrNotConfigured) {
+	if errors.Is(err, ErrNotConfigured) {
 		return Component{ID: "postgres_direct", State: "not_configured"}
 	}
 	return Component{ID: "postgres_direct", State: "unavailable", Reason: "unreachable"}

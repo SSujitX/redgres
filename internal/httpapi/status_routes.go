@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/SSujitX/redgres/internal/platform"
@@ -14,11 +15,7 @@ type statusBody struct {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	var postgresPing platform.PingFunc
-	if s.postgres != nil {
-		postgresPing = s.postgres.Ping
-	}
-	components := platform.Collect(r.Context(), s.pingState, postgresPing)
+	components := platform.Collect(r.Context(), s.pingState, s.postgresPing)
 	s.writeJSON(w, r, http.StatusOK, statusBody{Components: components, RequestID: requestID(r)})
 }
 
@@ -27,4 +24,15 @@ func (s *Server) pingState(ctx context.Context) error {
 		return postgresadmin.ErrUnavailable
 	}
 	return nil
+}
+
+func (s *Server) postgresPing(ctx context.Context) error {
+	if s.postgres == nil {
+		return platform.ErrNotConfigured
+	}
+	err := s.postgres.Ping(ctx)
+	if errors.Is(err, postgresadmin.ErrNotConfigured) {
+		return platform.ErrNotConfigured
+	}
+	return err
 }

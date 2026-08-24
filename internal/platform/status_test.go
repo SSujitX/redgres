@@ -5,8 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/SSujitX/redgres/internal/postgresadmin"
 )
 
 func TestCollectMixedStateOKPostgresUnavailable(t *testing.T) {
@@ -51,7 +49,7 @@ func TestCollectNilPostgresPingIsNotConfigured(t *testing.T) {
 func TestCollectPostgresNotConfiguredError(t *testing.T) {
 	got := Collect(context.Background(),
 		func(context.Context) error { return nil },
-		func(context.Context) error { return postgresadmin.ErrNotConfigured },
+		func(context.Context) error { return ErrNotConfigured },
 	)
 	if got[1].ID != "postgres_direct" || got[1].State != "not_configured" || got[1].Reason != "" {
 		t.Fatalf("postgres = %#v", got[1])
