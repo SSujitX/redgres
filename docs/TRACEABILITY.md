@@ -911,5 +911,9 @@ Reviewer/date: Security review (2026-08-25) approve, no Critical/High/Medium
  they are polish, not contract misses. Parent also applied `1adfb89` before
  review: UX.md bidi bullet the packet required, and dateTime uses the same
  sanitized string as visible text.
- Verifier pending.
+ Verifier (2026-08-25) PASS on worktree HEAD `3402960`. Re-ran npm test:run
+ (54 passed), npm run build, go test ./..., vet, gofmt empty; forbidden paths
+ byte-identical to `1631d2e`; App.test.tsx additive only. Not viewport sign-off.
+ Fast-forwarded `master` to `3402960` (not pushed).
+ Local commits: `81b47b3` (feature), `1adfb89`, `7e84e6d`, `3402960` (docs).
 ```
