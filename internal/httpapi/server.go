@@ -54,6 +54,7 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	r.Get("/api/v1/healthz", s.handleHealthz)
+	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/status", s.handleStatus)
 	r.Post("/api/v1/auth/login", s.handleLogin)
 	r.With(s.requireSession, s.requireMutation).Post("/api/v1/auth/logout", s.handleLogout)
 	r.With(s.requireSession).Get("/api/v1/session", s.handleSession)

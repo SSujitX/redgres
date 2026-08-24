@@ -29,6 +29,7 @@ type Catalog interface {
 	Lookup(ctx context.Context, name string) (CatalogRow, error)
 	ListTables(ctx context.Context, database string) ([]TableItem, error)
 	ListRows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
+	Ping(ctx context.Context) error
 }
 
 type Inventory interface {
@@ -36,6 +37,7 @@ type Inventory interface {
 	Details(ctx context.Context, name string) (DatabaseDetails, error)
 	Tables(ctx context.Context, name string) (TableListResult, error)
 	Rows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
+	Ping(ctx context.Context) error
 }
 
 type ListItem struct {

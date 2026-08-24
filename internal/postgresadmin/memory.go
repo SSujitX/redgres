@@ -10,12 +10,20 @@ type MemoryTable struct {
 type MemoryCatalog struct {
 	Rows         []CatalogRow
 	Err          error
+	PingErr      error
 	Tables       map[string][]TableItem
 	TablesErr    error
 	LastTablesDB string
 	TableData    map[string]MemoryTable
 	RowsErr      error
 	LastRowsKey  string
+}
+
+func (m *MemoryCatalog) Ping(context.Context) error {
+	if m.PingErr != nil {
+		return m.PingErr
+	}
+	return nil
 }
 
 func (m *MemoryCatalog) List(context.Context) ([]CatalogRow, error) {

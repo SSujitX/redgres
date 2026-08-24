@@ -152,11 +152,33 @@
   gap: var(--space-4);
 }
 
+@media (min-width: 768px) {
+  .status-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .status-card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-surface);
   padding: var(--space-4);
+}
+
+.status-card-postgres {
+  box-shadow: inset 3px 0 0 var(--postgres);
+}
+
+.status-card-redis {
+  box-shadow: inset 3px 0 0 var(--redis);
+}
+
+.status-ok {
+  color: var(--success);
+}
+
+.status-unavailable {
+  color: var(--danger);
 }
 
 .drawer-backdrop {

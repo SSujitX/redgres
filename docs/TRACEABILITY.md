@@ -5,7 +5,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
-| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz` unit tests; PLAT-003 audit read API store+HTTP tests + audit history UI; no `/status` or server search | Partial |
+| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial); PLAT-003 audit read API + history UI; no server search | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | TODO | Planned |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
@@ -916,4 +916,86 @@ Reviewer/date: Security review (2026-08-25) approve, no Critical/High/Medium
  byte-identical to `1631d2e`; App.test.tsx additive only. Not viewport sign-off.
  Fast-forwarded `master` to `3402960` (not pushed).
  Local commits: `81b47b3` (feature), `1adfb89`, `7e84e6d`, `3402960` (docs).
+```
+
+## PLAT-001 authenticated status + Overview cards (2026-08-25)
+
+```text
+Requirement: PLAT-001 (Partial). Independent component health for Redgres state
+ and PostgreSQL direct; PgBouncer, Redis, and tool links remain honest
+ not_implemented / not_configured. NFR secret-safe payload (no host/DSN/password).
+Decision/ADR: ADR-001 modular monolith; platform.Collect is the dashboard
+ aggregator. No new module, migration, dependency, or COMPATIBILITY §6 claim.
+Source characterization: none required for this slice (no Redis/PgBouncer probe
+ parity). postgresadmin Ping uses existing pgxpool.Ping; list/details are not health.
+Implementation files: internal/platform/{status.go,status_test.go};
+ internal/postgresadmin/{types,errors,service,adapter,memory}.go + ping_test.go;
+ internal/httpapi/{server.go,status_routes.go,status_routes_test.go};
+ web/src/api/status.ts; web/src/features/overview/OverviewPage.tsx;
+ web/src/features/pages/Placeholders.tsx; web/src/App.test.tsx;
+ web/src/styles/shell.css; docs/{API,ARCHITECTURE,UX,TRACEABILITY}.md
+Unit tests:
+ platform: TestCollectMixedStateOKPostgresUnavailable;
+ TestCollectReverseMixedStateUnavailablePostgresOK;
+ TestCollectNilPostgresPingIsNotConfigured;
+ TestCollectPostgresNotConfiguredError;
+ TestCollectReturnsFixedFiveComponents;
+ TestCollectOmitsCanaryHostAndPassword
+ postgresadmin: TestServicePingNilCatalogIsNotConfigured;
+ TestServicePingMapsMemoryCatalogPingErr; existing list/details/tables/rows still pass
+ httpapi: TestStatusRequiresSession (401, no components key);
+ TestStatusDefaultPostgresNotConfigured (sqlite ok, postgres not_configured, five ids);
+ TestStatusPostgresUnavailableKeepsRedis;
+ TestStatusHealthyPostgresKeepsRedisNotImplemented;
+ TestStatusRejectsMutatingMethods (POST/PUT/PATCH/DELETE 405);
+ TestStatusOmitsCanarySecrets;
+ TestHealthzUnchangedWithoutComponents (+ existing TestHealthzOK)
+ frontend App.test.tsx: login never calls /api/v1/status or /healthz and has no
+ /reachable/i; mixed payload Reachable/Unavailable/Not connected with Redis visible;
+ 401 alert no cards; network throw generic alert no cards; missing redis id still
+ renders Redis Unavailable; loading then replacement; Refresh refetches
+ /api/v1/status with no query; logout clears cards; unknown state → Unavailable;
+ postgres unavailable uses status-card-postgres + status-unavailable, not
+ status-card-redis / service-rail-redis; malformed 200 JSON alert no cards.
+ Unknown-URL stubs gained a disconnected /api/v1/status 200 so Overview does not
+ leak a stray alert into unrelated tests.
+Integration tests: none. COMPATIBILITY.md §6 is not applicable and is not claimed.
+ No live PostgreSQL/Redis/PgBouncer ping in this slice.
+Security tests: canary password=canary-secret and host=10.0.0.1 absent from
+ Collect fields and HTTP body; 401 has no components key; healthz unchanged
+ (no components, no session); login path never fetches /status or /healthz;
+ GET is not audited.
+Deployment/migration impact: none. No go.mod/go.sum, package.json/lockfile,
+ migrations, REDGRES_* keys, or COMPATIBILITY.md change. Application rollback
+ is binary/config only.
+Known limitations / residuals: Redis INFO/ACL health, PgBouncer SHOW VERSION,
+ tool-link hrefs, backups card, Overview audit widget, quick actions, AUTH-005,
+ sidebar footer health/version, polling, version/uptime in payload, server search
+ (PLAT-004), COMPATIBILITY.md §6. jsdom cannot prove 360/768/1280/1600 viewports
+ or 200% zoom. Local Node is v25.3.0 so pinned Node 24.19.0 frontend evidence
+ remains CI-only. Status TRACEABILITY stays Partial; do not mark Complete.
+Commands executed locally (2026-08-25), worktree
+ D:\code\github\Redgres-worktrees\plat-001-status, branch plat-001-status,
+ baseline b2f155f, go1.27.0 windows/amd64, Node v25.3.0 (web/.nvmrc pins 24.19.0):
+  gofmt -l internal/platform internal/postgresadmin internal/httpapi → empty
+  go vet ./internal/platform ./internal/postgresadmin ./internal/httpapi → no findings
+  go test -count=1 ./internal/platform ./internal/postgresadmin ./internal/httpapi
+   → ok platform 0.494s; postgresadmin 0.567s; httpapi 8.388s
+  go test -count=1 ./... → ok cmd/redgres, audit, auth, config, database,
+   httpapi, platform, postgresadmin, web; migrations no test files
+  go vet ./... → no findings (exit 0)
+  npm --prefix web run test:run → Test Files 3 passed (3); Tests 64 passed (64);
+   Duration 10.78s (vitest 4.1.11)
+  npm --prefix web run build → tsc --noEmit + vite v8.2.2; 31 modules;
+   ../internal/web/dist/app/{index.html, assets/index-soMggF2I.css 12.71 kB,
+   assets/index-CD7LBgYE.js 224.68 kB}; built in 190ms
+  go build -o NUL ./cmd/redgres → success (no stdout)
+  git diff --name-only HEAD -- go.mod go.sum web/package.json web/package-lock.json
+   docs/PRD.md docs/COMPATIBILITY.md web/src/nav.ts → empty
+  git status --porcelain → owned source/docs only (dist not stageable)
+  Not run: go test -race ./..., gitleaks, govulncheck, CI, live PostgreSQL or
+   Redis or PgBouncer, browser viewports 360×800 / 768×1024 / 1280×800 /
+   1600×1000, 200% zoom, Playwright, frontend jobs on pinned Node 24.19.0
+Reviewer/date: implementer handoff; parent runs security/UI/verifier. Not merged
+ to master. Not pushed.
 ```

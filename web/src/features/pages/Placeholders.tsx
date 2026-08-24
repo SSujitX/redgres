@@ -1,5 +1,6 @@
 import { sectionTitle, type SectionId } from "../../nav";
 import AuditPage from "../audit/AuditPage";
+import OverviewPage from "../overview/OverviewPage";
 import DatabasesPage from "../postgres/DatabasesPage";
 
 type PageProps = {
@@ -9,27 +10,7 @@ type PageProps = {
 export function SectionPage({ section }: PageProps) {
   const title = sectionTitle(section);
   if (section === "overview") {
-    return (
-      <article>
-        <header className="page-header">
-          <h1>{title}</h1>
-          <p>Independent component status. Adapters are not connected in this release slice.</p>
-        </header>
-        <ul className="status-cards">
-          {["Redgres state", "PostgreSQL direct", "PgBouncer", "Redis"].map((name) => (
-            <li key={name} className="status-card">
-              <h2>{name}</h2>
-              <p className="not-connected">
-                <span className="warning-mark" aria-hidden="true">
-                  !
-                </span>
-                Not connected
-              </p>
-            </li>
-          ))}
-        </ul>
-      </article>
-    );
+    return <OverviewPage />;
   }
 
   if (section === "postgres") {

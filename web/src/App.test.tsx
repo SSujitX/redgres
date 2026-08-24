@@ -36,6 +36,43 @@ function isAuditUrl(url: string): boolean {
   return url === "/api/v1/audit" || url.startsWith("/api/v1/audit?");
 }
 
+function isStatusUrl(url: string): boolean {
+  return url === "/api/v1/status" || url.startsWith("/api/v1/status?");
+}
+
+function disconnectedStatus() {
+  return jsonResponse(200, {
+    components: [
+      { id: "redgres_state", state: "not_configured" },
+      { id: "postgres_direct", state: "not_configured" },
+      { id: "pgbouncer", state: "not_implemented" },
+      { id: "redis", state: "not_implemented" },
+      { id: "tool_links", state: "not_configured" },
+    ],
+    request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  });
+}
+
+function mixedStatus() {
+  return jsonResponse(200, {
+    components: [
+      { id: "redgres_state", state: "ok" },
+      { id: "postgres_direct", state: "unavailable", reason: "unreachable" },
+      { id: "pgbouncer", state: "not_implemented" },
+      { id: "redis", state: "not_implemented" },
+      { id: "tool_links", state: "not_configured" },
+    ],
+    request_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  });
+}
+
+function unknownApi(url: string) {
+  if (isStatusUrl(url)) {
+    return disconnectedStatus();
+  }
+  return jsonResponse(500, {});
+}
+
 function auditEvent(overrides: Record<string, unknown> = {}) {
   return {
     id: 1421,
@@ -70,7 +107,7 @@ describe("App session and login", () => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
@@ -78,6 +115,7 @@ describe("App session and login", () => {
     expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
     expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/healthz"))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isStatusUrl(String(call[0])))).toBe(true);
   });
 
   it("shows the shell when the session is valid", async () => {
@@ -85,7 +123,7 @@ describe("App session and login", () => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "a".repeat(64) });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
@@ -167,7 +205,7 @@ describe("App session and login", () => {
         expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("c".repeat(64));
         return jsonResponse(200, { ok: true });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "admin" }));
@@ -182,7 +220,7 @@ describe("App session and login", () => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "d".repeat(64) });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
@@ -196,7 +234,7 @@ describe("App session and login", () => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "f".repeat(64) });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -219,7 +257,7 @@ describe("App session and login", () => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "g".repeat(64) });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -236,7 +274,7 @@ describe("App session and login", () => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "h".repeat(64) });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     const search = await screen.findByRole("button", { name: "Search" });
@@ -298,7 +336,7 @@ describe("App session and login", () => {
           },
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -364,7 +402,7 @@ describe("App session and login", () => {
           database: { name: longName, owner: "owner_b", size: "2 MB" },
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -397,7 +435,7 @@ describe("App session and login", () => {
       if (isDetailsUrl(url, "project_a")) {
         return jsonResponse(200, { database: { name: "project_a", owner: "owner_a", size: "1 MB" } });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -425,7 +463,7 @@ describe("App session and login", () => {
       if (isDetailsUrl(url, "project_a")) {
         return jsonResponse(200, { database: { name: "project_a", owner: "owner_a", size: "1 MB" } });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -453,7 +491,7 @@ describe("App session and login", () => {
       if (isDetailsUrl(url, "project_a")) {
         return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -514,7 +552,7 @@ describe("App session and login", () => {
         const name = url.includes("project_b") ? "project_b" : "project_a";
         return jsonResponse(200, { database: { name, owner: name === "project_b" ? "owner_b" : "owner_a" } });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -540,7 +578,7 @@ describe("App session and login", () => {
       if (url.includes("/api/v1/postgres/databases")) {
         return jsonResponse(503, { error: { code: "dependency_unavailable", message: "PostgreSQL is unavailable" } });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -573,7 +611,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -621,7 +659,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -653,7 +691,7 @@ describe("App session and login", () => {
       if (isRowsUrl(url, "project_a", "public", "items")) {
         return jsonResponse(200, { columns: ["id"], rows: [], total: 0, offset: 0, limit: 50 });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -685,7 +723,7 @@ describe("App session and login", () => {
           error: { code: "dependency_unavailable", message: "PostgreSQL is unavailable" },
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -714,7 +752,7 @@ describe("App session and login", () => {
       if (isRowsUrl(url, "project_a", "public", "items")) {
         return jsonResponse(404, { error: { code: "not_found", message: "Not found" } });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -783,7 +821,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -849,7 +887,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -885,7 +923,7 @@ describe("App session and login", () => {
       if (isRowsUrl(url, "project_a", "public", "items")) {
         return jsonResponse(200, { columns: ["id"], rows: [{ id: 1 }], total: 1, offset: 0, limit: 50 });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -923,7 +961,7 @@ describe("App session and login", () => {
         }
         return jsonResponse(200, { columns: ["id"], rows: [{ id: 1 }], total: 1, offset: 0, limit: 50 });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -969,7 +1007,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -990,7 +1028,7 @@ describe("App session and login", () => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "e".repeat(64) });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1013,7 +1051,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1032,7 +1070,7 @@ describe("App session and login", () => {
       if (isAuditUrl(url)) {
         return jsonResponse(200, { events: [auditEvent()], has_more: false, limit: 50 });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1062,7 +1100,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1090,7 +1128,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1113,7 +1151,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1150,7 +1188,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1189,7 +1227,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1223,7 +1261,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1258,7 +1296,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1279,7 +1317,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1307,7 +1345,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1325,7 +1363,7 @@ describe("App session and login", () => {
       if (isAuditUrl(url)) {
         return jsonResponse(200, { events: [auditEvent()], has_more: false, limit: 50 });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1343,7 +1381,7 @@ describe("App session and login", () => {
       if (isAuditUrl(url)) {
         return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1373,7 +1411,7 @@ describe("App session and login", () => {
           error: { code: "validation_error", message: "Invalid cursor", fields: { cursor: "invalid" } },
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1396,7 +1434,7 @@ describe("App session and login", () => {
           error: { code: "dependency_unavailable", message: "Control-plane storage is unavailable" },
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1414,7 +1452,7 @@ describe("App session and login", () => {
       if (isAuditUrl(url)) {
         throw new TypeError("Failed to fetch");
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1432,7 +1470,7 @@ describe("App session and login", () => {
       if (isAuditUrl(url)) {
         return jsonResponse(200, { events: [], has_more: false, limit: 50 });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1466,7 +1504,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1498,7 +1536,7 @@ describe("App session and login", () => {
           limit: 50,
         });
       }
-      return jsonResponse(500, {});
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
@@ -1511,5 +1549,229 @@ describe("App session and login", () => {
     expect(page?.querySelector(".service-rail")).toBeNull();
     expect(page?.querySelector(".service-rail-postgres")).toBeNull();
     expect(page?.querySelector(".service-rail-redis")).toBeNull();
+  });
+
+  it("shows mixed Overview status without blanking Redis", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-a".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Redgres state" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    expect(screen.getByLabelText("PostgreSQL direct: Unavailable")).toBeInTheDocument();
+    expect(screen.getByLabelText("Redis: Not connected")).toBeInTheDocument();
+    expect(screen.getByText("Reachable")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.getAllByText("Not connected").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Redis" })).toBeInTheDocument();
+    expect(screen.queryByText("Adapters are not connected in this release slice.")).not.toBeInTheDocument();
+    expect(screen.getByText("Independent component status.")).toBeInTheDocument();
+  });
+
+  it("shows a session-expired Overview alert without status cards", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-b".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
+  });
+
+  it("shows a generic Overview alert when status fetch throws", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-c".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        throw new TypeError("Failed to fetch");
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Component status is unavailable. Try again.");
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Redis" })).not.toBeInTheDocument();
+  });
+
+  it("renders Redis as Unavailable when the status payload omits it", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-d".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "ok" },
+            { id: "pgbouncer", state: "not_implemented" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "cccccccccccccccccccccccccccccccc",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Redis: Unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Redis" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Redis: Reachable")).not.toBeInTheDocument();
+  });
+
+  it("shows Overview loading status then replaces it with cards", async () => {
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-e".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blocked.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return mixedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading component status.");
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+    release();
+    expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    expect(screen.queryByText("Loading component status.")).not.toBeInTheDocument();
+  });
+
+  it("refetches /api/v1/status with no query when Refresh is used", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-f".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    const statusCalls = fetch.mock.calls.map((call) => String(call[0])).filter((url) => isStatusUrl(url));
+    expect(statusCalls.length).toBeGreaterThanOrEqual(2);
+    expect(statusCalls.every((url) => url === "/api/v1/status")).toBe(true);
+  });
+
+  it("clears Overview cards on logout", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-g".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("PostgreSQL direct: Unavailable")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByLabelText("PostgreSQL direct: Unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+  });
+
+  it("treats an unknown Overview state as Unavailable", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-h".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "mystery" },
+            { id: "postgres_direct", state: "not_configured" },
+            { id: "pgbouncer", state: "not_implemented" },
+            { id: "redis", state: "not_implemented" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "dddddddddddddddddddddddddddddddd",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Redgres state: Unavailable")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Redgres state: Reachable")).not.toBeInTheDocument();
+  });
+
+  it("does not paint PostgreSQL unavailable with Redis identity red", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-i".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const card = await screen.findByLabelText("PostgreSQL direct: Unavailable");
+    expect(card).toHaveClass("status-card-postgres");
+    expect(card).not.toHaveClass("status-card-redis");
+    expect(card.querySelector(".service-rail-redis")).toBeNull();
+    expect(card.querySelector(".status-unavailable")).not.toBeNull();
+    expect(card.querySelector(".status-unavailable")).not.toHaveClass("status-card-redis");
+    const status = card.querySelector(".status-unavailable");
+    expect(status).not.toHaveClass("service-rail-redis");
+  });
+
+  it("shows an Overview alert without cards for a malformed status payload", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-j".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => {
+            throw new SyntaxError("Unexpected end of JSON input");
+          },
+        };
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Component status is unavailable. Try again.");
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
   });
 });

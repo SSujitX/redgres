@@ -75,6 +75,41 @@ Generic failure is `401` `unauthorized` with message `Invalid username or passwo
 
 `tool_links` stays empty until optional tool-link configuration exists.
 
+**GET `/api/v1/status`** requires a session cookie and the `platform.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
+
+The handler always returns `200` when it runs, even if every component is down. Partial failure is represented per component; it is not a `503`. `503` `dependency_unavailable` happens only when `requireSession` cannot read SQLite (the same control-plane storage failure as other authenticated routes). Missing session is `401` `unauthorized` with no `components` key. `POST`, `PUT`, `PATCH`, and `DELETE` are `405` `method_not_allowed`. The response is `Cache-Control: no-store`. There are no query parameters; the path is exactly `/api/v1/status`.
+
+Success `200`:
+
+```json
+{
+  "components": [
+    { "id": "redgres_state", "state": "ok" },
+    { "id": "postgres_direct", "state": "not_configured" },
+    { "id": "pgbouncer", "state": "not_implemented" },
+    { "id": "redis", "state": "not_implemented" },
+    { "id": "tool_links", "state": "not_configured" }
+  ],
+  "request_id": "<32 lowercase hex>"
+}
+```
+
+`components` is always an array of length 5 in this fixed order, never `null`. `state` is one of `ok`, `unavailable`, `not_configured`, `not_implemented`. `reason` is omitted except when `state` is `unavailable`, in which case it is always `"unreachable"`. The payload never includes host, port, DSN, password, token, SQL, driver text, `err.Error()`, version, uptime, or URLs.
+
+Independent checks, sequential, each with a 2s timeout:
+
+| `id` | Probe |
+|---|---|
+| `redgres_state` | SQLite `PingContext`. `ok` or `unavailable` + `unreachable`. |
+| `postgres_direct` | Absent adapter → `not_configured`. Else `Inventory.Ping`: `ErrNotConfigured` → `not_configured`; success → `ok`; any other error → `unavailable` + `unreachable`. Ping uses `pgxpool.Ping` on the admin pool. List/details are not used as health. |
+| `pgbouncer` | Always `not_implemented` in this slice. |
+| `redis` | Always `not_implemented` in this slice. |
+| `tool_links` | Always `not_configured` in this slice. |
+
+This GET is not a mutation and does not write an audit event.
+
+**GET `/api/v1/healthz`** is unchanged: unauthenticated liveness that pings the state DB only. Success `200` is `{"status":"ok","request_id":"…"}` with `Cache-Control: no-store`. It has no `components` array, does not require a session, and does not ping PostgreSQL, Redis, or PgBouncer.
+
 **GET `/api/v1/audit`** requires a session cookie and the `audit.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
 
 Success `200`:

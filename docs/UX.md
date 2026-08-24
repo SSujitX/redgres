@@ -38,10 +38,9 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 
 ## Overview
 
-- Independent status cards for Redgres state, PostgreSQL direct, PgBouncer, Redis, tunnel/tool links, and backups.
-- Recent security-relevant audit events.
-- Quick actions for PostgreSQL database and Redis ACL user creation.
-- Degraded components remain actionable; one failure does not blank the whole dashboard.
+- Live independent status cards for Redgres state, PostgreSQL direct, PgBouncer, Redis, and tool links, loaded from authenticated `GET /api/v1/status` on mount and Refresh (no polling). One component failure does not blank the page; envelope failures (session expired, network, malformed payload) show an alert and no cards.
+- PgBouncer, Redis, and tool links stay honest `not_implemented` / `not_configured` in this slice.
+- Backups card, recent audit events, and quick actions for PostgreSQL database / Redis ACL user creation remain not this slice.
 
 ## PostgreSQL workflow
 

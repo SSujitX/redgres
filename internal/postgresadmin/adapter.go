@@ -168,6 +168,16 @@ func checkServerMajor(ctx context.Context, pool *pgxpool.Pool, expected int) err
 	return nil
 }
 
+func (c PoolCatalog) Ping(ctx context.Context) error {
+	if c.pool == nil {
+		return ErrUnavailable
+	}
+	if err := c.pool.Ping(ctx); err != nil {
+		return ErrUnavailable
+	}
+	return nil
+}
+
 func (c PoolCatalog) List(ctx context.Context) ([]CatalogRow, error) {
 	rows, err := c.pool.Query(ctx, catalogSQL+" ORDER BY d.datname")
 	if err != nil {

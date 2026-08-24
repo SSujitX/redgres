@@ -14,6 +14,16 @@ func NewService(catalog Catalog, policy Policy) *Service {
 	return &Service{catalog: catalog, policy: policy}
 }
 
+func (s *Service) Ping(ctx context.Context) error {
+	if s == nil || s.catalog == nil {
+		return ErrNotConfigured
+	}
+	if err := s.catalog.Ping(ctx); err != nil {
+		return mapCatalogError(err)
+	}
+	return nil
+}
+
 func (s *Service) List(ctx context.Context) (ListResult, error) {
 	if s == nil || s.catalog == nil {
 		return ListResult{}, ErrUnavailable
@@ -164,7 +174,7 @@ func catalogSchemaDenied(schema string) bool {
 }
 
 func mapCatalogError(err error) error {
-	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidIdentifier) || errors.Is(err, ErrUnavailable) {
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidIdentifier) || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrNotConfigured) {
 		return err
 	}
 	return ErrUnavailable
