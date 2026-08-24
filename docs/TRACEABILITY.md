@@ -255,6 +255,162 @@ Reviewer/date: Verifier approved (2026-08-23) row-browse API only (not full PG-0
  COMPATIBILITY.md §6 evidence.
 ```
 
+## Local single-port development runtime (2026-08-25)
+
+```text
+Requirement: No functional PRD ID; developer tooling + one configuration key
+ (NFR-007/NFR-009 partial). Claims no PG-*/AUTH-*/PLAT-*/REDIS-*/OPS-* progress
+ and no COMPATIBILITY.md §6 evidence.
+Decision/ADR: ADR-001 (module boundary is why internal/web reads no environment);
+ ADR-003 exact-origin preserved (dev script sets ADDRESS and BASE_URL to the same
+ http://127.0.0.1:8989, so no proxy and no Origin rewrite). No new/superseded ADR:
+ the filesystem asset source is development-only, production-rejected, adds no
+ dependency and no network surface, and does not change the transport allow-list.
+Source characterization: none. No source-system behavior ported.
+Implementation files: internal/config/config.go (DevAssetDir field +
+ loadDevAssetDir fail-closed validation); internal/web/assets.go
+ (Open(devAssetDir string) (fs.FS, func(), error) using os.OpenRoot + Root.FS();
+ no os.Getenv, no environment concept); cmd/redgres/main.go
+ (web.Open(cfg.DevAssetDir) + defer closeAssets()); web/scripts/dev-full.mjs;
+ web/package.json (dev:full); web/vite.config.ts (dev host 127.0.0.1 + strictPort
+ for the two-port workflow only); .gitignore (*.db-*); .env.example; README.md
+ (dev workflows, rebuild window, orphaned-process cleanup)
+Unit tests: internal/config/config_test.go — DevAssetDir default empty,
+ development absolute-path resolution, production rejection naming the variable
+ without echoing the path, missing directory, regular file, URI-reserved
+ characters, and production-unset stays empty.
+ internal/web/assets_test.go — Open("") delegates to the embedded assets (asserted
+ by agreeing with Assets() on index.html readability, so it holds on a clean
+ checkout), Open(dir) reads the directory, Open("") still uses the embed while
+ REDGRES_DEV_ASSET_DIR is set (with a positive control proving the marker is
+ reachable via the argument, so the negative cannot pass vacuously), Open rejects a
+ missing directory, and link escape is contained: a junction out of the root is
+ blocked (runs and passes on Windows) and a symlink out of the root is blocked
+ (skips on this host for lack of the Windows symlink privilege; runs on Linux CI).
+Integration tests: none
+Security tests: internal/httpapi/server_test.go
+ TestStaticFromDirectoryKeepsAllowList proves the index.html + assets/* allow-list
+ bounds a real os.DirFS (different traversal/separator behavior than fstest.MapFS):
+ index no-store, hashed asset immutable, non-allow-listed secret.env falls back to
+ index without leaking its canary, missing asset 404, and nine traversal forms
+ never return the outside-the-root canary or non-index content: ../.., %2e%2e,
+ ..%2f, backslash, %5c, an NTFS alternate-data-stream colon, %00, and the reserved
+ device names NUL.js and CON. /assets/ returns the SPA index fallback and never a
+ directory listing.
+ Note: fs.ValidPath in allowedStaticName is the only path guard in Redgres code
+ for static requests. chi middleware.CleanPath writes only rctx.RoutePath and does
+ not rewrite r.URL.Path, which serveStatic reads, so CleanPath must not be counted
+ as a static-path bound. fs.ValidPath is strictly stronger here than path.Clean
+ would be, because it rejects traversal outright instead of normalizing it.
+ TestStaticFromEmptyDirectoryIsUnavailable keeps 503 dependency_unavailable +
+ no-store for a directory without index.html (no fallback added).
+ Existing server_test.go and internal/web/embed_test.go cases were not modified,
+ relaxed, or deleted; internal/httpapi/server.go was not touched.
+Deployment/migration impact: none deployed. 001_initial.sql, go.mod, go.sum, and
+ web/package-lock.json unchanged (zero new Go modules and zero new npm packages).
+ REDGRES_ADDRESS default remains 127.0.0.1:8790; port 8989 is set only by the dev
+ script. No CLI flag was added for REDGRES_DEV_ASSET_DIR.
+Known limitations: the httpapi allow-list bounds served names, not link targets;
+ target containment comes from os.Root, and production rejection remains the
+ outer control. os.Root holds an open directory handle, so Open returns a release
+ function that cmd/redgres defers. A TOCTOU window remains between config
+ validation and use; the Stat is a startup usability check producing a named error
+ instead of a later 503, not a security boundary. config.Load now performs one Stat
+ (Load already read .env from disk); vite build --watch sets emptyOutDir, so a
+ refresh mid-rebuild returns 503 (documented in README, deliberately no retry or
+ fallback); the NUL-byte guard is not reachable from the t.Setenv seam on Windows;
+ no CI job exercises dev:full, so this workflow is only ever locally proven;
+ graceful Ctrl+C shutdown could not be exercised from the agent harness (no
+ console signal delivery) — only the force-kill path was observed, which orphans
+ the Go and Vite children and keeps port 8989 bound (documented in README).
+ Config.DevAssetDir is an exported field, so code building a config.Config literal
+ outside Load bypasses loadDevAssetDir; internal/httpapi/server_test.go does this
+ deliberately, and no production path constructs a Config outside Load.
+ Development mode still permits a non-loopback REDGRES_ADDRESS (validateAddress
+ enforces loopback only in production), so a manually widened bind plus a dev asset
+ dir would expose the asset server on the LAN. Pre-existing; dev:full itself always
+ pins 127.0.0.1 and its explicit keys override any inherited environment.
+ .gitignore *.db-* does not match SQLite etilqs_* temporaries or sidecars of a
+ -sqlite-path without a .db extension (both pre-existing gaps), and it would
+ silently ignore a future tracked fixture such as testdata/legacy.db-wal.
+ web/scripts/dev-full.mjs passes only static literal args with shell:true on
+ Windows (required since Node refuses to spawn npm.cmd without it); the repository
+ path reaches children through the cwd option, not string concatenation, so it is
+ not an injection sink today but would become one if a path were interpolated.
+ Node prints DEP0190 on every dev:full start for that shell:true call.
+ dev:full type-checks only in the initial npm run build; the vite build --watch
+ rebuilds skip tsc, so type errors introduced after startup do not surface until
+ the next full build.
+ emptyOutDir is set in web/vite.config.ts, not by the --watch flag.
+Assumptions recorded: 8989 chosen for the unified dev workflow to avoid colliding
+ with 8790 (serve) and 5173 (Vite); dev:full always runs a full npm run build
+ before starting Go because the new validation requires the directory to exist.
+Commands executed locally (2026-08-25):
+  go test -count=1 ./... → ok (cmd/redgres, audit, auth, config, database, httpapi,
+   postgresadmin, web)
+  go vet ./... → no findings
+  gofmt -l cmd internal migrations → empty
+  go build -o NUL ./cmd/redgres → success
+  go test -race -count=1 ./internal/config/ ./internal/web/ ./internal/httpapi/ → ok
+  web: npm run test:run → 32 passed; npm run build → TypeScript 7.0.2 + Vite 8.2.2
+   (Node v25.3.0 locally; web/.nvmrc pins 24.19.0, so pinned-runtime frontend
+   evidence remains CI-only)
+  clean-checkout run (git archive HEAD + this slice's files, no frontend build):
+   go test -count=1 ./... → every package ok except the pre-existing
+   internal/web TestAssetsAvailableWithoutFrontendBuild failure recorded below;
+   go test -run TestOpen ./internal/web/ → 5 pass, 1 skip (Windows symlink
+   privilege), including the junction containment test
+  production fail-closed: REDGRES_ENVIRONMENT=production with REDGRES_DEV_ASSET_DIR
+   set → exit 1, stderr "REDGRES_DEV_ASSET_DIR: not allowed in production"
+   (variable named, path not echoed)
+  npm --prefix web run dev:full → "listening" at 127.0.0.1:8989;
+   GET /api/v1/healthz → 200; GET / → 200
+  live-reload proof: overwrote internal/web/dist/app/index.html while the server ran
+   → GET / returned the new bytes with no Go restart; real build restored afterwards
+  os.Root vs emptyOutDir: edited and reverted web/src/App.tsx while dev:full ran →
+   two "build started ... built in 93ms/91ms" cycles succeeded and GET / stayed 200,
+   so the open os.Root handle does not block Vite rebuilds on Windows (emptyOutDir
+   removes files inside the directory, not the directory itself)
+  go test -race -count=1 ./internal/config/ ./internal/web/ ./internal/httpapi/ → ok
+   (re-run after the os.Root change)
+  git check-ignore -v redgres.db-x-owners-1-password_hash.bin →
+   ".gitignore:15:*.db-*  redgres.db-x-owners-1-password_hash.bin"
+  Not run: go test -race ./... in full, CI, gitleaks, govulncheck, live PostgreSQL
+Secret hygiene: untracked redgres.db-x-owners-1-password_hash.bin is a BLOB export
+ of owners.password_hash (Argon2id). Prior .gitignore patterns (*.db, *.db-shm,
+ *.db-wal) did not match it; *.db-* now does. It was never staged or committed and
+ never left the machine. Its producing tool is unverified — most likely a local
+ SQLite GUI/editor BLOB export, not modernc.org/sqlite. Deletion is a user action.
+Pre-existing defect discovered by review, NOT fixed in this slice: on a clean
+ checkout `go test ./...` fails because web.Assets() is fs.Sub(dist, "dist/app")
+ and only dist/.gitkeep is tracked, so fs.Stat(assets, ".") returns ErrNotExist.
+ Reproduced by the parent at HEAD with no slice files applied:
+   git archive -o head.zip HEAD; Expand-Archive; go test -count=1 -v
+    -run TestAssetsAvailableWithoutFrontendBuild ./internal/web/
+   → FAIL internal/web/embed_test.go:14 "embed root: open .: file does not exist"
+ The .github/workflows/ci.yml backend job runs go test ./... with no frontend
+ build, so that job is red on master today and was before this slice. This slice
+ does not fix it (internal/web/embed.go is out of scope) and no longer duplicates
+ it: the slice's own clean-tree run shows every package ok except that one
+ pre-existing failure. Fixing Assets() clean-tree behavior is the next slice.
+ Correction: an earlier draft of this entry claimed the new tests "pass with only
+ the dist/.gitkeep placeholder" while relying on a locally built dist/app. That
+ claim was false and has been replaced by the delegation assertion above.
+Reviewer/date: Security review (2026-08-25) approve-with-fixes: no Critical/High.
+ Mediums corrected in this change — (a) Windows backslash/%5c/ADS-colon/%00 and
+ reserved-device traversal forms were untested and are now asserted; (b) the
+ symlink-containment overclaim in docs/ARCHITECTURE.md and this entry was fixed by
+ switching internal/web/assets.go from os.DirFS to os.OpenRoot + Root.FS(), making
+ target containment real rather than reworded, with a Windows junction test that
+ passes locally; (c) the CleanPath misconception is recorded above. The reviewer
+ could not execute commands in its session and read the tree statically; every
+ command in this entry was executed in the parent session. Accepted Lows: exported
+ DevAssetDir field, .gitignore breadth, shell:true forward-looking risk, TOCTOU.
+ Outstanding user action: delete redgres.db-x-owners-1-password_hash.bin —
+ .gitignore prevents accidental commit but not `git add -f`, and the file remains
+ offline-crackable Argon2id material on disk.
+```
+
 ## PostgreSQL row browse UI (2026-08-23)
 
 ```text

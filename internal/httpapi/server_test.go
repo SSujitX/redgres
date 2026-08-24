@@ -3,8 +3,10 @@ package httpapi
 import (
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,6 +25,14 @@ const (
 
 func testServer(t *testing.T, assets fstest.MapFS) (*Server, string) {
 	t.Helper()
+	if assets == nil {
+		assets = fstest.MapFS{}
+	}
+	return testServerFS(t, assets)
+}
+
+func testServerFS(t *testing.T, assets fs.FS) (*Server, string) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "redgres.db")
 	db, err := database.Open(path)
 	if err != nil {
@@ -31,9 +41,6 @@ func testServer(t *testing.T, assets fstest.MapFS) (*Server, string) {
 	t.Cleanup(func() { _ = db.Close() })
 	if err := database.Migrate(db, migrations.FS); err != nil {
 		t.Fatal(err)
-	}
-	if assets == nil {
-		assets = fstest.MapFS{}
 	}
 	return New(config.Config{
 		Address:            "127.0.0.1:8790",
@@ -251,6 +258,121 @@ func TestStaticAllowsOnlyIndexAndAssets(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "//api/v1/healthz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("cleaned healthz = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestStaticFromDirectoryKeepsAllowList proves the development filesystem asset
+// source is bounded by the same allow-list as the embedded source. os.DirFS has
+// different traversal and separator behavior than fstest.MapFS.
+func TestStaticFromDirectoryKeepsAllowList(t *testing.T) {
+	parent := t.TempDir()
+	if err := os.WriteFile(filepath.Join(parent, "outside.txt"), []byte("outside-canary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "app")
+	if err := os.MkdirAll(filepath.Join(root, "assets"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<html>boot</html>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "assets", "app-hash.js"), []byte("console.log(1)"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "secret.env"), []byte("REDGRES_SESSION=inside-canary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, _ := testServerFS(t, os.DirFS(root))
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "boot") {
+		t.Fatalf("GET / = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("index cache = %q", rec.Header().Get("Cache-Control"))
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app-hash.js", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "console.log(1)" {
+		t.Fatalf("asset = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Fatalf("asset cache = %q", rec.Header().Get("Cache-Control"))
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/secret.env", nil))
+	if strings.Contains(rec.Body.String(), "inside-canary") {
+		t.Fatalf("non-allow-listed directory file was served: %s", rec.Body.String())
+	}
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "boot") {
+		t.Fatalf("secret.env should fall back to index: %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing asset = %d", rec.Code)
+	}
+
+	// Backslash, colon, and NUL are legal inside a single fs path element, so
+	// these pass allowedStaticName and reach the filesystem layer. They must
+	// still never resolve outside the asset root or open a device.
+	for _, target := range []string{
+		"/assets/../../outside.txt",
+		"/assets/%2e%2e/%2e%2e/outside.txt",
+		"/assets/..%2f..%2foutside.txt",
+		`/assets/..\..\outside.txt`,
+		"/assets/%5c..%5c..%5coutside.txt",
+		"/assets/app-hash.js:secret",
+		"/assets/x%00.js",
+		"/assets/NUL.js",
+		"/assets/CON",
+	} {
+		rec = httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if strings.Contains(rec.Body.String(), "outside-canary") {
+			t.Fatalf("%s escaped the asset directory: %s", target, rec.Body.String())
+		}
+		if rec.Code != http.StatusOK && rec.Code != http.StatusNotFound {
+			t.Fatalf("%s = %d %s", target, rec.Code, rec.Body.String())
+		}
+		if rec.Code == http.StatusOK && !strings.Contains(rec.Body.String(), "boot") {
+			t.Fatalf("%s served non-index content: %s", target, rec.Body.String())
+		}
+	}
+
+	// A trailing slash is not an allow-listed asset name, so it falls back to
+	// index.html like any unknown route. It must never list the directory.
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/", nil))
+	if strings.Contains(rec.Body.String(), "app-hash.js") {
+		t.Fatalf("directory listing was served: %s", rec.Body.String())
+	}
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "boot") {
+		t.Fatalf("directory request = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestStaticFromEmptyDirectoryIsUnavailable(t *testing.T) {
+	srv, _ := testServerFS(t, os.DirFS(t.TempDir()))
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeDependencyUnavailable {
+		t.Fatalf("code = %q", body.Error.Code)
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("503 cache = %q", rec.Header().Get("Cache-Control"))
 	}
 }
 

@@ -79,6 +79,7 @@ PostgreSQL server adoption/install, extension host packages, per-database extens
 - Shared application shell and semantic tokens follow [UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md); feature folders do not define independent navigation, palettes, or breakpoints.
 - Small local state only; no credential in global stores, URL, localStorage, sessionStorage, IndexedDB, analytics, or error reporting.
 - Production build embedded through Go `embed`; Node.js is build-time only.
+- The asset source is selected by `internal/config` (`REDGRES_DEV_ASSET_DIR`) and passed to `internal/web`, which reads no environment. The development filesystem source is rejected in production. Two independent bounds apply to it: the `httpapi` allow-list restricts served *names* to `index.html` and `assets/*` through `fs.ValidPath`, and `os.Root` restricts resolved *targets* to the directory so a symlink or junction inside it cannot escape.
 
 Feature folders mirror API domains: `overview`, `postgres`, `redis-users`, `audit`, `system`, `auth`, and `docs`.
 

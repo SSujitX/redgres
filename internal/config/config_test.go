@@ -248,6 +248,97 @@ func TestLoadProductionFailClosed(t *testing.T) {
 	}
 }
 
+func TestLoadDevAssetDirDefaultsToEmbeddedAssets(t *testing.T) {
+	isolateConfig(t)
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DevAssetDir != "" {
+		t.Fatalf("DevAssetDir = %q", cfg.DevAssetDir)
+	}
+}
+
+func TestLoadDevAssetDirResolvesDevelopmentDirectory(t *testing.T) {
+	isolateConfig(t)
+	dir := t.TempDir()
+	t.Setenv("REDGRES_DEV_ASSET_DIR", dir)
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("Abs: %v", err)
+	}
+	if cfg.DevAssetDir != want {
+		t.Fatalf("DevAssetDir = %q, want %q", cfg.DevAssetDir, want)
+	}
+}
+
+func TestLoadRejectsDevAssetDirInProduction(t *testing.T) {
+	isolateConfig(t)
+	dir := t.TempDir()
+	t.Setenv("REDGRES_ENVIRONMENT", "production")
+	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
+	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
+	t.Setenv("REDGRES_SQLITE_PATH", filepath.Join(t.TempDir(), "redgres.db"))
+	t.Setenv("REDGRES_COOKIE_SECURE", "true")
+	t.Setenv("REDGRES_SESSION_TTL", "12h")
+	t.Setenv("REDGRES_ABSOLUTE_SESSION_TTL", "24h")
+	t.Setenv("REDGRES_DEV_ASSET_DIR", dir)
+
+	_, err := Load(nil)
+	if err == nil {
+		t.Fatal("expected production to reject REDGRES_DEV_ASSET_DIR")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "REDGRES_DEV_ASSET_DIR") {
+		t.Fatalf("error %q does not name REDGRES_DEV_ASSET_DIR", msg)
+	}
+	if strings.Contains(msg, dir) {
+		t.Fatalf("error %q echoed the path", msg)
+	}
+}
+
+func TestLoadRejectsUnusableDevAssetDir(t *testing.T) {
+	cases := map[string]func(t *testing.T) string{
+		"missing directory": func(t *testing.T) string {
+			return filepath.Join(t.TempDir(), "absent")
+		},
+		"regular file": func(t *testing.T) string {
+			path := filepath.Join(t.TempDir(), "index.html")
+			if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+				t.Fatalf("write file: %v", err)
+			}
+			return path
+		},
+		// A NUL byte is also rejected by loadDevAssetDir, but t.Setenv cannot
+		// carry one, so that guard is not reachable from this seam.
+		"uri reserved characters": func(t *testing.T) string {
+			return filepath.Join(t.TempDir(), "app?v=1")
+		},
+	}
+
+	for name, build := range cases {
+		t.Run(name, func(t *testing.T) {
+			isolateConfig(t)
+			value := build(t)
+			t.Setenv("REDGRES_DEV_ASSET_DIR", value)
+
+			_, err := Load(nil)
+			if err == nil {
+				t.Fatal("expected REDGRES_DEV_ASSET_DIR validation error")
+			}
+			if !strings.Contains(err.Error(), "REDGRES_DEV_ASSET_DIR") {
+				t.Fatalf("error %q does not name REDGRES_DEV_ASSET_DIR", err)
+			}
+		})
+	}
+}
+
 func TestLoadAcceptsProductionLoopback(t *testing.T) {
 	isolateConfig(t)
 	abs := filepath.Join(t.TempDir(), "redgres.db")
@@ -268,6 +359,9 @@ func TestLoadAcceptsProductionLoopback(t *testing.T) {
 	}
 	if cfg.SessionTTL != 12*time.Hour || cfg.AbsoluteSessionTTL != 24*time.Hour {
 		t.Fatalf("ttls = %s / %s", cfg.SessionTTL, cfg.AbsoluteSessionTTL)
+	}
+	if cfg.DevAssetDir != "" {
+		t.Fatalf("production DevAssetDir = %q", cfg.DevAssetDir)
 	}
 }
 

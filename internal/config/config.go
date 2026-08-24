@@ -38,6 +38,7 @@ type Config struct {
 	AbsoluteSessionTTL time.Duration
 	CookieSecure       bool
 	LogLevel           string
+	DevAssetDir        string
 
 	PostgresHost               string
 	PostgresPort               string
@@ -104,6 +105,9 @@ func Load(args []string) (Config, error) {
 	if cfg.Environment == EnvironmentProduction && dotenvApplied {
 		return Config{}, errors.New("REDGRES_ENVIRONMENT: production cannot be selected from a dotenv file")
 	}
+	if err := cfg.loadDevAssetDir(); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.loadPostgres(); err != nil {
 		return Config{}, err
 	}
@@ -111,6 +115,36 @@ func Load(args []string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// loadDevAssetDir resolves the optional development frontend asset directory.
+// An empty value selects the embedded assets. Production rejects any value so a
+// running deployment can never serve frontend files from an unmanaged path.
+func (c *Config) loadDevAssetDir() error {
+	raw := strings.TrimSpace(os.Getenv("REDGRES_DEV_ASSET_DIR"))
+	if raw == "" {
+		c.DevAssetDir = ""
+		return nil
+	}
+	if c.Production() {
+		return errors.New("REDGRES_DEV_ASSET_DIR: not allowed in production")
+	}
+	if strings.ContainsAny(raw, "?#") || strings.ContainsRune(raw, 0) {
+		return errors.New("REDGRES_DEV_ASSET_DIR: must not contain URI reserved characters")
+	}
+	abs, err := filepath.Abs(raw)
+	if err != nil {
+		return errors.New("REDGRES_DEV_ASSET_DIR: invalid path")
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return errors.New("REDGRES_DEV_ASSET_DIR: path is unavailable")
+	}
+	if !info.IsDir() {
+		return errors.New("REDGRES_DEV_ASSET_DIR: must be a directory")
+	}
+	c.DevAssetDir = abs
+	return nil
 }
 
 func LoadDevelopmentDotEnv(args []string) error {

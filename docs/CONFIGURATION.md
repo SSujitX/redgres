@@ -16,6 +16,7 @@ Status: implemented in `internal/config`.
 | `REDGRES_ABSOLUTE_SESSION_TTL` | No | `24h` | Must be >= idle expiry and at most 168h |
 | `REDGRES_COOKIE_SECURE` | Yes | `true` | Must be true in production |
 | `REDGRES_LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, or `error`. Never enables secret/body logging |
+| `REDGRES_DEV_ASSET_DIR` | No (rejected) | `./internal/web/dist/app` | Development only; must be an existing directory; rejected in production; must not contain `?`, `#`, or NUL. Empty selects the embedded assets |
 
 ## PostgreSQL
 
@@ -80,8 +81,11 @@ Enabling a flag makes the server-side workflow reachable; it never bypasses capa
 
 | Workflow | `REDGRES_ADDRESS` | `REDGRES_BASE_URL` | Open in browser |
 |---|---|---|---|
+| Unified dev (`npm --prefix web run dev:full`) | `127.0.0.1:8989` | `http://127.0.0.1:8989` | `http://127.0.0.1:8989` |
 | Vite HMR (`npm run dev` in `web/`) | `127.0.0.1:8790` | `http://127.0.0.1:5173` | `http://127.0.0.1:5173` |
 | Embedded UI (`npm run build` + `redgres serve`) | `127.0.0.1:8790` | `http://127.0.0.1:8790` | `http://127.0.0.1:8790` |
+
+`dev:full` sets `REDGRES_DEV_ASSET_DIR` itself so rebuilt UI assets are served without restarting the Go process. `internal/config` resolves and validates the value; `internal/web` reads no environment and opens the directory as an `os.Root` so links inside it cannot resolve outside it. There is no CLI flag for it.
 
 Recommended precedence: explicit flags (non-secret) > process environment > optional development `.env` > defaults. Production does not read repository `.env` files, including when selected with `-environment production`. A `.env` that sets `REDGRES_ENVIRONMENT=production` is rejected. Dotenv applies only `REDGRES_*` keys and never overwrites an already-set process variable. `REDGRES_BASE_URL` must be an origin (`scheme://host[:port]`) with no userinfo, path, query, or fragment. `REDGRES_SQLITE_PATH` must not contain `?`, `#`, or NUL. Secret-file/systemd-credential values take precedence over secret environment variables; conflicting definitions fail closed.
 

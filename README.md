@@ -21,6 +21,91 @@ For start, resume, status, and bug-fix copy/paste commands, use [CURSOR_CODING.m
 
 Do not paste all documentation into chat. Agents receive the durable project context through the always-applied rule, `AGENTS.md`, routed docs, committed code, and explicit subagent context packets. See [docs/CURSOR_WORKFLOW.md](docs/CURSOR_WORKFLOW.md) for limits and recovery behavior.
 
+## Build and run the web UI locally
+
+Prerequisites are Go `1.27.0` (from `go.mod`) and Node.js `24.19.0` (from `web/.nvmrc`). The commands below are for PowerShell from the repository root.
+
+Install the locked frontend dependencies and create the embedded asset directory once:
+
+```powershell
+Set-Location web
+npm ci
+npm run build
+Set-Location ..
+```
+
+Create the local owner once. The command prompts for the password twice and stores only its Argon2id hash in the ignored development SQLite file:
+
+```powershell
+go run ./cmd/redgres create-owner --username admin
+```
+
+If the owner already exists, skip that command. Do not use `--replace` unless you intentionally want to replace the development owner.
+
+### Local development (one command, one port)
+
+From the repository root, one command installs dependencies when needed, builds the frontend, starts the Go API, and watches UI files for rebuilds:
+
+```powershell
+npm --prefix web run dev:full
+```
+
+Open **http://127.0.0.1:8989** and press `Ctrl+C` to stop. API and UI share that origin, so login and CSRF checks work without a Vite proxy. After you edit React/TypeScript files, wait for the Vite rebuild log line, then refresh the browser.
+
+Each rebuild empties the asset directory, so a refresh that lands mid-rebuild briefly returns the frontend-unavailable error. Refresh again once the rebuild line appears. The Go process keeps running; only the assets are replaced.
+
+Stop the stack with `Ctrl+C` so the launcher can terminate both children. If the terminal is closed or the launcher is killed instead, the Go and Vite processes survive and keep holding port 8989, which makes the next run fail to bind:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='go.exe' OR Name='redgres.exe'" |
+  Select-Object ProcessId, CommandLine
+```
+
+Stop the ones whose command line references this repository.
+
+### Optional Vite hot-reload (two ports)
+
+For instant HMR while debugging the frontend only, run the API and Vite dev server separately:
+
+```powershell
+$env:REDGRES_BASE_URL = "http://127.0.0.1:5173"
+go run ./cmd/redgres serve
+```
+
+```powershell
+Set-Location web
+npm run dev
+```
+
+Open <http://127.0.0.1:5173>. Vite proxies `/api` to `http://127.0.0.1:8790`.
+
+### Embedded production-style development run
+
+Build the frontend and serve it from the Go process:
+
+```powershell
+Set-Location web
+npm ci
+npm run build
+Set-Location ..
+Remove-Item Env:REDGRES_BASE_URL -ErrorAction SilentlyContinue
+go run ./cmd/redgres serve
+```
+
+Open <http://127.0.0.1:8790>. This remains a development run; production requires the deployment configuration, HTTPS origin, secure cookie, protected credential files, and loopback service setup documented under `docs/`.
+
+Running without any `REDGRES_POSTGRES_*` settings is supported in development for shell/UI work; PostgreSQL pages report the dependency as unavailable. To exercise PostgreSQL features, configure the complete administrative connection using a password file as shown in `.env.example`. Never put the password itself in `.env` or a command line.
+
+Useful verification commands:
+
+```powershell
+go test ./...
+go vet ./...
+Set-Location web
+npm run test:run
+npm run build
+```
+
 ## Product boundary
 
 Redgres will provide one authenticated browser console for:
@@ -101,6 +186,6 @@ The name had no obvious exact software-project collision in a quick web search, 
 
 ## Current status
 
-Status: **Wave 0 foundation, owner auth, login/shell, PostgreSQL inventory, table-list API/UI, and row-browse API**. Redis, vault decrypt, mutations, row UI, and installer behavior are not implemented. The unauthenticated login route does not call `/api/v1/healthz`.
+Status: **Wave 0 foundation, owner auth, login/shell, PostgreSQL inventory, table-list API/UI, row-browse API, and inspector row paging/search**. Redis, vault decrypt, mutations, and installer behavior are not implemented. The unauthenticated login route does not call `/api/v1/healthz`.
 
 No source code from either existing application has been copied into this repository. Do not decommission either application based only on these documents.

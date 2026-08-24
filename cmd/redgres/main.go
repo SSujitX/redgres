@@ -55,10 +55,11 @@ func run(args []string) error {
 	if err := database.Migrate(db, migrations.FS); err != nil {
 		return err
 	}
-	assets, err := web.Assets()
+	assets, closeAssets, err := web.Open(cfg.DevAssetDir)
 	if err != nil {
 		return err
 	}
+	defer closeAssets()
 
 	pg, closePG, err := postgresadmin.Open(context.Background(), cfg)
 	if err != nil {
