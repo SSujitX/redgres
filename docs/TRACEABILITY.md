@@ -5,9 +5,9 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
-| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping live, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL hits unimplemented) | Partial |
+| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL hits unimplemented) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
-| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping-only connectivity on GET `/api/v1/status` + Overview; REDIS-002–008 not started | Partial |
+| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002–008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
@@ -1240,5 +1240,72 @@ Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
  Partial.
  Fast-forwarded `master` to `08529f4` (not pushed).
  Local commits: `08529f4` (feature).
+```
+
+## REDIS-001 metrics on GET /redis/status + Overview (2026-08-25)
+
+```text
+Requirement: REDIS-001 (Partial: Ping on GET /api/v1/status unchanged;
+ metrics + distinct auth/permission/connectivity failures on GET
+ /api/v1/redis/status + Overview). PLAT-001 stays Partial (PgBouncer
+ not_implemented, tool_links not_configured). Do not mark Complete.
+ Do not claim COMPATIBILITY.md §6.
+Decision/ADR: ADR-001; platform.Collect and GET /status JSON unchanged.
+ ADR-006: only Ping, INFO sections server/clients/memory/stats, DBSIZE.
+ No ACL, no LATENCY command.
+Source: redis-ui Adapter.Status Ping RTT + Info + DBSize; PublicRedisError
+ not copied. go-redis v9.22.0 ParseURL skip_verify (options.go). Official
+ INFO field names + DBSIZE of the selected DB.
+Implementation files: internal/redisadmin/{errors,service,memory,adapter,
+ service_test}.go; internal/config/{redis.go,redis_test.go};
+ internal/httpapi/{server.go,redis_status_routes.go,redis_status_routes_test.go};
+ web/src/api/redis.ts; web/src/features/overview/OverviewPage.tsx;
+ web/src/App.test.tsx; web/src/styles/shell.css; docs/{API,ARCHITECTURE,
+ CONFIGURATION,SECURITY,UX,UI_DESIGN_SYSTEM,TRACEABILITY}.md; AGENTS.md
+Unit/HTTP tests: redisadmin Status all-or-nothing INFO/DBSIZE; classify
+ NOAUTH/WRONGPASS → ErrAuthFailed, NOPERM → ErrPermissionDenied; skip_verify
+ Open/Load reject; HTTP 401 no state/metrics/reason; 200 not_configured;
+ 200 ok eight metric keys including max_memory_bytes=0; three reasons;
+ canary absent; no-store; 405; existing /status and healthz unchanged
+Frontend App.test.tsx: both-ok metrics; three reasons; Reachable + Metrics
+ unavailable without fake zeros; not_configured omits rows; Refresh hits
+ both URLs with no query; isStatusUrl does not match /redis/status; login
+ never fetches /status or /redis/status; PgBouncer Not connected; postgres
+ Unavailable + Redis Reachable independent; /redis/status failure does not
+ blank PostgreSQL cards; canary-secret not rendered; search Redis
+ not_implemented
+Integration tests: none. COMPATIBILITY.md §6 is not applicable and is not
+ claimed. No live Redis.
+Security tests: canary rediss://:canary-secret@10.0.0.1:6379/0?skip_verify=true
+ absent from Load/Open/HTTP; Ping still maps client errors to ErrUnavailable;
+ Status classifies internally then returns sentinels; 401 has no metrics;
+ GET not audited; no-store unchanged.
+Deployment/migration impact: skip_verify rejected in every environment
+ (config URL-parse true|1 and adapter TLSConfig.InsecureSkipVerify after
+ ParseURL). Application rollback is binary/config only. No migrations,
+ package.json/lock, PRD, or COMPATIBILITY change.
+Known limitations / residuals: REDIS-002–008 ACL, search Redis hits,
+ EXPECTED_SERIES, AUTH-005/006, PgBouncer probe, tool-link hrefs.
+ Latency is Ping RTT. db_size is selected-DB DBSIZE. jsdom cannot prove
+ viewports or 200% zoom.
+Commands executed locally (2026-08-25) after merging redis-001-metrics-api
+ `6d3afc3` then redis-001-metrics-ui `83826dc` onto master `17e61e1`
+ (merge commits `aa0a044`, `a5d88e2`), go1.27.0 windows/amd64, Node v25.3.0
+ (web/.nvmrc pins 24.19.0):
+  go test -count=1 ./... → ok cmd/redgres, audit, auth, config, database,
+   httpapi, platform, postgresadmin, redisadmin, web; migrations no test files
+  go vet ./... → no findings (exit 0)
+  go build -o NUL ./cmd/redgres → success
+  npm --prefix web run test:run → Test Files 3 passed (3); Tests 86 passed (86);
+   Duration 14.93s (vitest 4.1.11)
+  npm --prefix web run build → tsc --noEmit + vite v8.2.2; 33 modules;
+   ../internal/web/dist/app/{index.html, assets/index-Cg5Btti4.css 13.52 kB,
+   assets/index-CvMHoMLo.js 232.59 kB}; built in 264ms
+  Not run: go test -race ./..., gitleaks, govulncheck, CI, live Redis or
+   PostgreSQL or PgBouncer, browser viewports, Playwright, frontend jobs on
+   pinned Node 24.19.0
+Reviewer/date: not yet reviewed. Keep REDIS-001 Partial and PLAT-001 Partial.
+ Local commits: `6d3afc3` (API), `83826dc` (UI), `aa0a044` (merge API),
+ `a5d88e2` (merge UI). Not pushed.
 ```
 
