@@ -1006,5 +1006,7 @@ Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
  (aria-busy unobserved while list unmounted; Refresh layout jump) accepted.
  Parent `832fea5` moved ErrNotConfigured into platform so Collect does not
  import postgresadmin.
- Verifier pending.
+ Verifier (2026-08-25) PASS on worktree HEAD `2e9c344`. Re-ran go test ./...,
+ vet, gofmt empty, npm test:run 64 passed, npm run build; forbidden paths
+ byte-identical to `b2f155f`. Keep PLAT-001 Partial. Fast-forward pending.
 ```
