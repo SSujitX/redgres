@@ -1087,11 +1087,19 @@ Commands executed locally (2026-08-25), worktree
   npm --prefix web run build → tsc --noEmit + vite v8.2.2; 32 modules;
    ../internal/web/dist/app/{index.html, assets/index-CKrIdaLU.css 12.89 kB,
    assets/index-C4h8VCwz.js 228.79 kB}; built in 168ms
+  After UI reject remediations (status counts postgres hits; dialog overflow;
+   focusNonce; stale-hit clear; not-connected/unavailable tones):
+  npm --prefix web run test:run → Test Files 3 passed (3); Tests 74 passed (74);
+   Duration 11.17s
   git diff --name-only HEAD -- go.mod go.sum web/package.json web/package-lock.json
    docs/PRD.md docs/COMPATIBILITY.md → empty
   git status --porcelain → owned source/docs only (dist not stageable)
   Not run: go test -race ./..., gitleaks, govulncheck, CI, live PostgreSQL or
    Redis, browser viewports 360×800 / 768×1024 / 1280×800 / 1600×1000,
    200% zoom, Playwright, frontend jobs on pinned Node 24.19.0
-Reviewer/date: pending security, UI, and verifier on this worktree.
+Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
+ UI review (2026-08-25) rejected two Highs (status ignored postgres hits;
+ palette not a scroll container) plus Mediums (same-name refocus, stale hits,
+ muted degraded copy). Parent remediated those in this tree; UI re-review pending.
+ Verifier pending. Explicitly NOT viewport sign-off.
 ```

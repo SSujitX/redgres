@@ -30,6 +30,26 @@ function groupById(groups: SearchGroup[] | null, id: string): SearchGroup | unde
   return groups?.find((group) => group.id === id);
 }
 
+function resultCountText(pages: number, databases: number, emptyQuery: boolean, tooLong: boolean): string {
+  if (emptyQuery) {
+    return "Type at least one character to filter navigation.";
+  }
+  if (tooLong) {
+    return "Query is too long.";
+  }
+  const total = pages + databases;
+  if (total === 0) {
+    return "No matching pages. Try Overview or PostgreSQL.";
+  }
+  if (databases === 0) {
+    return pages === 1 ? "1 matching page." : `${pages} matching pages.`;
+  }
+  if (pages === 0) {
+    return databases === 1 ? "1 matching database." : `${databases} matching databases.`;
+  }
+  return total === 1 ? "1 matching result." : `${total} matching results.`;
+}
+
 export default function NavigationSearch({
   open,
   onClose,
@@ -63,9 +83,9 @@ export default function NavigationSearch({
     }
     const trimmed = query.trim();
     const runes = queryRuneCount(trimmed);
+    setGroups(null);
+    setResourceError("");
     if (runes < 1 || runes > maxQueryRunes) {
-      setGroups(null);
-      setResourceError("");
       setSearching(false);
       return;
     }
@@ -121,16 +141,9 @@ export default function NavigationSearch({
   const postgresHits = (postgres?.hits ?? []).filter(
     (hit) => hit.type === "postgres_database" && typeof hit.label === "string" && hit.label !== "",
   );
-  const countText =
-    trimmed === ""
-      ? "Type at least one character to filter navigation."
-      : tooLong
-        ? "Query is too long."
-        : navResults.length === 0 && docResults.length === 0
-          ? "No matching pages."
-          : navResults.length + docResults.length === 1
-            ? "1 matching page."
-            : `${navResults.length + docResults.length} matching pages.`;
+  const pageCount = navResults.length + docResults.length;
+  const countText = resultCountText(pageCount, postgresHits.length, trimmed === "", tooLong);
+  const statusText = searching ? `Searching. ${countText}` : countText;
 
   function activateDatabase(name: string) {
     onSelectDatabase(name);
@@ -199,15 +212,8 @@ export default function NavigationSearch({
           aria-invalid={tooLong || undefined}
         />
         <p id={countId} className="search-hint" role="status" aria-live="polite">
-          {trimmed === ""
-            ? countText
-            : tooLong
-              ? countText
-              : navResults.length === 0 && docResults.length === 0 && postgresHits.length === 0
-                ? "No matching pages. Try Overview or PostgreSQL."
-                : countText}
+          {statusText}
         </p>
-        {searching ? <p className="search-hint">Searching.</p> : null}
         {resourceError ? (
           <p className="form-warning" role="alert">
             {resourceError}
@@ -218,10 +224,15 @@ export default function NavigationSearch({
             <section className="search-group" aria-label="PostgreSQL databases">
               <p className="nav-group-label">PostgreSQL databases</p>
               {postgres?.status === "unavailable" ? (
-                <p className="search-hint">Unavailable</p>
+                <p className="form-warning">Unavailable</p>
               ) : null}
               {postgres?.status === "not_configured" ? (
-                <p className="search-hint">Not configured</p>
+                <p className="not-connected">
+                  <span className="warning-mark" aria-hidden="true">
+                    !
+                  </span>
+                  Not configured
+                </p>
               ) : null}
               {postgres?.truncated ? <p className="search-hint">Results truncated.</p> : null}
               {postgresHits.length > 0 ? (
@@ -247,7 +258,12 @@ export default function NavigationSearch({
             </section>
             <section className="search-group" aria-label="Redis ACL users">
               <p className="nav-group-label">Redis ACL users</p>
-              <p className="search-hint">Not connected. {redisCopy}</p>
+              <p className="not-connected">
+                <span className="warning-mark" aria-hidden="true">
+                  !
+                </span>
+                Not connected. {redisCopy}
+              </p>
             </section>
             <section className="search-group" aria-label="Navigation">
               <p className="nav-group-label">Navigation</p>

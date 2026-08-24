@@ -28,9 +28,10 @@ function queryRuneCount(value: string): number {
 
 type DatabasesPageProps = {
   focusDatabase?: string | null;
+  focusNonce?: number;
 };
 
-export default function DatabasesPage({ focusDatabase = null }: DatabasesPageProps) {
+export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: DatabasesPageProps) {
   const [items, setItems] = useState<DatabaseListItem[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [listError, setListError] = useState("");
@@ -126,7 +127,7 @@ export default function DatabasesPage({ focusDatabase = null }: DatabasesPagePro
       return;
     }
     openDetails(focusDatabase);
-  }, [focusDatabase]);
+  }, [focusDatabase, focusNonce]);
 
   async function loadDetails(name: string, controller: AbortController) {
     try {

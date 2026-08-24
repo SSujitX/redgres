@@ -390,6 +390,8 @@ describe("App session and login", () => {
     expect(within(dialog).getByRole("region", { name: "Documentation" })).toBeInTheDocument();
     const hit = await screen.findByRole("button", { name: /project_a/ });
     expect(hit.className).toContain("nav-result-postgres");
+    expect(screen.getByRole("status")).toHaveTextContent("1 matching database.");
+    expect(screen.queryByText(/^No matching pages/)).not.toBeInTheDocument();
     expect(screen.queryByText("canary-secret")).not.toBeInTheDocument();
     expect(dialog.querySelector("input[type=password]")).toBeNull();
     fireEvent.click(hit);
@@ -408,6 +410,66 @@ describe("App session and login", () => {
         return method === undefined || method === "GET";
       }),
     ).toBe(true);
+  });
+
+  it("clears stale postgres hits as soon as the query changes", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-stale".padEnd(64, "7") });
+      }
+      if (isSearchUrl(url)) {
+        return postgresHitSearch();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    const input = screen.getByLabelText("Search pages and databases");
+    fireEvent.change(input, { target: { value: "project" } });
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "zzz" } });
+    expect(screen.queryByRole("button", { name: /project_a/ })).not.toBeInTheDocument();
+  });
+
+  it("reactivates the same postgres hit after another database is selected", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "search-re".padEnd(64, "8") });
+      }
+      if (isSearchUrl(url)) {
+        return postgresHitSearch();
+      }
+      if (url.includes("/api/v1/postgres/databases") && !url.includes("/tables")) {
+        if (isDetailsUrl(url, "project_a")) {
+          return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+        }
+        if (isDetailsUrl(url, "project_b")) {
+          return jsonResponse(200, { database: { name: "project_b", owner: "owner_b" } });
+        }
+        return jsonResponse(200, {
+          databases: [
+            { name: "project_a", owner: "owner_a" },
+            { name: "project_b", owner: "owner_b" },
+          ],
+          truncated: false,
+        });
+      }
+      if (isTablesUrl(url, "project_a") || isTablesUrl(url, "project_b")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "project" } });
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("heading", { name: "project_a" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /project_b/ }));
+    expect(await screen.findByRole("heading", { name: "project_b" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "project" } });
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("heading", { name: "project_a" })).toBeInTheDocument();
   });
 
   it("does not send mutations when searching for drop", async () => {

@@ -19,6 +19,7 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
   const [ownerOpen, setOwnerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [focusDatabase, setFocusDatabase] = useState<string | null>(null);
+  const [focusNonce, setFocusNonce] = useState(0);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -78,6 +79,7 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
 
   function selectDatabase(name: string) {
     setFocusDatabase(name);
+    setFocusNonce((n) => n + 1);
     go("postgres");
   }
 
@@ -183,7 +185,7 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
             </div>
           </header>
           <main className="workspace">
-            <SectionPage section={section} focusDatabase={focusDatabase} />
+            <SectionPage section={section} focusDatabase={focusDatabase} focusNonce={focusNonce} />
           </main>
         </div>
       </div>
