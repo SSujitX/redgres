@@ -37,6 +37,8 @@ Cloudflare, the VPS provider, OS root, and backup administrator are privileged t
 | Cross-site scripting | React escaping, no unsafe HTML by default, self-only CSP, no external runtime script/font CDN |
 | SSRF | No arbitrary connection tester/URL fetch endpoint; admin endpoints come only from trusted server config |
 
+`rediss` administrator URLs that set go-redis `skip_verify` so TLS `InsecureSkipVerify` is true are rejected in every environment; the error names `REDGRES_REDIS_ADMIN_URL_FILE` and never includes the URL or password.
+
 ## 4. Authorization model
 
 Migration release has one owner role. Authorization remains capability-based internally so future roles do not require rewriting handlers:

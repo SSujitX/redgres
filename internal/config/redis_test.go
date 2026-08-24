@@ -211,3 +211,22 @@ func TestLoadRedisCanaryURLAbsentFromErrors(t *testing.T) {
 	}
 	assertNoRedisCanary(t, err.Error())
 }
+
+func TestLoadRejectsSkipVerifyRediss(t *testing.T) {
+	isolateConfig(t)
+	path := writeRedisURLFile(t, redisCanaryURL+"?skip_verify=true\n", 0o600)
+	t.Setenv("REDGRES_REDIS_ADMIN_URL_FILE", path)
+
+	_, err := Load(nil)
+	if err == nil {
+		t.Fatal("expected skip_verify rediss URL to fail")
+	}
+	msg := err.Error()
+	if msg != "REDGRES_REDIS_ADMIN_URL_FILE: invalid value" {
+		t.Fatalf("error = %q", msg)
+	}
+	assertNoRedisCanary(t, msg)
+	if strings.Contains(msg, "skip_verify") {
+		t.Fatalf("error echoed skip_verify: %q", msg)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"github.com/SSujitX/redgres/internal/audit"
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
+	"github.com/SSujitX/redgres/internal/redisadmin"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -19,6 +20,7 @@ import (
 
 type redisHealth interface {
 	Ping(ctx context.Context) error
+	Status(ctx context.Context) (redisadmin.Metrics, error)
 }
 
 type Server struct {
@@ -62,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/api/v1/healthz", s.handleHealthz)
 	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/status", s.handleStatus)
 	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/search", s.handleSearch)
+	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/status", s.handleRedisStatus)
 	r.Post("/api/v1/auth/login", s.handleLogin)
 	r.With(s.requireSession, s.requireMutation).Post("/api/v1/auth/logout", s.handleLogout)
 	r.With(s.requireSession).Get("/api/v1/session", s.handleSession)

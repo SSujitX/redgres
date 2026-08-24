@@ -83,13 +83,24 @@ func validateRedisAdminURL(raw string, allowPlaintext bool) error {
 	}
 	switch strings.ToLower(parsed.Scheme) {
 	case "rediss":
-		return nil
 	case "redis":
-		if allowPlaintext || isLoopbackHost(parsed.Hostname()) {
-			return nil
+		if !(allowPlaintext || isLoopbackHost(parsed.Hostname())) {
+			return errors.New("REDGRES_REDIS_ADMIN_URL_FILE: plain redis:// to a non-loopback host requires REDGRES_REDIS_ALLOW_PLAINTEXT")
 		}
-		return errors.New("REDGRES_REDIS_ADMIN_URL_FILE: plain redis:// to a non-loopback host requires REDGRES_REDIS_ALLOW_PLAINTEXT")
 	default:
 		return errors.New("REDGRES_REDIS_ADMIN_URL_FILE: invalid value")
+	}
+	if skipVerifyEnabled(parsed) {
+		return errors.New("REDGRES_REDIS_ADMIN_URL_FILE: invalid value")
+	}
+	return nil
+}
+
+func skipVerifyEnabled(parsed *url.URL) bool {
+	switch strings.ToLower(strings.TrimSpace(parsed.Query().Get("skip_verify"))) {
+	case "true", "1":
+		return true
+	default:
+		return false
 	}
 }

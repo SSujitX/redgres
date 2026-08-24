@@ -44,11 +44,11 @@ Never accept a full admin DSN on the CLI. If a DSN file is supported, parse/reda
 
 ## Redis
 
-Status: administrator URL file + plaintext override implemented for Ping-only health. Public URL hosts/ports and expected series remain target.
+Status: administrator URL file + plaintext override implemented for Ping health and GET `/api/v1/redis/status` metrics. `skip_verify` is rejected. Public URL hosts/ports and expected series remain target.
 
 | Variable | Status | Purpose |
 |---|---|---|
-| `REDGRES_REDIS_ADMIN_URL_FILE` | Implemented | Path to a file containing one `redis://` or `rediss://` admin URL. File path only; a raw URL as the env value is rejected. No `REDGRES_REDIS_ADMIN_URL` fallback. Production `serve` fails closed if the file is missing, empty, unreadable, or group/world-readable. Development may start without Redis; GET `/status` then reports `not_configured`. |
+| `REDGRES_REDIS_ADMIN_URL_FILE` | Implemented | Path to a file containing one `redis://` or `rediss://` admin URL. File path only; a raw URL as the env value is rejected. No `REDGRES_REDIS_ADMIN_URL` fallback. Production `serve` fails closed if the file is missing, empty, unreadable, or group/world-readable. Development may start without Redis; GET `/status` and GET `/api/v1/redis/status` then report `not_configured`. `skip_verify=true` / `1` (go-redis `ParseURL` `InsecureSkipVerify` on `rediss`) is rejected in every environment as `REDGRES_REDIS_ADMIN_URL_FILE: invalid value`; the error never echoes the URL or password. |
 | `REDGRES_REDIS_ALLOW_PLAINTEXT` | Implemented | Default false. `redis://` to non-loopback requires true. Loopback `redis://` is allowed without it. `rediss://` is always accepted. |
 | `REDGRES_REDIS_PUBLIC_HOST` | Target | Host placed in project URLs |
 | `REDGRES_REDIS_PUBLIC_PORT` | Target | Usually TLS 6380 |
