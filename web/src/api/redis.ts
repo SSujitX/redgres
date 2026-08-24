@@ -48,6 +48,7 @@ export type RedisAclUserDetail = RedisAclUserListItem & {
 export type RedisAclUserDetailPayload = {
   state?: string;
   user?: RedisAclUserDetail;
+  reason?: string;
   request_id?: string;
 };
 

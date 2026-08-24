@@ -113,6 +113,13 @@ export default function AclUsersPage() {
   const [detailError, setDetailError] = useState("");
   const [loadingDetail, setLoadingDetail] = useState(false);
   const selectionAbort = useRef<AbortController | null>(null);
+  const inspectorRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (selected) {
+      inspectorRef.current?.focus();
+    }
+  }, [selected]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -166,6 +173,14 @@ export default function AclUsersPage() {
     void loadDetail(username, controller);
   }
 
+  function clearSelection() {
+    selectionAbort.current?.abort();
+    setSelected(null);
+    setDetail(null);
+    setDetailError("");
+    setLoadingDetail(false);
+  }
+
   async function loadDetail(username: string, controller: AbortController) {
     try {
       const result = await fetchRedisUser(username, { signal: controller.signal });
@@ -189,6 +204,11 @@ export default function AclUsersPage() {
           setDetailError("");
           return;
         }
+      }
+      if (result.status === 200 && result.body.state === "unavailable") {
+        setDetail(null);
+        setDetailError(unavailableCopy(result.body.reason));
+        return;
       }
       setDetail(null);
       setDetailError(errorMessage(result.body, redisUnavailable));
@@ -233,10 +253,23 @@ export default function AclUsersPage() {
         </p>
       ) : null}
       {list.kind === "ok" && list.users.length === 0 ? <p className="muted-copy">{emptyUsers}</p> : null}
+      {list.kind === "ok" && list.truncated ? (
+        <p className="form-warning" role="alert">
+          {truncatedCopy}
+        </p>
+      ) : null}
       {list.kind === "ok" && list.users.length > 0 ? (
-        <ul className="ledger-list">
+        <>
+          {selected ? (
+            <p>
+              <button type="button" className="text-button" onClick={clearSelection}>
+                Back to users
+              </button>
+            </p>
+          ) : null}
+          <ul className={selected ? "ledger-list ledger-list-inspecting" : "ledger-list"}>
           {list.users.map((item) => (
-            <li key={item.username}>
+            <li key={item.username} className={selected === item.username ? "is-selected" : undefined}>
               <button
                 type="button"
                 className={
@@ -251,7 +284,7 @@ export default function AclUsersPage() {
                   <span>
                     <span className="muted-copy">Username </span>
                     <IsolatedId value={item.username} />
-                    {item.protected ? <span> Protected</span> : null}
+                    {item.protected ? <span className="ledger-badge">Protected</span> : null}
                     {item.limited ? <span className="ledger-limited"> Limited</span> : null}
                   </span>
                   <span>
@@ -270,11 +303,17 @@ export default function AclUsersPage() {
               </button>
             </li>
           ))}
-        </ul>
+          </ul>
+        </>
       ) : null}
-      {list.kind === "ok" && list.truncated ? <p className="form-warning">{truncatedCopy}</p> : null}
       {selected ? (
-        <section className="detail-panel detail-panel-redis" aria-label="ACL user details" aria-busy={loadingDetail}>
+        <section
+          ref={inspectorRef}
+          className="detail-panel detail-panel-redis"
+          aria-label="ACL user details"
+          aria-busy={loadingDetail}
+          tabIndex={-1}
+        >
           <h2>
             <IsolatedId value={selected} />
           </h2>
