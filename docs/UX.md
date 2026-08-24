@@ -42,7 +42,7 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 ## Overview
 
 - Live independent status cards for Redgres state, PostgreSQL direct, PgBouncer, Redis, and tool links, loaded from authenticated `GET /api/v1/status` on mount and Refresh (no polling). One component failure does not blank the page; envelope failures (session expired, network, malformed payload) show an alert and no cards.
-- PgBouncer, Redis, and tool links stay honest `not_implemented` / `not_configured` in this slice.
+- Redis is a live Ping: Reachable, Unavailable, or Not configured. Development default (no Redis URL file) is **Not configured**. PgBouncer stays honest **Not connected** (`not_implemented`). Tool links stay not configured.
 - Backups card, recent audit events, and quick actions for PostgreSQL database / Redis ACL user creation remain not this slice.
 
 ## PostgreSQL workflow

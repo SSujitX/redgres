@@ -50,6 +50,9 @@ type Config struct {
 	PostgresExpectedMajor      int
 	PostgresProtectedDatabases []string
 	PostgresProtectedRoles     []string
+
+	RedisAdminURLFile   string
+	RedisAllowPlaintext bool
 }
 
 func Load(args []string) (Config, error) {
@@ -109,6 +112,9 @@ func Load(args []string) (Config, error) {
 		return Config{}, err
 	}
 	if err := cfg.loadPostgres(); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.loadRedis(); err != nil {
 		return Config{}, err
 	}
 	if err := cfg.validate(); err != nil {

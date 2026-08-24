@@ -87,7 +87,7 @@ Success `200`:
     { "id": "redgres_state", "state": "ok" },
     { "id": "postgres_direct", "state": "not_configured" },
     { "id": "pgbouncer", "state": "not_implemented" },
-    { "id": "redis", "state": "not_implemented" },
+    { "id": "redis", "state": "not_configured" },
     { "id": "tool_links", "state": "not_configured" }
   ],
   "request_id": "<32 lowercase hex>"
@@ -103,7 +103,7 @@ Independent checks, sequential, each with a 2s timeout:
 | `redgres_state` | SQLite `PingContext`. `ok` or `unavailable` + `unreachable`. |
 | `postgres_direct` | Absent adapter → `not_configured`. Else `Inventory.Ping`: `ErrNotConfigured` → `not_configured`; success → `ok`; any other error → `unavailable` + `unreachable`. Ping uses `pgxpool.Ping` on the admin pool. List/details are not used as health. |
 | `pgbouncer` | Always `not_implemented` in this slice. |
-| `redis` | Always `not_implemented` in this slice. |
+| `redis` | Absent adapter → `not_configured`. Else `Service.Ping`: `ErrNotConfigured` → `not_configured`; success → `ok`; any other error → `unavailable` + `unreachable`. Ping uses go-redis `Ping` only. INFO, DBSIZE, latency, and ACL are not used as health. |
 | `tool_links` | Always `not_configured` in this slice. |
 
 This GET is not a mutation and does not write an audit event.

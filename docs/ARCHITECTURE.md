@@ -47,7 +47,7 @@ Do not bind both Redact and Redgres to 8787 during coexistence. After retirement
 HTTP transport
   ├── auth endpoints ─────► auth service ─────► control-state repository (SQLite)
   ├── audit endpoints ────► audit service ────► control-state repository (SQLite)
-  ├── status endpoint ────► platform.Collect ──► SQLite ping + postgresadmin.Ping
+  ├── status endpoint ────► platform.Collect ──► SQLite ping + postgresadmin.Ping + redisadmin.Ping
   ├── search endpoint ────► platform.ResourceGroups ► postgresadmin.Search names
   ├── postgres endpoints ─► postgres use cases ► PostgreSQL adapter (pgxpool)
   │                              └──────────────► vault adapter (PostgreSQL/Fernet)
@@ -56,14 +56,14 @@ HTTP transport
 
 Dependency direction is inward: transport depends on use cases; use cases depend on interfaces; infrastructure adapters implement interfaces. `postgresadmin` and `redisadmin` do not import each other. Cross-system dashboard aggregation belongs in a platform/status service.
 
-`internal/platform.Collect` is that aggregator: it probes Redgres state and PostgreSQL direct through `PingFunc` values and always appends static `pgbouncer`, `redis`, and `tool_links` entries. Redis and PgBouncer probes are unimplemented in this slice (`not_implemented`). `platform.ResourceGroups` is the bounded search aggregator: HTTP maps `postgresadmin.Search` names (or `not_configured` / `unavailable`) into a postgres group and always appends a static Redis ACL group with empty hits and `not_implemented`. Navigation and documentation are not server search results. `platform` does not import `postgresadmin` or `redisadmin`; the HTTP layer maps adapter sentinels onto `platform.ErrNotConfigured`.
+`internal/platform.Collect` is that aggregator: it probes Redgres state, PostgreSQL direct, and Redis through `PingFunc` values (`Collect(ctx, statePing, postgresPing, redisPing)`) and always appends static `pgbouncer` and `tool_links` entries. Redis mapping equals `postgres_direct`: nil ping or `platform.ErrNotConfigured` → `not_configured`; success → `ok`; any other error → `unavailable` + `unreachable`. PgBouncer stays `not_implemented`. `platform.ResourceGroups` is the bounded search aggregator: HTTP maps `postgresadmin.Search` names (or `not_configured` / `unavailable`) into a postgres group and always appends a static Redis ACL group with empty hits and `not_implemented`. Navigation and documentation are not server search results. `platform` does not import `postgresadmin` or `redisadmin`; the HTTP layer maps adapter sentinels onto `platform.ErrNotConfigured`. `redisadmin.Open` does not Ping when a URL is configured: `go-redis` `NewClient` is lazy, so an unreachable Redis must not block `serve`. GET `/api/v1/status` reports `unavailable` instead.
 
 ## 4. Backend stack
 
 - Go: `go 1.27.0` in `go.mod` (installed/local and CI via `go-version-file`). Official [Go 1.27 release notes](https://go.dev/doc/go1.27) (2026-08) keep the Go 1 compatibility promise. Wave 0 originally considered `go 1.26.7` as the previous-line newest patch; the operator installed 1.27 and Wave 0 builds/tests passed against it with `modernc.org/sqlite` v1.57.0 and `chi` v5.3.2.
 - Router: `github.com/go-chi/chi/v5` `v5.3.2`.
 - PostgreSQL: `github.com/jackc/pgx/v5` `v5.10.0` (`pgxpool`). Pin verified 2026-08-23 via `go list -m -versions` / `go list -m -json` against proxy.golang.org (newest stable; Go ≥1.25; MIT). Inventory lives in `internal/postgresadmin`; vault decrypt is not implemented. Catalog list/details use the admin `pgxpool`. Table list opens a short-lived `pgx.ConnectConfig` to the target database (copied pool `ConnConfig` with `Database` replaced and `search_path=pg_catalog,information_schema,pg_temp` on a cloned `RuntimeParams` map) and closes it after the query; it does not run `information_schema` on the admin catalog database. The adapter query is `LIMIT 501`; the service still returns at most 500 rows. Row browse reuses that short-lived target connect and `search_path`, quotes identifiers with `pgx.Identifier`, and pages with offset/limit (default 50, clamp 500). Vault decrypt is not used.
-- Redis: `github.com/redis/go-redis/v9` (not in Wave 0).
+- Redis: `github.com/redis/go-redis/v9` `v9.22.0` (BSD-2-Clause). Pin verified 2026-08-25 via `go list -m -versions` / `go list -m -json` against proxy.golang.org (newest non-prerelease v9; GitHub tag 2026-08-03, https://github.com/redis/go-redis). Only `internal/redisadmin` imports it, and only `ParseURL` / `NewClient` / `Ping` / `SetLogger` are used. `Open` does not Ping; GET `/status` does. INFO, DBSIZE, ACL, and `REDGRES_REDIS_EXPECTED_SERIES` are not in this slice.
 - SQLite: `modernc.org/sqlite` `v1.57.0`.
 - Passwords: `golang.org/x/crypto` `v0.55.0` (`argon2.IDKey`, version `0x13`). Interactive owner bootstrap uses `golang.org/x/term` `v0.45.0`. Both are official `go.googlesource.com` modules; `openpgp` is not imported.
 - Fernet: a maintained Go implementation validated against Python `cryptography`, or a small audited compatibility package. Choice requires test vectors and dependency review.

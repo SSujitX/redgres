@@ -1,6 +1,6 @@
 # Configuration reference
 
-Core keys and the PostgreSQL administrative connection keys listed as implemented below are loaded by `internal/config`. Redis, feature-gate, tool-link, URL-generation, and vault-secret keys remain target. Machine-checked reference generation from the config struct is still outstanding.
+Core keys, the PostgreSQL administrative connection keys, and the Redis URL-file / plaintext-override keys listed as implemented below are loaded by `internal/config`. Remaining Redis, feature-gate, tool-link, URL-generation, and vault-secret keys remain target. Machine-checked reference generation from the config struct is still outstanding.
 
 ## Core
 
@@ -44,15 +44,17 @@ Never accept a full admin DSN on the CLI. If a DSN file is supported, parse/reda
 
 ## Redis
 
-| Variable | Purpose |
-|---|---|
-| `REDGRES_REDIS_ADMIN_URL_FILE` | Protected `redis://`/`rediss://` admin URL source |
-| `REDGRES_REDIS_PUBLIC_HOST` | Host placed in project URLs |
-| `REDGRES_REDIS_PUBLIC_PORT` | Usually TLS 6380 |
-| `REDGRES_REDIS_ALLOW_PLAINTEXT` | False by default; true only for explicit loopback/private path |
-| `REDGRES_REDIS_EXPECTED_SERIES` | Optional identity assertion (`8.2` or `8.8` initially); detected version remains authoritative |
+Status: administrator URL file + plaintext override implemented for Ping-only health. Public URL hosts/ports and expected series remain target.
 
-Plain `redis://` to non-loopback is rejected unless the explicit private-path override is true. Public generated URLs use `rediss://`.
+| Variable | Status | Purpose |
+|---|---|---|
+| `REDGRES_REDIS_ADMIN_URL_FILE` | Implemented | Path to a file containing one `redis://` or `rediss://` admin URL. File path only; a raw URL as the env value is rejected. No `REDGRES_REDIS_ADMIN_URL` fallback. Production `serve` fails closed if the file is missing, empty, unreadable, or group/world-readable. Development may start without Redis; GET `/status` then reports `not_configured`. |
+| `REDGRES_REDIS_ALLOW_PLAINTEXT` | Implemented | Default false. `redis://` to non-loopback requires true. Loopback `redis://` is allowed without it. `rediss://` is always accepted. |
+| `REDGRES_REDIS_PUBLIC_HOST` | Target | Host placed in project URLs |
+| `REDGRES_REDIS_PUBLIC_PORT` | Target | Usually TLS 6380 |
+| `REDGRES_REDIS_EXPECTED_SERIES` | Target | Optional identity assertion (`8.2` or `8.8` initially); detected version remains authoritative |
+
+Plain `redis://` to non-loopback is rejected unless the explicit private-path override is true. Public generated URLs use `rediss://`. Validation errors name the environment variable and never echo the URL, userinfo, or host from the secret file.
 
 Supported service versions are defined by the Redgres release and [COMPATIBILITY.md](COMPATIBILITY.md), not by environment configuration. Expected-version settings detect connection to the wrong server; they cannot make an unsupported version supported. PostgreSQL is detected with `SHOW server_version_num`, Redis from `INFO server`, and PgBouncer with `SHOW VERSION`, followed by required capability checks.
 

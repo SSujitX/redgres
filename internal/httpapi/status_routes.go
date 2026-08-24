@@ -7,6 +7,7 @@ import (
 
 	"github.com/SSujitX/redgres/internal/platform"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
+	"github.com/SSujitX/redgres/internal/redisadmin"
 )
 
 type statusBody struct {
@@ -15,7 +16,7 @@ type statusBody struct {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	components := platform.Collect(r.Context(), s.pingState, s.postgresPing)
+	components := platform.Collect(r.Context(), s.pingState, s.postgresPing, s.redisPing)
 	s.writeJSON(w, r, http.StatusOK, statusBody{Components: components, RequestID: requestID(r)})
 }
 
@@ -32,6 +33,17 @@ func (s *Server) postgresPing(ctx context.Context) error {
 	}
 	err := s.postgres.Ping(ctx)
 	if errors.Is(err, postgresadmin.ErrNotConfigured) {
+		return platform.ErrNotConfigured
+	}
+	return err
+}
+
+func (s *Server) redisPing(ctx context.Context) error {
+	if s.redis == nil {
+		return platform.ErrNotConfigured
+	}
+	err := s.redis.Ping(ctx)
+	if errors.Is(err, redisadmin.ErrNotConfigured) {
 		return platform.ErrNotConfigured
 	}
 	return err

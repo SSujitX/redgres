@@ -5,9 +5,9 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
-| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL hits unimplemented) | Partial |
+| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping live, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL hits unimplemented) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
-| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | TODO | Planned |
+| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping-only connectivity on GET `/api/v1/status` + Overview; REDIS-002–008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
@@ -1116,3 +1116,111 @@ Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
  Fast-forwarded `master` to `6ae0c2e` (not pushed).
  Local commits: `3e983b1` (feature), `c671569`, `0993613`, `28d2313`, `6ae0c2e`.
 ```
+
+## REDIS-001 ping-only connectivity on GET /status (2026-08-25)
+
+```text
+Requirement: REDIS-001 (Partial: Ping-only connectivity). PLAT-001 (Partial:
+ Redis live Ping on Overview; PgBouncer still not_implemented). Do not mark
+ REDIS-001 or PLAT-001 Complete.
+Decision/ADR: ADR-001 modular monolith; platform.Collect stays the dashboard
+ aggregator and does not import redisadmin or go-redis. ADR-006 ACL allow-list
+ is not in this slice. No COMPATIBILITY.md §6 claim.
+Source characterization: redis-ui Open/ParseURL/SetLogger/MaxRetries=1 and
+ loopback plaintext rules as behavioral reference; not copied. go-redis v9.22.0
+ official README ParseURL + NewClient (lazy; no startup Ping).
+Implementation files: go.mod, go.sum;
+ internal/redisadmin/{errors,service,memory,adapter,service_test}.go;
+ internal/config/{config.go, redis.go, redis_test.go};
+ internal/platform/{status.go,status_test.go};
+ internal/httpapi/{server.go,server_test.go,status_routes.go,status_routes_test.go};
+ cmd/redgres/main.go; web/src/App.test.tsx; .env.example;
+ docs/{API,ARCHITECTURE,UX,CONFIGURATION,TRACEABILITY}.md; AGENTS.md
+ OverviewPage.tsx / api/status.ts unchanged: presentation() already maps
+ ok/unavailable/not_configured/not_implemented.
+Unit tests:
+ config: TestLoadNoRedisKeysDevelopment (RedisConfigured false);
+ TestLoadIncompleteRedisFileEnv (names REDGRES_REDIS_ADMIN_URL_FILE);
+ TestLoadRedisAllowPlaintextWithoutFile; TestLoadRejectsRawRedisURLAsFileEnv;
+ TestLoadRejectsPlaintextNonLoopbackWithoutAllow; TestLoadAcceptsLoopbackRedisURL;
+ TestLoadAcceptsRedissURL; TestLoadAcceptsNonLoopbackRedisWithAllowPlaintext;
+ TestLoadProductionWithoutRedisURLFileFailClosed;
+ TestLoadProductionWorldReadableRedisFileFailClosed;
+ TestLoadRedisCanaryURLAbsentFromErrors; TestLoadRepositoryEnvExample still loads
+ redisadmin: TestServicePingNilIsNotConfigured;
+ TestServicePingMapsMemoryPingErr (canary absent);
+ TestOpenNotConfiguredDevelopmentReturnsNilService;
+ TestOpenProductionWithoutURLFileFailClosed;
+ TestOpenValidURLUnusedHighPortSucceedsWithoutPing (Ping → ErrUnavailable, no leak);
+ TestOpenCanaryURLAbsentFromErrors
+ platform: TestCollectNilRedisPingIsNotConfigured;
+ TestCollectRedisNotConfiguredError; TestCollectRedisUnavailable;
+ TestCollectRedisOK; TestCollectPostgresAndRedisIndependent;
+ TestCollectReturnsFixedFiveComponents (redis not_configured when ping nil,
+ pgbouncer still not_implemented); TestCollectOmitsCanaryHostAndPassword
+ (redis ping included); existing postgres Collect tests updated to third PingFunc
+ httpapi: TestStatusDefaultPostgresNotConfigured (redis not_configured);
+ TestStatusPostgresUnavailableKeepsRedis (postgres unavailable, redis
+ not_configured); TestStatusHealthyPostgresKeepsRedisNotConfigured (rewrite of
+ TestStatusHealthyPostgresKeepsRedisNotImplemented);
+ TestStatusRedisPingErrIndependentOfPostgres; TestStatusRedisPingOK;
+ TestStatusRequiresSession (401 no components); TestHealthzUnchangedWithoutComponents
+ frontend App.test.tsx: disconnectedStatus/mixedStatus no longer use redis
+ not_implemented; mixed postgres Unavailable + Redis Reachable, Redis card
+ visible; Redis Unavailable + status-card-redis; Redis Not configured; Redis
+ Reachable; PgBouncer remains Not connected; unknown-state leftover still uses
+ redis not_implemented; search redis_acl_users stays not_implemented
+Integration tests: none. COMPATIBILITY.md §6 is not applicable and is not claimed.
+ No live Redis INFO/DBSIZE/latency.
+Security tests: canary rediss://:canary-secret@10.0.0.1:6379/0 absent from
+ Load/Open errors; Memory PingErr canary absent from ErrUnavailable; Collect
+ and HTTP status omit host/password; 401 has no components; GET is not audited;
+ no-store unchanged.
+Deployment/migration impact: new go.mod pin github.com/redis/go-redis/v9
+ v9.22.0 (BSD-2-Clause, https://github.com/redis/go-redis). Production serve
+ now fails closed without a usable Redis URL file (mirror postgres Open).
+ Development may start without Redis keys. Application rollback is
+ binary/config only. No migrations, package.json/lock, PRD, or COMPATIBILITY
+ change.
+Known limitations / residuals: REDIS-001 INFO/DBSIZE/latency, distinct
+ auth vs NOPERM reasons, COMPATIBILITY §6, REDIS-002–008 ACL, search Redis
+ hits, EXPECTED_SERIES, AUTH-005/006, PgBouncer probe, tool-link hrefs.
+ Do not mark REDIS-001 or PLAT-001 Complete.
+go-redis pin evidence (2026-08-25), worktree
+ D:\code\github\Redgres-worktrees\redis-001-ping-status, branch
+ redis-001-ping-status, baseline 921af37, go1.27.0 windows/amd64,
+ Node v25.3.0 (web/.nvmrc pins 24.19.0):
+  go list -m -versions github.com/redis/go-redis/v9
+   → newest non-prerelease v9.22.0 (v9.22.0-beta.1 is prerelease)
+  go list -m -json github.com/redis/go-redis/v9@v9.22.0
+   → Version v9.22.0, Time 2026-08-03T17:39:49Z, Origin URL
+   https://github.com/redis/go-redis, Hash c7f59a2a950eb5131cc27bfff716d6d3382e4490,
+   Ref refs/tags/v9.22.0, GoVersion 1.24. LICENSE is BSD-2-Clause.
+Commands executed locally (2026-08-25):
+  gofmt -l internal/redisadmin internal/config internal/platform
+   internal/httpapi cmd/redgres → empty
+  go vet ./internal/redisadmin ./internal/config ./internal/platform
+   ./internal/httpapi ./cmd/redgres → no findings
+  go test -count=1 ./internal/redisadmin ./internal/config ./internal/platform
+   ./internal/httpapi ./cmd/redgres
+   → ok redisadmin 1.714s; config 0.569s; platform 0.451s; httpapi 7.696s;
+   cmd/redgres 1.538s
+  go test -count=1 ./... → ok cmd/redgres, audit, auth, config, database,
+   httpapi, platform, postgresadmin, redisadmin, web; migrations no test files
+  go vet ./... → no findings (exit 0)
+  go build -o NUL ./cmd/redgres → success (no stdout)
+  npm --prefix web run test:run → Test Files 3 passed (3); Tests 77 passed (77);
+   Duration 12.35s (vitest 4.1.11)
+  npm --prefix web run build → tsc --noEmit + vite v8.2.2; 32 modules;
+   ../internal/web/dist/app/{index.html, assets/index-Dn9WU1Ry.css 12.95 kB,
+   assets/index-XMbfSLtm.js 229.13 kB}; built in 241ms
+  git diff --name-only HEAD -- docs/PRD.md docs/COMPATIBILITY.md
+   web/package.json web/package-lock.json → empty
+  git status --porcelain → owned source/docs only (dist not stageable)
+  Not run: go test -race ./..., gitleaks, govulncheck, CI, live Redis or
+   PostgreSQL or PgBouncer, browser viewports, Playwright, frontend jobs on
+   pinned Node 24.19.0
+Reviewer/date: not yet reviewed. Keep REDIS-001 Partial and PLAT-001 Partial.
+ Do not merge to master.
+```
+

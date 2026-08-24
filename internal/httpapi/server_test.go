@@ -47,7 +47,7 @@ func testServerFS(t *testing.T, assets fs.FS) (*Server, string) {
 		BaseURL:            "http://127.0.0.1:8790",
 		SessionTTL:         12 * time.Hour,
 		AbsoluteSessionTTL: 24 * time.Hour,
-	}, db, assets, nil, nil), path
+	}, db, assets, nil, nil, nil), path
 }
 
 func TestHealthzOK(t *testing.T) {

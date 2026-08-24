@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"io"
 	"io/fs"
@@ -16,6 +17,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
+type redisHealth interface {
+	Ping(ctx context.Context) error
+}
+
 type Server struct {
 	cfg      config.Config
 	db       *sql.DB
@@ -23,16 +28,17 @@ type Server struct {
 	log      *slog.Logger
 	audit    audit.Store
 	postgres postgresadmin.Inventory
+	redis    redisHealth
 }
 
-func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger, postgres postgresadmin.Inventory) *Server {
+func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger, postgres postgresadmin.Inventory, redis redisHealth) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if assets == nil {
 		assets = nopFS{}
 	}
-	return &Server{cfg: cfg, db: db, assets: assets, log: logger, audit: audit.Store{DB: db}, postgres: postgres}
+	return &Server{cfg: cfg, db: db, assets: assets, log: logger, audit: audit.Store{DB: db}, postgres: postgres, redis: redis}
 }
 
 func (s *Server) Handler() http.Handler {

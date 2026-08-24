@@ -10,6 +10,7 @@ import (
 
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
+	"github.com/SSujitX/redgres/internal/redisadmin"
 )
 
 func TestStatusRequiresSession(t *testing.T) {
@@ -66,7 +67,7 @@ func TestStatusDefaultPostgresNotConfigured(t *testing.T) {
 		{"redgres_state", "ok"},
 		{"postgres_direct", "not_configured"},
 		{"pgbouncer", "not_implemented"},
-		{"redis", "not_implemented"},
+		{"redis", "not_configured"},
 		{"tool_links", "not_configured"},
 	}
 	if len(body.Components) != 5 {
@@ -98,12 +99,12 @@ func TestStatusPostgresUnavailableKeepsRedis(t *testing.T) {
 	if got["postgres_direct"].state != "unavailable" || got["postgres_direct"].reason != "unreachable" {
 		t.Fatalf("postgres = %#v", got["postgres_direct"])
 	}
-	if got["redis"].state != "not_implemented" {
+	if got["redis"].state != "not_configured" {
 		t.Fatalf("redis = %#v", got["redis"])
 	}
 }
 
-func TestStatusHealthyPostgresKeepsRedisNotImplemented(t *testing.T) {
+func TestStatusHealthyPostgresKeepsRedisNotConfigured(t *testing.T) {
 	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{}, postgresadmin.NewPolicy(config.Config{}))
 	srv := testServerWithPostgres(t, svc)
 	seedOwner(t, srv)
@@ -118,7 +119,55 @@ func TestStatusHealthyPostgresKeepsRedisNotImplemented(t *testing.T) {
 	if got["postgres_direct"].state != "ok" || got["postgres_direct"].reason != "" {
 		t.Fatalf("postgres = %#v", got["postgres_direct"])
 	}
-	if got["redis"].state != "not_implemented" {
+	if got["redis"].state != "not_configured" || got["redis"].reason != "" {
+		t.Fatalf("redis = %#v", got["redis"])
+	}
+}
+
+func testServerWithRedis(t *testing.T, redis redisHealth) *Server {
+	t.Helper()
+	srv, _ := testServer(t, nil)
+	srv.redis = redis
+	return srv
+}
+
+func TestStatusRedisPingErrIndependentOfPostgres(t *testing.T) {
+	pg := postgresadmin.NewService(&postgresadmin.MemoryCatalog{}, postgresadmin.NewPolicy(config.Config{}))
+	rd := redisadmin.NewService(&redisadmin.MemoryClient{PingErr: redisadmin.ErrUnavailable})
+	srv := testServerWithPostgres(t, pg)
+	srv.redis = rd
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/status", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeStatus(t, rec)
+	if got["postgres_direct"].state != "ok" || got["postgres_direct"].reason != "" {
+		t.Fatalf("postgres = %#v", got["postgres_direct"])
+	}
+	if got["redis"].state != "unavailable" || got["redis"].reason != "unreachable" {
+		t.Fatalf("redis = %#v", got["redis"])
+	}
+}
+
+func TestStatusRedisPingOK(t *testing.T) {
+	srv := testServerWithRedis(t, redisadmin.NewService(&redisadmin.MemoryClient{}))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/status", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeStatus(t, rec)
+	if got["postgres_direct"].state != "not_configured" {
+		t.Fatalf("postgres = %#v", got["postgres_direct"])
+	}
+	if got["redis"].state != "ok" || got["redis"].reason != "" {
 		t.Fatalf("redis = %#v", got["redis"])
 	}
 }
