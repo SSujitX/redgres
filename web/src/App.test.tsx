@@ -2693,6 +2693,7 @@ describe("App session and login", () => {
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
     goToAclUsers();
     const row = await screen.findByRole("button", { name: /project_a/ });
+    expect(row.querySelector(".ledger-badge")).toHaveTextContent("Protected");
     expect(row).toHaveTextContent("Protected");
     expect(row).toHaveTextContent("Limited");
     expect(row).toHaveTextContent("Disabled");
@@ -2785,7 +2786,65 @@ describe("App session and login", () => {
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
     goToAclUsers();
     expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
-    expect(screen.getByText("ACL user list truncated.")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("ACL user list truncated.");
+  });
+
+  it("hides sibling ACL rows in inspect mode and restores them with Back to users", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-inspect".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([
+          redisAclListItem(),
+          redisAclListItem({ username: "project_b", key_pattern: "project_b:*" }),
+        ]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /project_b/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(details).toHaveFocus();
+    const list = details.closest("article")?.querySelector(".ledger-list");
+    expect(list).toHaveClass("ledger-list-inspecting");
+    expect(list?.querySelector(".is-selected")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to users" }));
+    expect(screen.queryByRole("region", { name: "ACL user details" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /project_b/ })).toBeInTheDocument();
+  });
+
+  it("maps ACL user detail unavailable reasons", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-detail-unavail".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          state: "unavailable",
+          reason: "auth_failed",
+          request_id: "77777777777777777777777777777777",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Redis authentication failed.");
+    expect(screen.queryByText("No commands.")).not.toBeInTheDocument();
   });
 
   it("shows a session-expired ACL users alert without an empty list", async () => {
