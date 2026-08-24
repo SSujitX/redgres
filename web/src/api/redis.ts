@@ -63,4 +63,27 @@ export async function fetchRedisUser(username: string, init: RequestInit = {}) {
   );
 }
 
+export type RedisCreateCredential = {
+  username?: string;
+  password?: string;
+  one_time?: boolean;
+  urls?: { primary?: string };
+};
+
+export type RedisCreateUserPayload = {
+  resource?: { type?: string; name?: string };
+  user?: RedisAclUserListItem;
+  credential?: RedisCreateCredential;
+  request_id?: string;
+};
+
+export async function createRedisUser(username: string, keyPattern: string, csrf: string, init: RequestInit = {}) {
+  return apiRequest<RedisCreateUserPayload & ApiErrorBody>("/api/v1/redis/users", {
+    ...init,
+    method: "POST",
+    csrf,
+    body: JSON.stringify({ username, key_pattern: keyPattern }),
+  });
+}
+
 export { errorMessage };

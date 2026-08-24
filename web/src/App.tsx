@@ -86,7 +86,12 @@ export default function App() {
           {sessionError}
         </p>
       ) : null}
-      <AppShell username={view.username} onLogout={() => void handleLogout()} loggingOut={loggingOut} />
+      <AppShell
+        username={view.username}
+        csrf={view.csrf}
+        onLogout={() => void handleLogout()}
+        loggingOut={loggingOut}
+      />
     </>
   );
 }

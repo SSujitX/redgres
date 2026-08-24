@@ -7,13 +7,14 @@ import { SectionPage } from "../../features/pages/Placeholders";
 
 type AppShellProps = {
   username: string;
+  csrf: string;
   onLogout: () => void;
   loggingOut: boolean;
 };
 
 const NAV_GROUPS = ["Overview", "PostgreSQL", "Redis ACL", "Audit", "System", "Documentation"];
 
-export default function AppShell({ username, onLogout, loggingOut }: AppShellProps) {
+export default function AppShell({ username, csrf, onLogout, loggingOut }: AppShellProps) {
   const [section, setSection] = useState<SectionId>("overview");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [ownerOpen, setOwnerOpen] = useState(false);
@@ -197,6 +198,7 @@ export default function AppShell({ username, onLogout, loggingOut }: AppShellPro
           <main className="workspace">
             <SectionPage
               section={section}
+              csrf={csrf}
               focusDatabase={focusDatabase}
               focusUsername={focusUsername}
               focusNonce={focusNonce}

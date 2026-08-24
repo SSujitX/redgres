@@ -6,6 +6,7 @@ import AclUsersPage from "../redis/AclUsersPage";
 
 type PageProps = {
   section: SectionId;
+  csrf?: string;
   focusDatabase?: string | null;
   focusUsername?: string | null;
   focusNonce?: number;
@@ -13,6 +14,7 @@ type PageProps = {
 
 export function SectionPage({
   section,
+  csrf = "",
   focusDatabase = null,
   focusUsername = null,
   focusNonce = 0,
@@ -31,7 +33,7 @@ export function SectionPage({
   }
 
   if (section === "redis") {
-    return <AclUsersPage focusUsername={focusUsername} focusNonce={focusNonce} />;
+    return <AclUsersPage csrf={csrf} focusUsername={focusUsername} focusNonce={focusNonce} />;
   }
 
   const adapter =
