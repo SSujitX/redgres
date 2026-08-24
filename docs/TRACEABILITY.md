@@ -1098,10 +1098,16 @@ Commands executed locally (2026-08-25), worktree
    Redis, browser viewports 360×800 / 768×1024 / 1280×800 / 1600×1000,
    200% zoom, Playwright, frontend jobs on pinned Node 24.19.0
 Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
- UI review (2026-08-25) rejected two Highs (status ignored postgres hits;
- palette not a scroll container) plus Mediums (same-name refocus, stale hits,
- muted degraded copy). Parent remediated those; UI re-review approved H1/H2
- closed with remaining Medium M1 (in-flight empty-page copy). Parent then
- announced only “Searching.” while resource search is pending with no page
- hits (`c671569` follow-up). Verifier pending. Explicitly NOT viewport sign-off.
+ Confirmed session gate, no-store, q not echoed/slogged/audited, protected names
+ omitted, hits id/type/label only, canary discarded, 200 on postgres down,
+ Redis never fabricated, platform does not import postgresadmin, in-memory
+ focusDatabase, login never fetches /search. Reviewer did not run tests.
+ UI review (2026-08-25) first pass rejected H1 (status ignored postgres hits)
+ and H2 (palette not a scroll container). Parent `c671569` closed those plus
+ same-name refocus, stale hits, and degraded tones. Re-review approved H1/H2
+ with remaining Medium M1 (in-flight empty-page copy). Parent `0993613` closed
+ M1 (status is only “Searching.” while pending with no page hits). Final UI
+ pass approve; no remaining High/Medium. Explicitly NOT viewport, zoom, or
+ visual sign-off: no browser tools, app not opened. Lows (empty group headers,
+ nested nav in palette, non-sticky input) accepted unfixed. Verifier pending.
 ```
