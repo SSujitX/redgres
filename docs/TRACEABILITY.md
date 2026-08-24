@@ -1008,5 +1008,7 @@ Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
  import postgresadmin.
  Verifier (2026-08-25) PASS on worktree HEAD `2e9c344`. Re-ran go test ./...,
  vet, gofmt empty, npm test:run 64 passed, npm run build; forbidden paths
- byte-identical to `b2f155f`. Keep PLAT-001 Partial. Fast-forward pending.
+ byte-identical to `b2f155f`. Keep PLAT-001 Partial.
+ Fast-forwarded `master` to `b767c38` (not pushed).
+ Local commits: `6d06290` (feature), `832fea5`, `2e9c344`, `b767c38`.
 ```
