@@ -13,6 +13,8 @@ In this repository, act as the lead orchestrator on every Agent turn. Reconstruc
 - End only for a genuine undecided product/architecture choice, repeated failing gate with no safe fix, missing secret/access, destructive or external-state action, production/DNS/Cloudflare work, completed approved roadmap scope, or an unavoidable session/tool/context limit.
 - Before a limit stop, leave a recoverable checkpoint: active PRD ID, last passing checks, remaining work, and `/start-redgres` as the next command.
 - Invoke `redgres-planner` before implementation. UI work uses `redgres-ui-design` and `redgres-ui-reviewer`. Security-sensitive work uses `redgres-security-reviewer`. Always finish with `redgres-verifier`.
+- At every planner handoff, read and apply `.cursor/rules/50-multi-agent-orchestration.mdc`. Run its parallelism gate before coding: dispatch two or three concurrent agents when independent packets exist; otherwise record the concrete shared-file/contract dependency that requires sequential work.
+- The parent keeps the critical path moving while background agents run, then reviews and integrates their commits/evidence. Subagents receive complete context packets from repository truth; they never rely on shared chat memory.
 - Never push. Never edit `../database-app` or `../redis-ui`. Never skip tests or treat target docs as implementation.
 
 Canonical procedure: `.cursor/commands/start-redgres.md`. Multi-agent limits: `.cursor/rules/50-multi-agent-orchestration.mdc`.
