@@ -24,8 +24,9 @@ const (
 
 var inspectConnectionSafe = []string{"ping", "echo", "hello", "quit"}
 
-// Inspect-only v1 command sets transcribed from redis-ui InferPreset data
-// (internal/redisadmin/presets.go). Not used to build or SETUSER ACL rules.
+// cache-read-write command set transcribed from redis-ui InferPreset data
+// (redis-ui internal/redisadmin/presets.go). Used to infer inspect presets
+// and to grant explicit +CMD rules on create.
 var inspectCacheReadWrite = concat(inspectConnectionSafe, []string{
 	"get", "set", "mget", "mset", "del", "unlink", "exists", "expire", "pexpire",
 	"expireat", "pexpireat", "ttl", "pttl", "persist", "type", "strlen",

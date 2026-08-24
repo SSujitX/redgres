@@ -58,6 +58,7 @@ The owner receives all capabilities. HTTP handlers ask the authorization service
 - Session and CSRF tokens are 256-bit hex; SQLite stores SHA-256 only. Login deletes prior sessions for that owner.
 - Lockout is per normalized username + `RemoteAddr` host. Forwarded-for / `CF-Connecting-IP` headers are not trusted.
 - Login success and logout fail closed if the audit insert fails.
+- Redis user create fail-closes if the audit insert fails after `ACL SETUSER` succeeds; the one-time credential is not returned.
 
 ## 5. Protected resources
 

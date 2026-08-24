@@ -25,6 +25,7 @@ type Client interface {
 	Info(ctx context.Context) (string, error)
 	DBSize(ctx context.Context) (int64, error)
 	ACLList(ctx context.Context) ([]string, error)
+	ACLSetUser(ctx context.Context, username string, rules ...string) error
 }
 
 type Service struct {
@@ -32,8 +33,17 @@ type Service struct {
 	adminUser string
 }
 
+type CreateResult struct {
+	User     User
+	Password string
+}
+
 func NewService(client Client) *Service {
 	return &Service{client: client}
+}
+
+func NewServiceAdmin(client Client, adminUser string) *Service {
+	return &Service{client: client, adminUser: adminUser}
 }
 
 func (s *Service) Ping(ctx context.Context) error {
@@ -96,6 +106,72 @@ func (s *Service) ListUsers(ctx context.Context) (UserList, error) {
 		out.Truncated = true
 	}
 	return out, nil
+}
+
+func (s *Service) CreateUser(ctx context.Context, username, keyPattern string) (CreateResult, error) {
+	if err := ValidateUsername(username); err != nil {
+		return CreateResult{}, err
+	}
+	pattern, err := NormalizePrefix(keyPattern)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	adminUser := ""
+	if s != nil {
+		adminUser = s.adminUser
+	}
+	if IsProtectedUsername(username, adminUser) {
+		return CreateResult{}, ErrProtectedUser
+	}
+	if s == nil || s.client == nil {
+		return CreateResult{}, ErrNotConfigured
+	}
+	lines, err := s.client.ACLList(ctx)
+	if err != nil {
+		return CreateResult{}, classifyRedisError(err)
+	}
+	if aclUsernameExists(lines, username) {
+		return CreateResult{}, ErrConflict
+	}
+	password, err := GeneratePassword()
+	if err != nil {
+		return CreateResult{}, ErrUnavailable
+	}
+	rules := buildCreateACLRules(password, pattern)
+	if err := s.client.ACLSetUser(ctx, username, rules...); err != nil {
+		return CreateResult{}, classifyRedisError(err)
+	}
+	return CreateResult{
+		User: User{
+			Username:     username,
+			Enabled:      true,
+			KeyPattern:   pattern,
+			Preset:       PresetCacheReadWrite,
+			Protected:    false,
+			RuleFidelity: RuleExact,
+			Commands:     append([]string(nil), inspectCacheReadWrite...),
+			Categories:   []string{},
+		},
+		Password: password,
+	}, nil
+}
+
+func buildCreateACLRules(password, keyPattern string) []string {
+	rules := []string{"reset", "on", ">" + password, "~" + keyPattern, "resetchannels", "-@all"}
+	for _, cmd := range inspectCacheReadWrite {
+		rules = append(rules, "+"+strings.ToUpper(cmd))
+	}
+	return rules
+}
+
+func aclUsernameExists(lines []string, username string) bool {
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "user" && fields[1] == username {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) GetUser(ctx context.Context, username string) (User, error) {

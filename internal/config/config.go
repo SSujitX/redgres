@@ -53,6 +53,8 @@ type Config struct {
 
 	RedisAdminURLFile   string
 	RedisAllowPlaintext bool
+	RedisPublicHost     string
+	RedisPublicPort     string
 }
 
 func Load(args []string) (Config, error) {

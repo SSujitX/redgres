@@ -23,6 +23,7 @@ type redisHealth interface {
 	Status(ctx context.Context) (redisadmin.Metrics, error)
 	ListUsers(ctx context.Context) (redisadmin.UserList, error)
 	GetUser(ctx context.Context, username string) (redisadmin.User, error)
+	CreateUser(ctx context.Context, username, keyPattern string) (redisadmin.CreateResult, error)
 	Search(ctx context.Context, q string, limit int) (redisadmin.SearchResult, error)
 }
 
@@ -69,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/search", s.handleSearch)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/status", s.handleRedisStatus)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/users", s.handleRedisUsers)
+	r.With(s.requireSession, s.requireCapability("redis.provision"), s.requireMutation).Post("/api/v1/redis/users", s.handleRedisUsersCreate)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/users/{username}", s.handleRedisUser)
 	r.Post("/api/v1/auth/login", s.handleLogin)
 	r.With(s.requireSession, s.requireMutation).Post("/api/v1/auth/logout", s.handleLogout)

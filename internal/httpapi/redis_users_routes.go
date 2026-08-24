@@ -10,9 +10,12 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/SSujitX/redgres/internal/auth"
 	"github.com/SSujitX/redgres/internal/redisadmin"
 	"github.com/go-chi/chi/v5"
 )
+
+const redisUnavailableMessage = "Redis is unavailable"
 
 const redisUsersTimeout = 2 * time.Second
 
@@ -51,6 +54,34 @@ type redisUserBody struct {
 	User      *redisUserDetail `json:"user,omitempty"`
 	Reason    string           `json:"reason,omitempty"`
 	RequestID string           `json:"request_id"`
+}
+
+type redisCreateRequest struct {
+	Username   string `json:"username"`
+	KeyPattern string `json:"key_pattern"`
+}
+
+type redisCreateResource struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+}
+
+type redisCreateURLs struct {
+	Primary string `json:"primary"`
+}
+
+type redisCreateCredential struct {
+	Username string           `json:"username"`
+	Password string           `json:"password"`
+	URLs     *redisCreateURLs `json:"urls,omitempty"`
+	OneTime  bool             `json:"one_time"`
+}
+
+type redisUserCreateResponse struct {
+	Resource   redisCreateResource   `json:"resource"`
+	User       redisUserSummary      `json:"user"`
+	Credential redisCreateCredential `json:"credential"`
+	RequestID  string                `json:"request_id"`
 }
 
 func (s *Server) handleRedisUsers(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +125,74 @@ func (s *Server) handleRedisUsers(w http.ResponseWriter, r *http.Request) {
 		Truncated: &truncated,
 		RequestID: requestID(r),
 	})
+}
+
+func (s *Server) handleRedisUsersCreate(w http.ResponseWriter, r *http.Request) {
+	var body redisCreateRequest
+	if err := decodeJSON(r, &body); err != nil {
+		s.writeDecodeError(w, r, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), redisUsersTimeout)
+	defer cancel()
+	sess := sessionFrom(r)
+	meta := map[string]any{
+		"username":    body.Username,
+		"preset":      redisadmin.PresetCacheReadWrite,
+		"key_pattern": body.KeyPattern,
+	}
+	if s.redis == nil {
+		_ = s.audit.Record(sess.Username, "redis.user.create", body.Username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
+		return
+	}
+	created, err := s.redis.CreateUser(ctx, body.Username, body.KeyPattern)
+	if err != nil {
+		_ = s.audit.Record(sess.Username, "redis.user.create", body.Username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeRedisCreateError(w, r, err)
+		return
+	}
+	meta["username"] = created.User.Username
+	meta["key_pattern"] = created.User.KeyPattern
+	cred := redisCreateCredential{
+		Username: created.User.Username,
+		Password: created.Password,
+		OneTime:  true,
+	}
+	if s.cfg.RedisPublicHost != "" && s.cfg.RedisPublicPort != "" {
+		primary, urlErr := redisadmin.ProjectConnectionURL(s.cfg.RedisPublicHost, s.cfg.RedisPublicPort, created.User.Username, created.Password)
+		if urlErr != nil {
+			_ = s.audit.Record(sess.Username, "redis.user.create", created.User.Username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
+			return
+		}
+		cred.URLs = &redisCreateURLs{Primary: primary}
+	}
+	if err := s.audit.Record(sess.Username, "redis.user.create", created.User.Username, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	s.writeJSON(w, r, http.StatusCreated, redisUserCreateResponse{
+		Resource:   redisCreateResource{Type: "redis_user", Name: created.User.Username},
+		User:       toRedisUserSummary(created.User),
+		Credential: cred,
+		RequestID:  requestID(r),
+	})
+}
+
+func (s *Server) writeRedisCreateError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, redisadmin.ErrInvalidUsername):
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid username", map[string]string{"username": "invalid"})
+	case errors.Is(err, redisadmin.ErrInvalidPrefix):
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid key pattern", map[string]string{"key_pattern": "invalid"})
+	case errors.Is(err, redisadmin.ErrProtectedUser):
+		s.writeError(w, r, http.StatusForbidden, CodeProtectedResource, "This Redis user is protected")
+	case errors.Is(err, redisadmin.ErrConflict):
+		s.writeError(w, r, http.StatusConflict, CodeConflict, "Redis user already exists")
+	default:
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
+	}
 }
 
 func (s *Server) handleRedisUser(w http.ResponseWriter, r *http.Request) {

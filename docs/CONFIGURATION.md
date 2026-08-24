@@ -1,6 +1,6 @@
 # Configuration reference
 
-Core keys, the PostgreSQL administrative connection keys, and the Redis URL-file / plaintext-override keys listed as implemented below are loaded by `internal/config`. Remaining Redis, feature-gate, tool-link, URL-generation, and vault-secret keys remain target. Machine-checked reference generation from the config struct is still outstanding.
+Core keys, the PostgreSQL administrative connection keys, and the Redis URL-file / plaintext-override / optional public host-port keys listed as implemented below are loaded by `internal/config`. Remaining Redis, feature-gate, tool-link, URL-generation, and vault-secret keys remain target. Machine-checked reference generation from the config struct is still outstanding.
 
 ## Core
 
@@ -44,14 +44,14 @@ Never accept a full admin DSN on the CLI. If a DSN file is supported, parse/reda
 
 ## Redis
 
-Status: administrator URL file + plaintext override implemented for Ping health and GET `/api/v1/redis/status` metrics. `skip_verify` is rejected. Public URL hosts/ports and expected series remain target.
+Status: administrator URL file + plaintext override implemented for Ping health, GET `/api/v1/redis/status` metrics, ACL inspect, and POST `/api/v1/redis/users` create. `skip_verify` is rejected. Optional public host/port are implemented for generated project URLs. Expected series remains target.
 
 | Variable | Status | Purpose |
 |---|---|---|
 | `REDGRES_REDIS_ADMIN_URL_FILE` | Implemented | Path to a file containing one `redis://` or `rediss://` admin URL. File path only; a raw URL as the env value is rejected. No `REDGRES_REDIS_ADMIN_URL` fallback. Production `serve` fails closed if the file is missing, empty, unreadable, or group/world-readable. Development may start without Redis; GET `/status` and GET `/api/v1/redis/status` then report `not_configured`. `skip_verify=true` / `1` (go-redis `ParseURL` `InsecureSkipVerify` on `rediss`) is rejected in every environment as `REDGRES_REDIS_ADMIN_URL_FILE: invalid value`; the error never echoes the URL or password. |
 | `REDGRES_REDIS_ALLOW_PLAINTEXT` | Implemented | Default false. `redis://` to non-loopback requires true. Loopback `redis://` is allowed without it. `rediss://` is always accepted. |
-| `REDGRES_REDIS_PUBLIC_HOST` | Target | Host placed in project URLs |
-| `REDGRES_REDIS_PUBLIC_PORT` | Target | Usually TLS 6380 |
+| `REDGRES_REDIS_PUBLIC_HOST` | Implemented | Optional host placed in created project `rediss://` URLs. Production `serve` does not require it. When set, the value must not contain whitespace, `@`, `/`, or a URI scheme. |
+| `REDGRES_REDIS_PUBLIC_PORT` | Implemented | Optional TCP port (1–65535) placed in created project URLs. No silent default. `credential.urls` is omitted unless both this and `REDGRES_REDIS_PUBLIC_HOST` are set. Production `serve` does not require it. |
 | `REDGRES_REDIS_EXPECTED_SERIES` | Target | Optional identity assertion (`8.2` or `8.8` initially); detected version remains authoritative |
 
 Plain `redis://` to non-loopback is rejected unless the explicit private-path override is true. Public generated URLs use `rediss://`. Validation errors name the environment variable and never echo the URL, userinfo, or host from the secret file.

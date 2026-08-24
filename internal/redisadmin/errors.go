@@ -8,4 +8,8 @@ var (
 	ErrAuthFailed       = errors.New("auth failed")
 	ErrPermissionDenied = errors.New("permission denied")
 	ErrNotFound         = errors.New("not found")
+	ErrInvalidUsername  = errors.New("invalid username")
+	ErrInvalidPrefix    = errors.New("invalid key prefix")
+	ErrProtectedUser    = errors.New("protected resource")
+	ErrConflict         = errors.New("conflict")
 )

@@ -40,6 +40,9 @@ func TestLoadNoRedisKeysDevelopment(t *testing.T) {
 	if cfg.RedisAdminURLFile != "" || cfg.RedisAllowPlaintext {
 		t.Fatalf("redis fields = %#v", cfg)
 	}
+	if cfg.RedisPublicHost != "" || cfg.RedisPublicPort != "" {
+		t.Fatalf("public redis fields = %#v", cfg)
+	}
 }
 
 func TestLoadIncompleteRedisFileEnv(t *testing.T) {
@@ -228,5 +231,54 @@ func TestLoadRejectsSkipVerifyRediss(t *testing.T) {
 	assertNoRedisCanary(t, msg)
 	if strings.Contains(msg, "skip_verify") {
 		t.Fatalf("error echoed skip_verify: %q", msg)
+	}
+}
+
+func TestLoadOptionalRedisPublicHostPort(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_REDIS_PUBLIC_HOST", "redis.example.com")
+	t.Setenv("REDGRES_REDIS_PUBLIC_PORT", "6380")
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RedisPublicHost != "redis.example.com" || cfg.RedisPublicPort != "6380" {
+		t.Fatalf("public = %q %q", cfg.RedisPublicHost, cfg.RedisPublicPort)
+	}
+	if cfg.RedisConfigured() {
+		t.Fatal("public host/port must not mark Redis configured")
+	}
+}
+
+func TestLoadProductionDoesNotRequireRedisPublicHostPort(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_ENVIRONMENT", "production")
+	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
+	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
+	t.Setenv("REDGRES_SQLITE_PATH", filepath.Join(t.TempDir(), "redgres.db"))
+	t.Setenv("REDGRES_COOKIE_SECURE", "true")
+	t.Setenv("REDGRES_SESSION_TTL", "12h")
+	t.Setenv("REDGRES_ABSOLUTE_SESSION_TTL", "24h")
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RedisPublicHost != "" || cfg.RedisPublicPort != "" {
+		t.Fatalf("public = %q %q", cfg.RedisPublicHost, cfg.RedisPublicPort)
+	}
+}
+
+func TestLoadRejectsInvalidRedisPublicPort(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_REDIS_PUBLIC_PORT", "not-a-port")
+
+	_, err := Load(nil)
+	if err == nil {
+		t.Fatal("expected invalid public port to fail")
+	}
+	if err.Error() != "REDGRES_REDIS_PUBLIC_PORT: invalid value" {
+		t.Fatalf("error = %q", err.Error())
 	}
 }

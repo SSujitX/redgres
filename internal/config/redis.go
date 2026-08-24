@@ -4,11 +4,14 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
 func (c *Config) loadRedis() error {
 	c.RedisAdminURLFile = strings.TrimSpace(os.Getenv("REDGRES_REDIS_ADMIN_URL_FILE"))
+	c.RedisPublicHost = strings.TrimSpace(os.Getenv("REDGRES_REDIS_PUBLIC_HOST"))
+	c.RedisPublicPort = strings.TrimSpace(os.Getenv("REDGRES_REDIS_PUBLIC_PORT"))
 	if v, err := envBool("REDGRES_REDIS_ALLOW_PLAINTEXT"); err != nil {
 		return err
 	} else if v != nil {
@@ -26,11 +29,38 @@ func (c Config) redisAnySet() bool {
 }
 
 func (c *Config) validateRedis() error {
+	if err := validateRedisPublicHost(c.RedisPublicHost); err != nil {
+		return err
+	}
+	if err := validateRedisPublicPort(c.RedisPublicPort); err != nil {
+		return err
+	}
 	if !c.redisAnySet() {
 		return nil
 	}
 	_, err := c.RedisAdminURL()
 	return err
+}
+
+func validateRedisPublicHost(host string) error {
+	if host == "" {
+		return nil
+	}
+	if strings.ContainsAny(host, " \t\r\n@/") || strings.Contains(host, "://") {
+		return errors.New("REDGRES_REDIS_PUBLIC_HOST: invalid value")
+	}
+	return nil
+}
+
+func validateRedisPublicPort(port string) error {
+	if port == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return errors.New("REDGRES_REDIS_PUBLIC_PORT: invalid value")
+	}
+	return nil
 }
 
 // RedisAdminURL reads the administrator URL file. The caller must discard the

@@ -228,7 +228,7 @@ Database/role names in URL segments are decoded then validated. Transport valida
 | GET | `/api/v1/redis/status` | Health/performance summary (implemented) |
 | GET | `/api/v1/redis/users` | ACL user list (implemented; inspect-only) |
 | GET | `/api/v1/redis/users/{username}` | ACL user inspect (implemented; inspect-only) |
-| POST | `/api/v1/redis/users` | Create; one-time credential; `no-store` |
+| POST | `/api/v1/redis/users` | Create isolated cache-read-write user; one-time credential; `no-store` (implemented) |
 | PATCH | `/api/v1/redis/users/{username}` | Permissions/prefix only |
 | POST | `/api/v1/redis/users/{username}/enable` | Enable |
 | POST | `/api/v1/redis/users/{username}/disable` | Disable |
@@ -271,7 +271,7 @@ Success `200` when Redis is reachable:
 
 GET `/api/v1/status` is unchanged: Redis there remains Ping-only, with `reason` only `unreachable`, and no version/uptime/metrics.
 
-**GET `/api/v1/redis/users`** and **GET `/api/v1/redis/users/{username}`** require a session cookie and the `redis.read` capability, and do not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny these routes today; the session check is what enforces access. Paths are exact. The probe uses a 2s timeout. Responses are `Cache-Control: no-store`. These GETs are not mutations and do not write an audit event. `POST`, `PUT`, `PATCH`, and `DELETE` on either path are `405` `method_not_allowed`. Missing session is `401` `unauthorized` with no `state`, `users`, `user`, or `reason` keys. The adapter issues Redis `ACL LIST` only (go-redis `ACLList`). It does not call `ACL GETUSER` or `ACL USERS`.
+**GET `/api/v1/redis/users`** and **GET `/api/v1/redis/users/{username}`** require a session cookie and the `redis.read` capability, and do not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny these routes today; the session check is what enforces access. Paths are exact. The probe uses a 2s timeout. Responses are `Cache-Control: no-store`. These GETs are not mutations and do not write an audit event. `PUT`, `PATCH`, and `DELETE` on `/api/v1/redis/users` are `405` `method_not_allowed`. `POST`, `PUT`, `PATCH`, and `DELETE` on `/api/v1/redis/users/{username}` are `405` `method_not_allowed`. Missing session is `401` `unauthorized` with no `state`, `users`, `user`, `reason`, or `credential` keys. The GET adapter issues Redis `ACL LIST` only (go-redis `ACLList`). It does not call `ACL GETUSER` or `ACL USERS`.
 
 The handlers always return `200` when they run against a configured or unconfigured adapter, even if Redis is down, except for missing users (`404`) and invalid usernames (`400`). Redis failure is `state` `unavailable`; it is not a `503`. `503` `dependency_unavailable` happens only when `requireSession` cannot read SQLite. Responses never include `err.Error()`, host, URL, `acl_rule`, password, passwords, hash, raw ACL line, or `nopass` as a credential.
 
@@ -336,7 +336,37 @@ Success detail `200`:
 
 Detail includes `commands` and `categories` (empty arrays when none). `queue_kind` is omitted unless `preset` is `queue-worker`. `preset` is `cache-read-write` | `read-only` | `queue-worker` | `custom`. `rule_fidelity` is `exact` | `limited`. Category-only or otherwise unmodelable rules are labeled `custom` / `limited` rather than inferred as a named preset. Protected users are visible (`200`, `protected: true`), not `404`. A missing username is `404` `not_found` with message `Not found` (same as a missing PostgreSQL database). Username path segments are `PathUnescape`d then validated: 1–64 Unicode code points, `[A-Za-z0-9_-]` only; empty, `/`, `..`, and controls are rejected. Lookup against parsed ACL names is exact and case-sensitive. Invalid usernames return `400` `validation_error` without echoing the raw parameter and without querying Redis.
 
-Mutations (`POST`/`PATCH`/`DELETE` create, enable, disable, rotate, delete) and `GET /api/v1/redis/presets` are not implemented in this slice.
+**POST `/api/v1/redis/users`** requires a session cookie, the `redis.provision` capability, and CSRF (`requireMutation`). The capability set is currently a static single-owner grant, so the session and CSRF checks enforce access today. The probe uses a 2s timeout. `DisallowUnknownFields` applies. The body may contain only `username` and `key_pattern`. `preset`, `commands`, `categories`, `queue_kind`, `enabled`, and `password` are rejected as unknown fields. The server always creates the user `on` with preset `cache-read-write`.
+
+Create username validation is `^[a-z0-9][a-z0-9_-]{2,47}$` (3–48 lowercase). Inspect GET usernames stay 1–64 `[A-Za-z0-9_-]`. `key_pattern` is normalized as redis-ui `NormalizePrefix`: trim `:*` / `:`; reject whitespace, controls, and wildcards `*?[]`; 2–80 characters; `^[a-z0-9][a-z0-9_:-]{0,78}[a-z0-9]$` or `^[a-z0-9]{2}$`; applied as `prefix:*`. Protected names (`default`, `admin`, `redact_admin`, and the configured Redis administrator compared with `EqualFold`) return `403` `protected_resource`. The password is 192-bit URL-safe (`crypto/rand` + `base64.RawURLEncoding`, 24 bytes → 32 characters) and is never client-supplied.
+
+The adapter issues one Redis `ACL LIST` to detect an exact username match (`409` `conflict` because `ACL SETUSER` upserts), then one go-redis `ACLSetUser` with `reset`, `on`, `>password`, one `~prefix:*`, `resetchannels`, `-@all`, and `+CMD` for the `cache-read-write` command set. It does not call `ACL GETUSER`, `ACL USERS`, `ACLGenPass`, or generic `Do`.
+
+Success `201` when `SETUSER` succeeded:
+
+```json
+{
+  "resource": { "type": "redis_user", "name": "project_a" },
+  "user": { "username": "project_a", "enabled": true, "key_pattern": "project_a:*", "preset": "cache-read-write", "protected": false, "rule_fidelity": "exact" },
+  "credential": { "username": "project_a", "password": "<one-time>", "one_time": true },
+  "request_id": "<32 hex>"
+}
+```
+
+`credential.urls` is omitted unless both `REDGRES_REDIS_PUBLIC_HOST` and `REDGRES_REDIS_PUBLIC_PORT` are set. Then `urls.primary` is `rediss://` + URL-encoded userinfo + `host:port` + `/0`. The URL never copies administrator userinfo or host. There is no silent port default. Responses are `Cache-Control: no-store`. Errors never include `err.Error()`, passwords, URLs, or hashes.
+
+| Status | Code | When |
+|---|---|---|
+| 401 | `unauthorized` | Missing session. No `credential`, `user`, or `state`. |
+| 403 | `csrf_invalid` | Origin or CSRF failure. |
+| 400 | `validation_error` | Unknown field, invalid JSON, or `fields.username` / `fields.key_pattern` (raw illegal values are not echoed). |
+| 403 | `protected_resource` | Reserved or configured administrator username. |
+| 409 | `conflict` | Exact username already present in `ACL LIST`. |
+| 503 | `dependency_unavailable` | Nil adapter, `ErrNotConfigured`, or Redis auth/permission/unreachable. No `reason` key. Typed public message only. |
+
+The action is `redis.user.create`; target is the username; outcome is success or failure; metadata is `username`, `preset=cache-read-write`, and `key_pattern`. Passwords, URLs, and CSRF values are never audited. If `SETUSER` succeeds but the audit insert fails, the handler returns `503` and does not return the credential. If `SETUSER` fails, a failure audit is written and the Redis error is returned.
+
+`PATCH`/`DELETE` enable, disable, rotate, delete, and `GET /api/v1/redis/presets` are not implemented in this slice.
 
 ## Credential payload
 

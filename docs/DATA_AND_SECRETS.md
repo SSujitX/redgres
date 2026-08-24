@@ -39,7 +39,7 @@ All credential-bearing endpoints:
 - clear frontend memory when dismissed, on logout, route change, or another target selection;
 - do not support browser autofill or persistence.
 
-PostgreSQL reveal is repeatable only because an encrypted vault entry exists. Redis reveal is impossible; rotate again if lost.
+PostgreSQL reveal is repeatable only because an encrypted vault entry exists. Redis create returns a one-time password (and an optional public `rediss://` URL only when both public host and port are configured). Redgres does not persist that password. Redis reveal is impossible; rotate again if lost.
 
 ## Legacy Fernet compatibility
 
