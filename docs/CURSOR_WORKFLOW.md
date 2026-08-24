@@ -29,7 +29,9 @@ Rules are durable instructions, not model memory. The parent reconstructs status
 
 Subagents do **not** share the parent conversation. Each starts with a clean context window. The parent must send a complete context packet containing the requirement, accepted decisions, exact docs/source to inspect, owned files, interfaces, tests, restrictions, fixed commit, and handoff contract. This is more reliable than asking several agents to “use the same chat context.”
 
-At every slice, the planner runs a parallelism gate. The parent freezes shared contracts and keeps shared route/config/dependency/migration/traceability files. It then dispatches two or three agents concurrently when their write sets are disjoint. Each reports its branch/commit, files, tests, evidence, limitations, and integration order to the parent. If a slice remains sequential, the planner records the exact contract or file dependency that prevents safe concurrency.
+At every slice, the planner runs a parallelism gate. The parent freezes shared contracts and keeps shared route/config/dependency/migration/traceability files. A dynamic wave may contain at most ten total participants: one integration master, up to three isolated writers, and a rotating pool of compatibility research, security review, UI review, evidence review, and final verification agents. Ten is a ceiling, not a target; only dependency-ready non-duplicative packets run. Each agent reports its fixed input, branch/commit where applicable, files, tests, evidence, limitations, and integration order to the parent. If a slice uses fewer writers, the planner records the exact contract or file dependency that prevents safe concurrency.
+
+There is one integration master. Domain agents may lead a bounded packet but cannot merge, alter parent-owned contracts, or approve their own work. Security and UI reviewers inspect a fixed integrated commit in parallel, corrections return to an owning writer, and the verifier evaluates the corrected commit. Missing Docker, live-service, browser, vulnerability-scan, staging, or production evidence remains an explicit blocker to the corresponding acceptance claim while unrelated work continues.
 
 ## Before parallel coding
 
@@ -52,7 +54,7 @@ One agent only:
 
 Do not parallelize this wave because nearly every later task depends on its files and contracts.
 
-### Wave 1 — up to three isolated worktrees
+### Wave 1 — up to three isolated editing worktrees
 
 After Wave 0 is merged:
 
@@ -60,7 +62,7 @@ After Wave 0 is merged:
 - Redis parity slice: `internal/redisadmin` plus Redis integration tests; no shared HTTP wiring until contract handoff.
 - Frontend shell slice: `web/` responsive sidebar/icon rail/drawer, topbar search/owner menu, login, auth/status shell, and shared tokens against agreed mock/API contracts; load `redgres-ui-design` and run `redgres-ui-reviewer` before handoff.
 
-The parent owns shared API wiring, `main.go`, dependency files, migration numbering, and integration after branches return.
+The parent owns shared API wiring, `main.go`, dependency files, migration numbering, and integration after branches return. Security, UI, compatibility, evidence, and verification agents join as read-only or test-only packets when their inputs are ready; no implementation agent approves its own work.
 
 ### Wave 2 and later
 
