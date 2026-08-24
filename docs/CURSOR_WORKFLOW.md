@@ -29,6 +29,8 @@ Rules are durable instructions, not model memory. The parent reconstructs status
 
 Subagents do **not** share the parent conversation. Each starts with a clean context window. The parent must send a complete context packet containing the requirement, accepted decisions, exact docs/source to inspect, owned files, interfaces, tests, restrictions, fixed commit, and handoff contract. This is more reliable than asking several agents to “use the same chat context.”
 
+At every slice, the planner runs a parallelism gate. The parent freezes shared contracts and keeps shared route/config/dependency/migration/traceability files. It then dispatches two or three agents concurrently when their write sets are disjoint. Each reports its branch/commit, files, tests, evidence, limitations, and integration order to the parent. If a slice remains sequential, the planner records the exact contract or file dependency that prevents safe concurrency.
+
 ## Before parallel coding
 
 1. Review all current uncommitted specification/skill/Cursor files.
