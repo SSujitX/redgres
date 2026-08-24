@@ -3,11 +3,13 @@ package redisadmin
 import "context"
 
 type MemoryClient struct {
-	PingErr   error
-	InfoErr   error
-	InfoText  string
-	DBSizeErr error
-	Size      int64
+	PingErr    error
+	InfoErr    error
+	InfoText   string
+	DBSizeErr  error
+	Size       int64
+	ACLListErr error
+	ACLLines   []string
 }
 
 func (m *MemoryClient) Ping(context.Context) error {
@@ -29,4 +31,14 @@ func (m *MemoryClient) DBSize(context.Context) (int64, error) {
 		return 0, m.DBSizeErr
 	}
 	return m.Size, nil
+}
+
+func (m *MemoryClient) ACLList(context.Context) ([]string, error) {
+	if m.ACLListErr != nil {
+		return nil, m.ACLListErr
+	}
+	if m.ACLLines == nil {
+		return []string{}, nil
+	}
+	return m.ACLLines, nil
 }

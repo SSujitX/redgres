@@ -3,6 +3,7 @@ package redisadmin
 import (
 	"context"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,10 +24,12 @@ type Client interface {
 	Ping(ctx context.Context) error
 	Info(ctx context.Context) (string, error)
 	DBSize(ctx context.Context) (int64, error)
+	ACLList(ctx context.Context) ([]string, error)
 }
 
 type Service struct {
-	client Client
+	client    Client
+	adminUser string
 }
 
 func NewService(client Client) *Service {
@@ -41,6 +44,58 @@ func (s *Service) Ping(ctx context.Context) error {
 		return ErrUnavailable
 	}
 	return nil
+}
+
+func (s *Service) ListUsers(ctx context.Context) (UserList, error) {
+	users, err := s.loadUsers(ctx)
+	if err != nil {
+		return UserList{Users: []User{}}, err
+	}
+	out := UserList{Users: users}
+	if out.Users == nil {
+		out.Users = []User{}
+	}
+	if len(out.Users) > maxACLUsers {
+		out.Users = out.Users[:maxACLUsers]
+		out.Truncated = true
+	}
+	return out, nil
+}
+
+func (s *Service) GetUser(ctx context.Context, username string) (User, error) {
+	users, err := s.loadUsers(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	for _, u := range users {
+		if u.Username == username {
+			return u, nil
+		}
+	}
+	return User{}, ErrNotFound
+}
+
+func (s *Service) loadUsers(ctx context.Context) ([]User, error) {
+	if s == nil || s.client == nil {
+		return nil, ErrNotConfigured
+	}
+	lines, err := s.client.ACLList(ctx)
+	if err != nil {
+		return nil, classifyRedisError(err)
+	}
+	users := make([]User, 0, len(lines))
+	for _, line := range lines {
+		u, ok := parseACLLine(line)
+		if !ok {
+			continue
+		}
+		u.Protected = IsProtectedUsername(u.Username, s.adminUser)
+		users = append(users, u)
+	}
+	sort.Slice(users, func(i, j int) bool {
+		return users[i].Username < users[j].Username
+	})
+	return users, nil
 }
 
 func (s *Service) Status(ctx context.Context) (Metrics, error) {

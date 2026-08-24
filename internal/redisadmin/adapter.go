@@ -37,6 +37,13 @@ func (c goRedisClient) DBSize(ctx context.Context) (int64, error) {
 	return c.inner.DBSize(ctx).Result()
 }
 
+func (c goRedisClient) ACLList(ctx context.Context) ([]string, error) {
+	if c.inner == nil {
+		return nil, ErrUnavailable
+	}
+	return c.inner.ACLList(ctx).Result()
+}
+
 func Open(_ context.Context, cfg config.Config) (*Service, func(), error) {
 	noop := func() {}
 	if !cfg.RedisConfigured() {
@@ -58,7 +65,8 @@ func Open(_ context.Context, cfg config.Config) (*Service, func(), error) {
 	if opts.TLSConfig != nil && opts.TLSConfig.InsecureSkipVerify {
 		return nil, noop, errors.New("REDGRES_REDIS_ADMIN_URL_FILE: invalid value")
 	}
+	adminUser := opts.Username
 	opts.MaxRetries = 1
 	client := redis.NewClient(opts)
-	return NewService(goRedisClient{inner: client}), func() { _ = client.Close() }, nil
+	return &Service{client: goRedisClient{inner: client}, adminUser: adminUser}, func() { _ = client.Close() }, nil
 }

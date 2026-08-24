@@ -7,4 +7,5 @@ var (
 	ErrUnavailable      = errors.New("dependency unavailable")
 	ErrAuthFailed       = errors.New("auth failed")
 	ErrPermissionDenied = errors.New("permission denied")
+	ErrNotFound         = errors.New("not found")
 )

@@ -224,8 +224,8 @@ Database/role names in URL segments are decoded then validated. Transport valida
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/v1/redis/status` | Health/performance summary (implemented) |
-| GET | `/api/v1/redis/users` | Managed and visible ACL users |
-| GET | `/api/v1/redis/users/{username}` | User/preset/rules |
+| GET | `/api/v1/redis/users` | ACL user list (implemented; inspect-only) |
+| GET | `/api/v1/redis/users/{username}` | ACL user inspect (implemented; inspect-only) |
 | POST | `/api/v1/redis/users` | Create; one-time credential; `no-store` |
 | PATCH | `/api/v1/redis/users/{username}` | Permissions/prefix only |
 | POST | `/api/v1/redis/users/{username}/enable` | Enable |
@@ -268,6 +268,73 @@ Success `200` when Redis is reachable:
 `reason` is present only when `state` is `unavailable`, and is exactly `unreachable`, `auth_failed`, or `permission_denied`. Metrics mapping: `version` ← `redis_version`; `uptime_seconds` ← `uptime_in_seconds`; `connected_clients` ← `connected_clients`; `used_memory_bytes` ← `used_memory`; `max_memory_bytes` ← `maxmemory` (`0` means unlimited and is still present); `ops_per_sec` ← `instantaneous_ops_per_sec`; `db_size` ← `DBSIZE` of the URL-selected database; `latency_ms` ← Ping wall-clock RTT as float64 microseconds/1000 (not the Redis `LATENCY` command). Ping OK but `INFO` or `DBSIZE` failing is `unavailable` with no metrics; missing or unparseable required INFO keys are `unreachable` with no zero-filled `version`. Redis errors are classified on tokens `NOAUTH`, `WRONGPASS`, and `NOPERM`; responses never include `err.Error()`. The payload never includes host, port, DSN, password, token, URL, or `skip_verify`. This GET is not a mutation and does not write an audit event.
 
 GET `/api/v1/status` is unchanged: Redis there remains Ping-only, with `reason` only `unreachable`, and no version/uptime/metrics.
+
+**GET `/api/v1/redis/users`** and **GET `/api/v1/redis/users/{username}`** require a session cookie and the `redis.read` capability, and do not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny these routes today; the session check is what enforces access. Paths are exact. The probe uses a 2s timeout. Responses are `Cache-Control: no-store`. These GETs are not mutations and do not write an audit event. `POST`, `PUT`, `PATCH`, and `DELETE` on either path are `405` `method_not_allowed`. Missing session is `401` `unauthorized` with no `state`, `users`, `user`, or `reason` keys. The adapter issues Redis `ACL LIST` only (go-redis `ACLList`). It does not call `ACL GETUSER` or `ACL USERS`.
+
+The handlers always return `200` when they run against a configured or unconfigured adapter, even if Redis is down, except for missing users (`404`) and invalid usernames (`400`). Redis failure is `state` `unavailable`; it is not a `503`. `503` `dependency_unavailable` happens only when `requireSession` cannot read SQLite. Responses never include `err.Error()`, host, URL, `acl_rule`, password, passwords, hash, raw ACL line, or `nopass` as a credential.
+
+List `state` keys:
+
+| `state` | Keys |
+|---|---|
+| `not_configured` | `state`, `users` (empty array), `request_id` (nil adapter or `ErrNotConfigured`) |
+| `unavailable` | `state`, `reason`, `request_id`. No `users`. |
+| `ok` | `state`, `users` (never null), `truncated`, `request_id`. No `reason`. |
+
+Detail `state` keys:
+
+| `state` | Keys |
+|---|---|
+| `not_configured` | `state`, `request_id` only. No `user`. |
+| `unavailable` | `state`, `reason`, `request_id`. No `user`. |
+| `ok` | `state`, `user`, `request_id`. No `reason`. |
+
+`reason` is present only when `state` is `unavailable`, and is exactly `unreachable`, `auth_failed`, or `permission_denied` (same classification tokens as GET `/api/v1/redis/status`: `NOAUTH`/`WRONGPASS` → `auth_failed`, `NOPERM` → `permission_denied`, else `unreachable`).
+
+Success list `200`:
+
+```json
+{
+  "state": "ok",
+  "users": [
+    {
+      "username": "project_a",
+      "enabled": true,
+      "key_pattern": "project_a:*",
+      "preset": "cache-read-write",
+      "protected": false,
+      "rule_fidelity": "exact"
+    }
+  ],
+  "truncated": false,
+  "request_id": "<32 lowercase hex>"
+}
+```
+
+List rows are summaries: `username`, `enabled`, `key_pattern`, `preset`, optional `queue_kind` only when `preset` is `queue-worker`, `protected`, `rule_fidelity`. `commands` and `categories` are omitted. Users are sorted by `username` ascending. The array is hard-capped at 500 (`truncated: true` if more ACL users exist). Protected users (`default`, `admin`, `redact_admin`, and the admin URL username compared with `EqualFold`) are listed.
+
+Success detail `200`:
+
+```json
+{
+  "state": "ok",
+  "user": {
+    "username": "project_a",
+    "enabled": true,
+    "key_pattern": "project_a:*",
+    "preset": "cache-read-write",
+    "protected": false,
+    "rule_fidelity": "exact",
+    "commands": ["echo", "get", "ping"],
+    "categories": []
+  },
+  "request_id": "<32 lowercase hex>"
+}
+```
+
+Detail includes `commands` and `categories` (empty arrays when none). `queue_kind` is omitted unless `preset` is `queue-worker`. `preset` is `cache-read-write` | `read-only` | `queue-worker` | `custom`. `rule_fidelity` is `exact` | `limited`. Category-only or otherwise unmodelable rules are labeled `custom` / `limited` rather than inferred as a named preset. Protected users are visible (`200`, `protected: true`), not `404`. A missing username is `404` `not_found` with message `Not found` (same as a missing PostgreSQL database). Username path segments are `PathUnescape`d then validated: 1–64 Unicode code points, `[A-Za-z0-9_-]` only; empty, `/`, `..`, and controls are rejected. Lookup against parsed ACL names is exact and case-sensitive. Invalid usernames return `400` `validation_error` without echoing the raw parameter and without querying Redis.
+
+Mutations (`POST`/`PATCH`/`DELETE` create, enable, disable, rotate, delete) and `GET /api/v1/redis/presets` are not implemented in this slice.
 
 ## Credential payload
 

@@ -84,6 +84,24 @@ func TestOpenValidURLUnusedHighPortSucceedsWithoutPing(t *testing.T) {
 	}
 }
 
+func TestOpenCapturesAdminUsernameWithoutStoringURL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redis-admin-url")
+	if err := os.WriteFile(path, []byte("redis://ops_admin@127.0.0.1:61999/0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc, closeFn, err := Open(context.Background(), config.Config{RedisAdminURLFile: path})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer closeFn()
+	if svc == nil {
+		t.Fatal("expected Service")
+	}
+	if svc.adminUser != "ops_admin" {
+		t.Fatalf("adminUser = %q", svc.adminUser)
+	}
+}
+
 func TestOpenCanaryURLAbsentFromErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "redis-admin-url")
 	if err := os.WriteFile(path, []byte("rediss://:canary-secret@10.0.0.1:6379/0\n"), 0o644); err != nil {
