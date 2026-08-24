@@ -1332,8 +1332,9 @@ Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
 
 ```text
 Requirement: REDIS-002 (Partial: ACL list/inspect GET + UI). Do not mark
- Complete. PLAT-004 Redis hits remain not_implemented. REDIS-001/PLAT-001
- stay Partial. Do not claim COMPATIBILITY.md §6.
+ Complete. PLAT-004 Redis ACL username hits landed later as a residual
+ (2026-08-25). REDIS-001/PLAT-001 stay Partial. Do not claim
+ COMPATIBILITY.md §6.
 Decision/ADR: ADR-001; ADR-006 inspect-only (ACL LIST; no SETUSER; no
  deny-list grants). platform.Collect and GET /status unchanged.
 Source characterization: redis-ui ListUsers/parseACLLine/InferPreset/
