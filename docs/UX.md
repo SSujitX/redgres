@@ -41,8 +41,8 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 
 ## Overview
 
-- Live independent status cards for Redgres state, PostgreSQL direct, PgBouncer, Redis, and tool links, loaded from authenticated `GET /api/v1/status` on mount and Refresh (no polling). One component failure does not blank the page; envelope failures (session expired, network, malformed payload) show an alert and no cards.
-- Redis is a live Ping: Reachable, Unavailable, or Not configured. Development default (no Redis URL file) is **Not configured**. PgBouncer stays honest **Not connected** (`not_implemented`). Tool links stay not configured.
+- Live independent status cards for Redgres state, PostgreSQL direct, PgBouncer, Redis, and tool links, loaded from authenticated `GET /api/v1/status` on mount and Refresh (no polling). Refresh also refetches authenticated `GET /api/v1/redis/status` with no query. One component failure does not blank the page; envelope failures on `/status` (session expired, network, malformed payload) show an alert and no cards. Failure of `/redis/status` alone keeps the `/status` cards and degrades only the Redis metrics area.
+- Redis headline is a live Ping from `/status`: Reachable, Unavailable, or Not configured. Compact labeled metrics (version, uptime, clients, used/max memory, ops/s, DB size, latency) and distinct auth/permission/connectivity copy come from `/redis/status`. `not_configured` omits metric rows. `max_memory_bytes` of `0` displays as Unlimited. If Ping is Reachable but `/redis/status` is not ok, keep Reachable and show “Metrics unavailable” plus the typed reason — never fake zeros. Version is server-supplied text: `displayText()` plus bidi isolate. Development default (no Redis URL file) is **Not configured**. PgBouncer stays honest **Not connected** (`not_implemented`). Tool links stay not configured.
 - Backups card, recent audit events, and quick actions for PostgreSQL database / Redis ACL user creation remain not this slice.
 
 ## PostgreSQL workflow
