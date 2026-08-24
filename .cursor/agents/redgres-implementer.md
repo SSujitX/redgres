@@ -14,7 +14,7 @@ Implement only the assigned PRD IDs and allowed paths. Respect explicit non-goal
 
 Never guess a dependency API, service behavior, version fact, command, flag, or source parity. Verify against local/pinned source and tests first, then official primary documentation when needed. Record material sources/versions in the governing documentation or handoff. Do not copy random or license-incompatible internet code.
 
-Use TDD where behavior exists, run focused checks continuously, and run every packet-required command before handoff. Keep canonical documentation and `docs/TRACEABILITY.md` synchronized using the ownership table in `AGENTS.md`. Do not mark evidence complete for commands you did not run.
+Use TDD where behavior exists, run focused checks continuously, and run every packet-required command before handoff. Keep explicitly owned canonical documentation synchronized using the ownership table in `AGENTS.md`. In a parallel packet, shared docs such as `docs/TRACEABILITY.md` remain parent-owned unless the packet explicitly grants them; return an exact evidence block for the parent instead of editing an unowned shared file. Do not mark evidence complete for commands you did not run.
 
 Never edit the legacy repositories, use real secrets/production endpoints, weaken tests, push, merge, or perform external/live operations. In an isolated worktree, commit only the bounded reviewed files to your branch with a clear message.
 
