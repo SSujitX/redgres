@@ -3,6 +3,7 @@ package redisadmin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -309,4 +310,112 @@ func TestOpenProductionWorldReadableStillFailClosed(t *testing.T) {
 		t.Fatalf("error %q does not name REDGRES_REDIS_ADMIN_URL_FILE", msg)
 	}
 	assertNoRedisCanary(t, msg)
+}
+
+func TestServiceSearchOmitsProtectedUsernames(t *testing.T) {
+	svc := &Service{
+		client: &MemoryClient{ACLLines: []string{
+			"user default on nopass ~* &* +@all",
+			"user admin on ~* -@all +ping",
+			"user redact_admin on ~* -@all +ping",
+			"user ops_admin on ~* -@all +ping",
+			"user project_a on ~project_a:* -@all +ping",
+		}},
+		adminUser: "ops_admin",
+	}
+	got, err := svc.Search(context.Background(), "project", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Hits) != 1 || got.Hits[0].Name != "project_a" || got.Truncated {
+		t.Fatalf("project = %#v", got)
+	}
+	for _, q := range []string{"default", "admin", "redact_admin", "ops_admin"} {
+		empty, err := svc.Search(context.Background(), q, 20)
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		if len(empty.Hits) != 0 || empty.Truncated {
+			t.Fatalf("%s = %#v", q, empty)
+		}
+	}
+}
+
+func TestServiceSearchIsCaseInsensitiveOnUsername(t *testing.T) {
+	svc := NewService(&MemoryClient{ACLLines: []string{
+		"user project_a on ~project_a:* -@all +ping",
+	}})
+	got, err := svc.Search(context.Background(), "PROJECT", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Hits) != 1 || got.Hits[0].Name != "project_a" {
+		t.Fatalf("search = %#v", got)
+	}
+}
+
+func TestServiceSearchRespectsLimitAndTruncation(t *testing.T) {
+	svc := NewService(&MemoryClient{ACLLines: []string{
+		"user project_a on ~project_a:* -@all +ping",
+		"user project_b on ~project_b:* -@all +ping",
+	}})
+	got, err := svc.Search(context.Background(), "project", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Hits) != 1 || got.Hits[0].Name != "project_a" || !got.Truncated {
+		t.Fatalf("limit = %#v", got)
+	}
+
+	lines := make([]string, 0, 501)
+	for i := 0; i < 501; i++ {
+		lines = append(lines, fmt.Sprintf("user u%03d on ~u%03d:* -@all +ping", i, i))
+	}
+	truncatedList := NewService(&MemoryClient{ACLLines: lines})
+	listed, err := truncatedList.Search(context.Background(), "u000", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Hits) != 1 || listed.Hits[0].Name != "u000" || !listed.Truncated {
+		t.Fatalf("list truncated = %#v", listed)
+	}
+}
+
+func TestServiceSearchNilIsNotConfigured(t *testing.T) {
+	svc := NewService(nil)
+	if _, err := svc.Search(context.Background(), "project", 20); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("err = %v", err)
+	}
+	var nilSvc *Service
+	if _, err := nilSvc.Search(context.Background(), "project", 20); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("nil service: %v", err)
+	}
+}
+
+func TestServiceSearchClassifiesACLErrorsWithoutCanary(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want error
+	}{
+		{name: "noauth", err: errors.New("NOAUTH Authentication required. password=canary-secret host=10.0.0.1"), want: ErrAuthFailed},
+		{name: "noperm", err: errors.New("NOPERM this user has no permissions to run the 'acl|list' command host=10.0.0.1"), want: ErrPermissionDenied},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewService(&MemoryClient{ACLListErr: tc.err})
+			got, err := svc.Search(context.Background(), "project", 20)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v want %v", err, tc.want)
+			}
+			assertNoRedisCanary(t, err.Error())
+			blob := fmt.Sprintf("%#v", got)
+			if strings.Contains(blob, "canary-secret") {
+				t.Fatalf("leaked canary into SearchResult: %s", blob)
+			}
+			if len(got.Hits) != 0 {
+				t.Fatalf("hits = %#v", got)
+			}
+		})
+	}
 }

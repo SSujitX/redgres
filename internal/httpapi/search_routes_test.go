@@ -11,6 +11,7 @@ import (
 
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
+	"github.com/SSujitX/redgres/internal/redisadmin"
 )
 
 type listPanicCatalog struct {
@@ -177,7 +178,7 @@ func TestSearchNilPostgresIsNotConfigured(t *testing.T) {
 	if got.Groups[0].ID != "postgres_databases" || got.Groups[0].Status != "not_configured" || len(got.Groups[0].Hits) != 0 {
 		t.Fatalf("postgres = %#v", got.Groups[0])
 	}
-	if got.Groups[1].ID != "redis_acl_users" || got.Groups[1].Status != "not_implemented" || len(got.Groups[1].Hits) != 0 {
+	if got.Groups[1].ID != "redis_acl_users" || got.Groups[1].Status != "not_configured" || len(got.Groups[1].Hits) != 0 {
 		t.Fatalf("redis = %#v", got.Groups[1])
 	}
 	if got.Limit != 20 {
@@ -247,7 +248,7 @@ func TestSearchUnavailablePostgresKeepsRedisGroup(t *testing.T) {
 	if got.Groups[0].Status != "unavailable" || len(got.Groups[0].Hits) != 0 {
 		t.Fatalf("postgres = %#v", got.Groups[0])
 	}
-	if got.Groups[1].Status != "not_implemented" || len(got.Groups[1].Hits) != 0 {
+	if got.Groups[1].Status != "not_configured" || len(got.Groups[1].Hits) != 0 {
 		t.Fatalf("redis = %#v", got.Groups[1])
 	}
 	raw := rec.Body.String()
@@ -295,5 +296,183 @@ func TestSearchOmitsForbiddenKeys(t *testing.T) {
 		if strings.Contains(raw, key) {
 			t.Fatalf("forbidden key %s in %s", key, raw)
 		}
+	}
+}
+
+func TestSearchNilRedisIsNotConfigured(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{Rows: []postgresadmin.CatalogRow{
+		{Name: "project_a", Owner: "project_a_role", AllowConn: true},
+	}}, postgresadmin.NewPolicy(config.Config{}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/search?q=project", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeSearch(t, rec)
+	if got.Groups[1].ID != "redis_acl_users" || got.Groups[1].Status != "not_configured" {
+		t.Fatalf("redis = %#v", got.Groups[1])
+	}
+	if got.Groups[1].Hits == nil || len(got.Groups[1].Hits) != 0 {
+		t.Fatalf("hits = %#v", got.Groups[1].Hits)
+	}
+	if strings.Contains(rec.Body.String(), `"reason"`) {
+		t.Fatalf("search group leaked reason: %s", rec.Body.String())
+	}
+}
+
+func TestSearchNilPostgresStillProbesRedis(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	srv.redis = redisadmin.NewService(&redisadmin.MemoryClient{
+		ACLLines: []string{"user project_a on ~project_a:* -@all +ping"},
+	})
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/search?q=project", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeSearch(t, rec)
+	if got.Groups[0].Status != "not_configured" || len(got.Groups[0].Hits) != 0 {
+		t.Fatalf("postgres = %#v", got.Groups[0])
+	}
+	if got.Groups[1].Status != "ok" || len(got.Groups[1].Hits) != 1 {
+		t.Fatalf("redis = %#v", got.Groups[1])
+	}
+	hit := got.Groups[1].Hits[0]
+	if hit.ID != "redis_acl_user:project_a" || hit.Type != "redis_acl_user" || hit.Label != "project_a" {
+		t.Fatalf("hit = %#v", hit)
+	}
+}
+
+func TestSearchMemoryACLUserHit(t *testing.T) {
+	pg := postgresadmin.NewService(&postgresadmin.MemoryCatalog{Rows: []postgresadmin.CatalogRow{
+		{Name: "project_a", Owner: "project_a_role", AllowConn: true},
+	}}, postgresadmin.NewPolicy(config.Config{}))
+	rd := redisadmin.NewService(&redisadmin.MemoryClient{
+		ACLLines: []string{"user project_a on ~project_a:* -@all +ping"},
+	})
+	srv := testServerWithPostgres(t, pg)
+	srv.redis = rd
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/search?q=project", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeSearch(t, rec)
+	if got.Groups[1].Status != "ok" || len(got.Groups[1].Hits) != 1 {
+		t.Fatalf("redis = %#v", got.Groups[1])
+	}
+	hit := got.Groups[1].Hits[0]
+	if hit.ID != "redis_acl_user:project_a" || hit.Type != "redis_acl_user" || hit.Label != "project_a" || hit.Owner != "" {
+		t.Fatalf("hit = %#v", hit)
+	}
+
+	statusRec := httptest.NewRecorder()
+	h.ServeHTTP(statusRec, authed(http.MethodGet, "/api/v1/status", cookie, csrf, ""))
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", statusRec.Code, statusRec.Body.Bytes())
+	}
+	usersRec := httptest.NewRecorder()
+	h.ServeHTTP(usersRec, authed(http.MethodGet, "/api/v1/redis/users", cookie, csrf, ""))
+	if usersRec.Code != http.StatusOK {
+		t.Fatalf("users = %d body = %s", usersRec.Code, usersRec.Body.Bytes())
+	}
+}
+
+func TestSearchOmitsProtectedRedisUser(t *testing.T) {
+	rd := redisadmin.NewService(&redisadmin.MemoryClient{
+		ACLLines: []string{
+			"user default on nopass ~* &* +@all",
+			"user project_a on ~project_a:* -@all +ping",
+		},
+	})
+	srv, _ := testServer(t, nil)
+	srv.redis = rd
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/search?q=default", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeSearch(t, rec)
+	if got.Groups[1].Status != "ok" {
+		t.Fatalf("redis = %#v", got.Groups[1])
+	}
+	for _, hit := range got.Groups[1].Hits {
+		if hit.Label == "default" || strings.HasSuffix(hit.ID, ":default") {
+			t.Fatalf("protected hit = %#v", hit)
+		}
+	}
+
+	usersRec := httptest.NewRecorder()
+	h.ServeHTTP(usersRec, authed(http.MethodGet, "/api/v1/redis/users", cookie, csrf, ""))
+	if usersRec.Code != http.StatusOK {
+		t.Fatalf("users = %d body = %s", usersRec.Code, usersRec.Body.Bytes())
+	}
+	if !strings.Contains(usersRec.Body.String(), `"username":"default"`) {
+		t.Fatalf("list omitted protected user: %s", usersRec.Body.String())
+	}
+}
+
+func TestSearchACLAuthFailedKeepsPostgresHits(t *testing.T) {
+	pg := postgresadmin.NewService(&postgresadmin.MemoryCatalog{Rows: []postgresadmin.CatalogRow{
+		{Name: "project_a", Owner: "project_a_role", AllowConn: true},
+	}}, postgresadmin.NewPolicy(config.Config{}))
+	rd := redisadmin.NewService(&redisadmin.MemoryClient{
+		ACLListErr: errors.New("NOAUTH Authentication required. password=canary-secret host=10.0.0.1"),
+	})
+	srv := testServerWithPostgres(t, pg)
+	srv.redis = rd
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/search?q=project", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeSearch(t, rec)
+	if got.Groups[0].Status != "ok" || len(got.Groups[0].Hits) != 1 {
+		t.Fatalf("postgres = %#v", got.Groups[0])
+	}
+	if got.Groups[1].Status != "unavailable" || len(got.Groups[1].Hits) != 0 {
+		t.Fatalf("redis = %#v", got.Groups[1])
+	}
+	raw := rec.Body.String()
+	if strings.Contains(raw, "canary-secret") || strings.Contains(raw, "NOAUTH") || strings.Contains(raw, `"reason"`) {
+		t.Fatalf("leaked auth failure: %s", raw)
+	}
+}
+
+func TestSearchOmitsACLHashAndPasswordCanaries(t *testing.T) {
+	rd := redisadmin.NewService(&redisadmin.MemoryClient{ACLLines: []string{aclCanaryLine}})
+	srv, _ := testServer(t, nil)
+	srv.redis = rd
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/search?q=antirez", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeSearch(t, rec)
+	if got.Groups[1].Status != "ok" || len(got.Groups[1].Hits) != 1 || got.Groups[1].Hits[0].Label != "antirez" {
+		t.Fatalf("redis = %#v", got.Groups[1])
+	}
+	raw := rec.Body.String()
+	if strings.Contains(raw, aclCanaryHash) || strings.Contains(raw, "canary-secret") || strings.Contains(raw, ">canary") || strings.Contains(raw, "#9f86") {
+		t.Fatalf("leaked ACL secret material: %s", raw)
 	}
 }

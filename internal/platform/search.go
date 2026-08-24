@@ -21,39 +21,63 @@ type PostgresSearch struct {
 	Names     []string
 }
 
-func ResourceGroups(pg PostgresSearch) []SearchGroup {
-	hits := make([]SearchHit, 0, len(pg.Names))
-	status := pg.Status
-	truncated := false
-	if status == "ok" {
-		truncated = pg.Truncated
+type RedisSearch struct {
+	Status    string
+	Truncated bool
+	Names     []string
+}
+
+func ResourceGroups(pg PostgresSearch, redis RedisSearch) []SearchGroup {
+	pgHits := make([]SearchHit, 0, len(pg.Names))
+	pgStatus := pg.Status
+	pgTruncated := false
+	if pgStatus == "ok" {
+		pgTruncated = pg.Truncated
 		for _, name := range pg.Names {
-			hits = append(hits, SearchHit{
+			pgHits = append(pgHits, SearchHit{
 				ID:    "postgres_database:" + name,
 				Type:  "postgres_database",
 				Label: name,
 			})
 		}
 	}
-	if status == "" {
-		status = "unavailable"
+	if pgStatus == "" {
+		pgStatus = "unavailable"
 	}
+
+	redisHits := make([]SearchHit, 0, len(redis.Names))
+	redisStatus := redis.Status
+	redisTruncated := false
+	if redisStatus == "ok" {
+		redisTruncated = redis.Truncated
+		for _, name := range redis.Names {
+			redisHits = append(redisHits, SearchHit{
+				ID:    "redis_acl_user:" + name,
+				Type:  "redis_acl_user",
+				Label: name,
+			})
+		}
+	}
+	if redisStatus == "" {
+		redisStatus = "unavailable"
+	}
+
 	return []SearchGroup{
 		{
 			ID:        "postgres_databases",
 			Label:     "PostgreSQL databases",
 			Service:   "postgres",
-			Status:    status,
-			Truncated: truncated,
-			Hits:      hits,
+			Status:    pgStatus,
+			Truncated: pgTruncated,
+			Hits:      pgHits,
 		},
 		{
 			ID:        "redis_acl_users",
 			Label:     "Redis ACL users",
 			Service:   "redis",
-			Status:    "not_implemented",
-			Truncated: false,
-			Hits:      []SearchHit{},
+			Status:    redisStatus,
+			Truncated: redisTruncated,
+			Hits:      redisHits,
 		},
 	}
 }

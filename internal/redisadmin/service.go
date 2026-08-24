@@ -46,6 +46,42 @@ func (s *Service) Ping(ctx context.Context) error {
 	return nil
 }
 
+type SearchHit struct {
+	Name string
+}
+
+type SearchResult struct {
+	Hits      []SearchHit
+	Truncated bool
+}
+
+func (s *Service) Search(ctx context.Context, q string, limit int) (SearchResult, error) {
+	listed, err := s.ListUsers(ctx)
+	if err != nil {
+		return SearchResult{}, err
+	}
+	needle := strings.ToLower(q)
+	out := SearchResult{Hits: make([]SearchHit, 0)}
+	matched := 0
+	for _, item := range listed.Users {
+		if item.Protected {
+			continue
+		}
+		if needle == "" || !strings.Contains(strings.ToLower(item.Username), needle) {
+			continue
+		}
+		matched++
+		if limit > 0 && len(out.Hits) >= limit {
+			continue
+		}
+		out.Hits = append(out.Hits, SearchHit{Name: item.Username})
+	}
+	if listed.Truncated || (limit > 0 && matched > limit) {
+		out.Truncated = true
+	}
+	return out, nil
+}
+
 func (s *Service) ListUsers(ctx context.Context) (UserList, error) {
 	users, err := s.loadUsers(ctx)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/SSujitX/redgres/internal/platform"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
+	"github.com/SSujitX/redgres/internal/redisadmin"
 )
 
 const (
@@ -51,28 +52,55 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) searchGroups(ctx context.Context, q string, limit int) []platform.SearchGroup {
-	if s.postgres == nil {
-		return platform.ResourceGroups(platform.PostgresSearch{Status: "not_configured"})
-	}
 	searchCtx, cancel := context.WithTimeout(ctx, searchTimeout)
 	defer cancel()
-	result, err := s.postgres.Search(searchCtx, q, limit)
+	return platform.ResourceGroups(s.searchPostgres(searchCtx, q, limit), s.searchRedis(searchCtx, q, limit))
+}
+
+func (s *Server) searchPostgres(ctx context.Context, q string, limit int) platform.PostgresSearch {
+	if s.postgres == nil {
+		return platform.PostgresSearch{Status: "not_configured"}
+	}
+	result, err := s.postgres.Search(ctx, q, limit)
 	if err != nil {
 		status := "unavailable"
 		if errors.Is(err, postgresadmin.ErrNotConfigured) {
 			status = "not_configured"
 		}
-		return platform.ResourceGroups(platform.PostgresSearch{Status: status})
+		return platform.PostgresSearch{Status: status}
 	}
 	names := make([]string, 0, len(result.Hits))
 	for _, hit := range result.Hits {
 		names = append(names, hit.Name)
 	}
-	return platform.ResourceGroups(platform.PostgresSearch{
+	return platform.PostgresSearch{
 		Status:    "ok",
 		Truncated: result.Truncated,
 		Names:     names,
-	})
+	}
+}
+
+func (s *Server) searchRedis(ctx context.Context, q string, limit int) platform.RedisSearch {
+	if s.redis == nil {
+		return platform.RedisSearch{Status: "not_configured"}
+	}
+	result, err := s.redis.Search(ctx, q, limit)
+	if err != nil {
+		status := "unavailable"
+		if errors.Is(err, redisadmin.ErrNotConfigured) {
+			status = "not_configured"
+		}
+		return platform.RedisSearch{Status: status}
+	}
+	names := make([]string, 0, len(result.Hits))
+	for _, hit := range result.Hits {
+		names = append(names, hit.Name)
+	}
+	return platform.RedisSearch{
+		Status:    "ok",
+		Truncated: result.Truncated,
+		Names:     names,
+	}
 }
 
 func clampSearchLimit(n int) int {

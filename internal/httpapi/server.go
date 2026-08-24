@@ -23,6 +23,7 @@ type redisHealth interface {
 	Status(ctx context.Context) (redisadmin.Metrics, error)
 	ListUsers(ctx context.Context) (redisadmin.UserList, error)
 	GetUser(ctx context.Context, username string) (redisadmin.User, error)
+	Search(ctx context.Context, q string, limit int) (redisadmin.SearchResult, error)
 }
 
 type Server struct {
