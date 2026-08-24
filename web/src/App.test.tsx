@@ -32,6 +32,24 @@ function isDetailsUrl(url: string, name: string): boolean {
   return url.includes(prefix) && !url.includes("/tables");
 }
 
+function isAuditUrl(url: string): boolean {
+  return url === "/api/v1/audit" || url.startsWith("/api/v1/audit?");
+}
+
+function auditEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1421,
+    actor: "admin",
+    action: "owner.login",
+    target: "admin",
+    outcome: "success",
+    request_id: "aabbccddeeff00112233445566778899",
+    client_ip: "127.0.0.1",
+    created_at: "2026-08-25T04:11:09.123456789Z",
+    ...overrides,
+  };
+}
+
 function stubFetch(
   impl: (url: string, init?: RequestInit) => ReturnType<typeof jsonResponse> | Promise<ReturnType<typeof jsonResponse>>,
 ) {
@@ -981,5 +999,512 @@ describe("App session and login", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
     });
+  });
+
+  it("shows the audit history view instead of the placeholder (AC-1)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-a".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [auditEvent()],
+          has_more: false,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findByRole("heading", { name: "Audit" })).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: "Audit events" })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Audit events" })).toBeInTheDocument();
+    expect(screen.queryByText("This view is not available yet.")).not.toBeInTheDocument();
+  });
+
+  it("requests the first audit page with no query string (AC-2)", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-b".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, { events: [auditEvent()], has_more: false, limit: 50 });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findByRole("table", { name: "Audit events" })).toBeInTheDocument();
+    const auditCalls = fetch.mock.calls.map((call) => String(call[0])).filter((url) => isAuditUrl(url));
+    expect(auditCalls[0]).toBe("/api/v1/audit");
+  });
+
+  it("pages older with the verbatim next_cursor and disables Older without a usable cursor (AC-3)", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-c".padEnd(64, "0") });
+      }
+      if (url === "/api/v1/audit") {
+        return jsonResponse(200, {
+          events: [auditEvent({ id: 10, actor: "page-one" })],
+          has_more: true,
+          next_cursor: "YTE6MTQyMQ",
+          limit: 50,
+        });
+      }
+      if (url === "/api/v1/audit?cursor=YTE6MTQyMQ") {
+        return jsonResponse(200, {
+          events: [auditEvent({ id: 9, actor: "page-two" })],
+          has_more: false,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findAllByText("page-one")).not.toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Older" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Older" }));
+    expect(await screen.findAllByText("page-two")).not.toHaveLength(0);
+    expect(fetch.mock.calls.map((call) => String(call[0])).filter((url) => isAuditUrl(url))).toEqual([
+      "/api/v1/audit",
+      "/api/v1/audit?cursor=YTE6MTQyMQ",
+    ]);
+    expect(screen.getByRole("button", { name: "Older" })).toBeDisabled();
+  });
+
+  it("disables Older when has_more is true without a next_cursor (AC-3)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-d".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [auditEvent()],
+          has_more: true,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Audit history is unavailable. Try again.");
+    expect(screen.getByRole("button", { name: "Older" })).toBeDisabled();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("disables Older when has_more is true and next_cursor is empty (AC-3)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-e".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [auditEvent()],
+          has_more: true,
+          next_cursor: "",
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Audit history is unavailable. Try again.");
+    expect(screen.getByRole("button", { name: "Older" })).toBeDisabled();
+  });
+
+  it("replays consumed cursors in reverse when moving newer (AC-4)", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-f".padEnd(64, "0") });
+      }
+      if (url === "/api/v1/audit") {
+        return jsonResponse(200, {
+          events: [auditEvent({ id: 30, actor: "newest" })],
+          has_more: true,
+          next_cursor: "cursor-one",
+          limit: 50,
+        });
+      }
+      if (url === "/api/v1/audit?cursor=cursor-one") {
+        return jsonResponse(200, {
+          events: [auditEvent({ id: 20, actor: "middle" })],
+          has_more: true,
+          next_cursor: "cursor-two",
+          limit: 50,
+        });
+      }
+      if (url === "/api/v1/audit?cursor=cursor-two") {
+        return jsonResponse(200, {
+          events: [auditEvent({ id: 10, actor: "oldest" })],
+          has_more: false,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findAllByText("newest")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Older" }));
+    expect(await screen.findAllByText("middle")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Older" }));
+    expect(await screen.findAllByText("oldest")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Newer" }));
+    expect(await screen.findAllByText("middle")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Newer" }));
+    expect(await screen.findAllByText("newest")).not.toHaveLength(0);
+    expect(fetch.mock.calls.map((call) => String(call[0])).filter((url) => isAuditUrl(url))).toEqual([
+      "/api/v1/audit",
+      "/api/v1/audit?cursor=cursor-one",
+      "/api/v1/audit?cursor=cursor-two",
+      "/api/v1/audit?cursor=cursor-one",
+      "/api/v1/audit",
+    ]);
+  });
+
+  it("renders audit events in response array order (AC-5)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-g".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [
+            auditEvent({ id: 9, actor: "first-shown" }),
+            auditEvent({ id: 3, actor: "second-shown" }),
+            auditEvent({ id: 7, actor: "third-shown" }),
+          ],
+          has_more: false,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    const table = await screen.findByRole("table", { name: "Audit events" });
+    const tableText = table.textContent ?? "";
+    expect(tableText.indexOf("first-shown")).toBeLessThan(tableText.indexOf("second-shown"));
+    expect(tableText.indexOf("second-shown")).toBeLessThan(tableText.indexOf("third-shown"));
+  });
+
+  it("replaces bidi controls in every rendered audit field (AC-6)", async () => {
+    const poisoned = "admin\u202Enimda";
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-h".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [
+            auditEvent({
+              actor: poisoned,
+              action: `act\u202Eion`,
+              target: `tgt\u202E`,
+              outcome: `ok\u202E`,
+              request_id: `aa\u202Ebb`,
+              client_ip: `1.2.3.4\u202E`,
+            }),
+          ],
+          has_more: false,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findByRole("table", { name: "Audit events" })).toBeInTheDocument();
+    const forbidden = ["\u200E", "\u200F", "\u061C", "\u202A", "\u202B", "\u202C", "\u202D", "\u202E", "\u2066", "\u2067", "\u2068", "\u2069"];
+    const text = document.body.textContent ?? "";
+    for (const point of forbidden) {
+      expect(text).not.toContain(point);
+    }
+    const isolates = [...document.querySelectorAll(".bidi-isolate")];
+    expect(isolates.some((node) => (node.textContent ?? "").includes("\uFFFD"))).toBe(true);
+    expect(isolates.some((node) => (node.textContent ?? "").includes("admin\uFFFD") && node.classList.contains("bidi-isolate"))).toBe(
+      true,
+    );
+    expect(isolates.length).toBeGreaterThan(0);
+  });
+
+  it("renders markup-looking actor values as text nodes (AC-6)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-i".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [auditEvent({ actor: "<img src=x onerror=alert(1)>" })],
+          has_more: false,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findAllByText("<img src=x onerror=alert(1)>")).not.toHaveLength(0);
+    expect(document.querySelector("img")).toBeNull();
+  });
+
+  it("renders the stored created_at string with a UTC marker (AC-7)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-j".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [auditEvent({ created_at: "2026-08-25T04:11:09.123456789Z" })],
+          has_more: false,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    const stamp = await screen.findAllByText(/2026-08-25T04:11:09\.123456789Z/);
+    expect(stamp.length).toBeGreaterThan(0);
+    const time = document.querySelector("time");
+    expect(time).toHaveAttribute("dateTime", "2026-08-25T04:11:09.123456789Z");
+    expect(time).toHaveTextContent("2026-08-25T04:11:09.123456789Z");
+    expect(time?.textContent).toContain("UTC");
+    expect(time).toHaveClass("identifier");
+    expect(document.body.textContent ?? "").not.toMatch(/\b(?:AM|PM)\b/);
+    expect(time?.textContent ?? "").not.toContain("/");
+  });
+
+  it("shows an accessible dash for empty actor, target, and source address (AC-8)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-k".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [auditEvent({ actor: "", target: "", client_ip: "" })],
+          has_more: false,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findAllByText("Not recorded")).not.toHaveLength(0);
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByText("Null")).not.toBeInTheDocument();
+  });
+
+  it("discloses source address without hover and does not label the column Client IP (AC-9)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-l".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, { events: [auditEvent()], has_more: false, limit: 50 });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findByText(/tunnel connector/)).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Source address" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Client IP" })).not.toBeInTheDocument();
+  });
+
+  it("shows a session-expired alert without an empty audit log (AC-10)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-m".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByText("No audit events.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
+  });
+
+  it("recovers from a bad cursor without echoing the submitted value (AC-10)", async () => {
+    const submitted = "bad-cursor-echo-canary";
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-n".padEnd(64, "0") });
+      }
+      if (url === "/api/v1/audit") {
+        return jsonResponse(200, {
+          events: [auditEvent({ actor: "page-one" })],
+          has_more: true,
+          next_cursor: submitted,
+          limit: 50,
+        });
+      }
+      if (url.includes("cursor=")) {
+        return jsonResponse(400, {
+          error: { code: "validation_error", message: "Invalid cursor", fields: { cursor: "invalid" } },
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findAllByText("page-one")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Older" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("This audit page could not be loaded. Return to the newest events.");
+    expect(screen.getByRole("button", { name: "Newest" })).toBeEnabled();
+    expect(document.body.textContent ?? "").not.toContain(submitted);
+    expect(screen.queryByText("No audit events.")).not.toBeInTheDocument();
+  });
+
+  it("shows control-plane storage unavailability without an empty audit log (AC-10)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-o".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(503, {
+          error: { code: "dependency_unavailable", message: "Control-plane storage is unavailable" },
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Control-plane storage is unavailable");
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByText("No audit events.")).not.toBeInTheDocument();
+  });
+
+  it("shows a generic alert when the audit request throws (AC-10)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-p".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        throw new TypeError("Failed to fetch");
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Audit history is unavailable. Try again.");
+    expect(screen.queryByText("No audit events.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Control-plane storage is unavailable")).not.toBeInTheDocument();
+  });
+
+  it("shows empty audit history only after a successful empty page (AC-11)", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-q".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, { events: [], has_more: false, limit: 50 });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findByText("No audit events.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("does not persist the cursor and clears audit rows on logout (AC-12)", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-r".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (url === "/api/v1/audit") {
+        return jsonResponse(200, {
+          events: [auditEvent({ actor: "visible-audit-actor" })],
+          has_more: true,
+          next_cursor: "YTE6MTQyMQ",
+          limit: 50,
+        });
+      }
+      if (url === "/api/v1/audit?cursor=YTE6MTQyMQ") {
+        return jsonResponse(200, {
+          events: [auditEvent({ id: 9, actor: "older-audit-actor" })],
+          has_more: false,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    expect(await screen.findAllByText("visible-audit-actor")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Older" }));
+    expect(await screen.findAllByText("older-audit-actor")).not.toHaveLength(0);
+    expect(setItem).not.toHaveBeenCalled();
+    expect(window.location.search).not.toMatch(/cursor/);
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByText("visible-audit-actor")).not.toBeInTheDocument();
+    expect(screen.queryByText("older-audit-actor")).not.toBeInTheDocument();
+    setItem.mockRestore();
+  });
+
+  it("keeps the audit table in a bounded identifier grid without a service rail (AC-14)", async () => {
+    const actor = "a".repeat(64);
+    const requestId = "aabbccddeeff00112233445566778899";
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "audit-s".padEnd(64, "0") });
+      }
+      if (isAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [auditEvent({ actor, request_id: requestId })],
+          has_more: false,
+          limit: 50,
+        });
+      }
+      return jsonResponse(500, {});
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
+    const table = await screen.findByRole("table", { name: "Audit events" });
+    expect(within(table).getByText(actor)).toHaveClass("identifier");
+    expect(within(table).getByText(requestId)).toHaveClass("identifier");
+    expect(document.querySelector(".audit-grid-wrap")).not.toBeNull();
+    const page = document.querySelector(".audit-page");
+    expect(page?.querySelector(".service-rail")).toBeNull();
+    expect(page?.querySelector(".service-rail-postgres")).toBeNull();
+    expect(page?.querySelector(".service-rail-redis")).toBeNull();
   });
 });

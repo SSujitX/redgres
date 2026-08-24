@@ -306,6 +306,85 @@ input:focus-visible {
   margin-top: var(--space-3);
 }
 
+.bidi-isolate {
+  unicode-bidi: isolate;
+  direction: ltr;
+}
+
+.audit-grid-wrap {
+  max-width: 100%;
+  min-width: 0;
+  max-height: min(24rem, 60vh);
+  overflow: auto;
+  margin-top: var(--space-3);
+}
+
+.audit-grid {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.8125rem;
+}
+
+.audit-grid th,
+.audit-grid td {
+  border-bottom: 1px solid var(--line);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  vertical-align: top;
+}
+
+.audit-grid th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+
+.audit-stack {
+  display: none;
+  list-style: none;
+  padding: 0;
+  margin: var(--space-3) 0 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.audit-stack-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  padding: var(--space-3);
+}
+
+.audit-stack-item dl {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.audit-stack-item dt {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.audit-stack-item dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 767px) {
+  .audit-grid-wrap {
+    display: none;
+  }
+
+  .audit-stack {
+    display: flex;
+  }
+}
+
 .boot {
   padding: var(--space-5);
   color: var(--muted);

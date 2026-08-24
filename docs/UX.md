@@ -59,6 +59,15 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 - Custom permissions show only allowed commands/categories and their effective expansion.
 - Externally managed rules Redgres cannot model exactly are labeled and not silently rewritten.
 
+## Audit history
+
+- The authenticated owner reviews security-relevant audit events newest first, one server page at a time, with no total count and no filtering in this slice.
+- Older, Newer, Newest, and Refresh use opaque server cursors only. The client never constructs, decodes, increments, or sorts cursors, and never sorts events by `id` or `created_at`. Refresh and Newest return to the first page.
+- Correlate incidents using the full `request_id`. Timestamps are the stored UTC strings; they are not converted to local time.
+- Source address is the address Redgres observed on the connection. Behind Cloudflare Tunnel this is the tunnel connector, not the browser’s public address. That disclosure stays visible in the page header; it is not hover-only.
+- Empty actor, target, or source address values show an em dash with an accessible “Not recorded” name. Errors (session expired, unusable cursor, control-plane storage unavailable, or a network failure) take precedence over an empty log. An empty state appears only after HTTP 200 with `events: []`.
+- Below 768px each event is a labeled label/value list. At 768px and above, a bounded table with a sticky header owns horizontal/vertical scroll so the viewport does not scroll sideways. Audit uses neutral ink, not a PostgreSQL or Redis service rail.
+
 ## Credential ticket
 
 - Opens only from successful create/rotate/reveal response.

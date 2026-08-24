@@ -5,7 +5,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
-| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz` unit tests; PLAT-003 audit read API store+HTTP tests (no UI); no `/status` or server search | Partial |
+| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz` unit tests; PLAT-003 audit read API store+HTTP tests + audit history UI; no `/status` or server search | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | TODO | Planned |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
@@ -771,4 +771,128 @@ Verifier (2026-08-25) PASS on all ten items, recommending merge. It re-executed
 Reviewer/date: Security review 2026-08-25 (approve, docs-only changes applied);
  verifier 2026-08-25 (PASS, three corrections applied).
  Local commit `47b3e17` on `master` (not pushed).
+```
+
+## Audit history UI (2026-08-25)
+
+```text
+Requirement: PLAT-003 (frontend). Consumes GET /api/v1/audit from commit 47b3e17.
+ Does not claim NFR-006 (retention/export). Respects NFR-002 by showing one page
+ at a time with no total count. NFR-012 responsive contract is implemented in
+ markup/CSS; jsdom cannot prove viewports.
+Decision/ADR: ADR-001 (UI is a client of the existing audit HTTP contract).
+ No new ADR. docs/API.md, docs/PRD.md, docs/SECURITY.md, and every Go file are
+ unchanged. Cursor encoding, limit, and metadata exclusion stay server-owned.
+Source characterization: no source-system parity. The page follows DatabasesPage
+ abort/error-vs-empty patterns. API contract is F-9 / docs/API.md as shipped.
+Bidi findings (load-bearing; CSS is not sufficient):
+ F-1 CSS cannot neutralize a bidi override. CSS Writing Modes Level 4 §2.4.2
+  (https://www.w3.org/TR/css-writing-modes-4/#bidi-control, “CSS–Unicode Bidi
+  Control Translation, Text Reordering”): “bidi control codes in the source
+  text are still honored”. UAX #9 Unicode 17.0.0 revision 51 §2.2
+  (https://www.unicode.org/reports/tr9/tr9-51.html#Explicit_Directional_Overrides):
+  directional overrides nest. unicode-bidi: isolate/plaintext therefore cannot
+  disarm U+202E already present in the cell. Mandatory mechanism is character
+  replacement at render time; CSS is defense in depth only.
+ F-2 Twelve Bidi_Control code points, UAX #9 §2
+  (https://www.unicode.org/reports/tr9/tr9-51.html#Bidirectional_Character_Types):
+  implicit U+200E LRM, U+200F RLM, U+061C ALM; embeddings/overrides U+202A LRE,
+  U+202B RLE, U+202C PDF, U+202D LRO, U+202E RLO; isolates U+2066 LRI, U+2067
+  RLI, U+2068 FSI, U+2069 PDI. Enumerated explicitly in displayText.ts. The
+  regex does not use \p{Bidi_Control} (unverified in this runtime).
+ F-3 unicode-bidi: isolate with direction: ltr, not plaintext. CSS Writing Modes
+  Level 4 §2.2 (https://www.w3.org/TR/css-writing-modes-4/#unicode-bidi):
+  isolate takes the box’s direction property as base direction; plaintext
+  “behaves as isolate except that … base directionality … is determined by
+  following the heuristic in rules P2 and P3 of the Unicode bidirectional
+  algorithm (rather than by using the direction property of the box)”. The
+  plaintext suggestion was overridden because actor/target/action are
+  attacker-influenced (login-failure actor is the caller’s own string; see the
+  PLAT-003 API residual). isolate + direction:ltr keeps the base direction on
+  the property, not the payload.
+ F-5 Matches are replaced with U+FFFD, not deleted, so a spoof attempt remains
+  visible. After the twelve explicit points, \p{Cf}|\p{Cc} is a general
+  invisible-character net (U+200B, U+200D, U+FEFF, U+00AD covered). Applied to
+  every rendered field: actor, action, target, outcome, request_id, client_ip,
+  created_at.
+ F-8 outcome is an opaque string; no status-color map.
+ F-9 API contract is fixed: {events, has_more, next_cursor?, limit, request_id};
+  newest first; events always an array; next_cursor only when has_more; cursor
+  opaque exclusive; nullable fields ""; created_at verbatim RFC3339Nano UTC;
+  no total; no metadata. First UI request is exactly /api/v1/audit.
+D-1 byte-exactness trade-off: displayText() is not a byte-preserving view of
+ stored text. Replacing bidi/format controls with U+FFFD is a deliberate
+ display transform so the operator can see that a spoof was attempted. The
+ stored row and the HTTP JSON remain unchanged. Homoglyphs (Cyrillic/Latin
+ lookalikes) are an explicit non-goal and are rendered as stored.
+jsdom limit: jsdom does not implement the Unicode Bidirectional Algorithm
+ layout, so tests prove code-point replacement, U+FFFD presence, absence of
+ the twelve F-2 points in textContent, and the isolate class. They do not
+ prove visual reordering was prevented on a real renderer.
+SECURITY RESIDUAL — unauthenticated audit-row injection and flooding (Medium,
+ pre-existing on AUTH/PLAT-002 login, recorded on the API slice, NOT mitigated
+ here). This UI makes that residual operator-visible: the history is unfiltered
+ newest-first pages, so injected login-failure rows occupy the first pages the
+ owner sees. No filtering, retention (NFR-006), or login-path rate-limit change
+ is in this slice. ValidateUsername was not changed.
+Implementation files: web/src/api/audit.ts; web/src/features/audit/AuditPage.tsx;
+ web/src/text/displayText.ts; web/src/text/displayText.test.ts;
+ web/src/features/pages/Placeholders.tsx (audit branch only);
+ web/src/styles/globals.css (audit table/stack + .bidi-isolate);
+ web/src/App.test.tsx (additive helpers/tests only);
+ docs/UX.md (Audit history workflow; navigation tree unchanged);
+ docs/UI_DESIGN_SYSTEM.md (§6 stored/attacker-influenced text);
+ docs/REPOSITORY_STRUCTURE.md (web/src/text/); docs/TRACEABILITY.md.
+Unit tests: web/src/text/displayText.test.ts — twelve F-2 points + U+200B,
+ U+200D, U+FEFF, U+00AD replaced with U+FFFD, ordinary text unchanged.
+ web/src/App.test.tsx AC-1 heading+table/list, placeholder absent; AC-2 first
+ URL exactly /api/v1/audit; AC-3 verbatim cursor + Older disabled on has_more
+ false / missing / empty next_cursor; AC-4 three-page forward, two Newer replay
+ cursors; AC-5 array order ids 9,3,7; AC-6 bidi replacement + isolate class +
+ markup actor is a text node; AC-7 verbatim RFC3339Nano + UTC, no AM/PM;
+ AC-8 em dash + Not recorded, Null absent; AC-9 source-address disclosure,
+ column not Client IP; AC-10 401/400/503/TypeError; AC-11 200 empty page;
+ AC-12 no Storage.setItem, location.search has no cursor, logout clears actor;
+ AC-14 bounded-scroll wrapper, no service-rail on the page, 64-rune actor and
+ 32-hex request_id use .identifier.
+Integration tests: none. No PostgreSQL/Redis adapter change; COMPATIBILITY.md
+ §6 is not applicable and is not claimed.
+Security tests: bidi/format replacement; markup payload remains a text node
+ (document.querySelector("img") is null); 401 does not auto-redirect; 400 does
+ not echo the submitted cursor; no localStorage writes; cursor not placed in
+ location.search; logout removes previously rendered actor. Audit fields are
+ React text nodes, not HTML.
+Deployment/migration impact: none. No Go, migration, API, or configuration
+ change. Application rollback is binary/config only, as already documented.
+Known limitations: jsdom cannot prove visual bidi order or 360/768/1280/1600
+ viewports; homoglyphs undetected; unauthenticated flooding now operator-visible
+ and unmitigated; no metadata column; no filtering; no NFR-006 retention;
+ local Node is v25.3.0 so pinned Node 24.19.0 frontend evidence remains CI-only.
+Assumptions recorded: client cursor stack stores already-consumed next_cursor
+ values and never decodes them; has_more true without a non-empty next_cursor
+ is an error page, not a rendered page; Refresh and Newest both return to
+ /api/v1/audit and clear the stack; empty actor/target/client_ip use em dash
+ plus visually-hidden “Not recorded”, never the SQL Null token.
+Commands executed locally (2026-08-25), worktree
+ D:\code\github\Redgres-worktrees\plat-003-audit-ui, Node v25.3.0 (web/.nvmrc
+ pins 24.19.0):
+  npm --prefix web run test:run → Test Files 3 passed (3); Tests 54 passed (54);
+   Duration 34.70s (vitest 4.1.11)
+  npm --prefix web run build → tsc --noEmit + vite v8.2.2; 29 modules;
+   ../internal/web/dist/app/{index.html, assets/index--h2CFBMA.css 12.44 kB,
+   assets/index-g_T8wCh4.js 222.64 kB}; built in 1.06s
+  go build -o NUL ./cmd/redgres → success (no stdout)
+  go test -count=1 ./... → ok cmd/redgres, audit, auth, config, database,
+   httpapi, postgresadmin, web; migrations no test files
+  go vet ./... → no findings (exit 0)
+  gofmt -l cmd internal migrations → empty
+  git diff --name-only HEAD -- *.go go.mod go.sum web/package.json
+   web/package-lock.json web/vite.config.ts web/tsconfig.json docs/API.md
+   docs/PRD.md web/src/nav.ts → empty
+  git status --porcelain internal/web/dist → empty (build output not stageable)
+  Not run: go test -race ./..., gitleaks, govulncheck, CI, live PostgreSQL or
+   Redis, browser viewports 360×800 / 768×1024 / 1280×800 / 1600×1000, 200%
+   zoom, Playwright, frontend jobs on pinned Node 24.19.0
+Reviewer/date: pending independent redgres-ui-reviewer, redgres-security-reviewer,
+ and redgres-verifier (this implementer packet does not merge).
 ```

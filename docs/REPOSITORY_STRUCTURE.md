@@ -80,6 +80,7 @@ Redgres/
 │   ├── vite.config.ts
 │   └── src/
 │       ├── api/
+│       ├── text/
 │       ├── components/
 │       │   ├── shell/
 │       │   ├── search/

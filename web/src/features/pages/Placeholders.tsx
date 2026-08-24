@@ -1,4 +1,5 @@
 import { sectionTitle, type SectionId } from "../../nav";
+import AuditPage from "../audit/AuditPage";
 import DatabasesPage from "../postgres/DatabasesPage";
 
 type PageProps = {
@@ -33,6 +34,10 @@ export function SectionPage({ section }: PageProps) {
 
   if (section === "postgres") {
     return <DatabasesPage />;
+  }
+
+  if (section === "audit") {
+    return <AuditPage />;
   }
 
   const adapter =

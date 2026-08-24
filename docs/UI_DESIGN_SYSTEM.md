@@ -158,6 +158,10 @@ Every page header has one title, optional concise description, service/status co
 - Dependency failures are independent and actionable. PostgreSQL down must not blank Redis management, and vice versa.
 - Reserve red danger styling for errors/destructive actions; Redis identity red cannot make a healthy Redis panel look failed.
 
+### Stored and attacker-influenced text
+
+Audit history (and any later surface that renders stored actor, target, action, outcome, request identifiers, or similar fields) replaces bidirectional and other format/control characters with U+FFFD at render time, then wraps the visible value in `unicode-bidi: isolate` with base `direction: ltr`. CSS isolation is defense in depth only: source bidi controls remain honored until replaced. See `web/src/text/displayText.ts` and the PLAT-003 audit-history UI entry in [TRACEABILITY.md](TRACEABILITY.md). Homoglyph detection is out of scope.
+
 ### Credentials and danger
 
 - Credential tickets and destructive confirmation surfaces intentionally drop decorative service color and motion, emphasizing labels, scope, and consequences.
