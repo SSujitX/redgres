@@ -7,7 +7,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
-| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI (no mutations); REDIS-003–008 not started | Partial |
+| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003 Partial: POST create `on` + cache-read-write + one-time ticket (no rotate/delete); REDIS-004–008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
@@ -1502,6 +1502,82 @@ Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
  REDIS-002 Partial.
  Local commits: `07303be` (API), `0756f87` (UI), `7c3fa0e` (merge UI),
  `9af4b46` (docs record), `b73a52c` (REDIS-002 residual wording).
+ Not pushed.
+```
+
+## REDIS-003 create isolated ACL user (2026-08-25)
+
+```text
+Requirement: REDIS-003 (Partial: POST /api/v1/redis/users creates one
+ isolated ACL user, always on + cache-read-write). Keep REDIS-003 Partial.
+ REDIS-002 GET list/inspect unchanged (no CSRF, no audit). Do not mark
+ Complete. Do not claim REDIS-004–008, live Redis, or COMPATIBILITY.md §6.
+ No go-redis bump (stay v9.22.0).
+Decision/ADR: ADR-001; ADR-006 allow-list (`-@all` + explicit +CMD from
+ inspectCacheReadWrite). Production serve does not newly require
+ REDGRES_REDIS_PUBLIC_HOST / REDGRES_REDIS_PUBLIC_PORT.
+Source characterization: redis-ui CreateUser/BuildACLRules/NormalizePrefix/
+ GeneratePassword/handleCreateUser inspected read-only at
+ D:\code\github\redis-ui. Official Redis 8.2.2 / 8.8.0 acl.c + redis.io
+ ACL SETUSER: SETUSER upserts (LIST first); resetchannels after reset is
+ required; SETUSER modifier errors can include >password. go-redis v9.22.0
+ ACLSetUser is NewStatusCmd(ctx, "acl", "setuser", username, rules...);
+ local acl_commands.go SHA-256
+ 5F0E99517F9179DAF3F9B4395854F26E853532F0C02EE31CD9917133EEA94F5F.
+ ACL GETUSER, ACL USERS, Do, ACLGenPass not used.
+Implementation files: internal/redisadmin/{validate.go,validate_test.go,
+ credentials.go,credentials_test.go,create_test.go,presets.go,errors.go,
+ memory.go,adapter.go,service.go};
+ internal/httpapi/{server.go,redis_users_routes.go,redis_users_routes_test.go};
+ internal/config/{config.go,redis.go,redis_test.go};
+ web/src/{App.tsx,App.test.tsx,api/redis.ts,
+  components/shell/AppShell.tsx,features/pages/Placeholders.tsx,
+  features/redis/{AclUsersPage,CreateAclUserForm,CredentialTicket}.tsx,
+  styles/{globals,shell}.css};
+ docs/{API,ARCHITECTURE,CONFIGURATION,SECURITY,DATA_AND_SECRETS,UX,
+  TRACEABILITY}.md; AGENTS.md
+Unit/HTTP tests: username/prefix validation; password 32 chars unique;
+ rules contain reset/on/>/~:* /resetchannels/-@all/+PING or +GET;
+ never +@all/ACL/CONFIG/FLUSHALL; protected; duplicate; ACLSetUser once;
+ HTTP 201 no-store; CSRF; 401/403/400/409/503; unknown fields; GET still
+ no audit; canary/password absent from audit JSON; GET after create has
+ no password; public URL only when both host and port set; audit-fail
+ after SETUSER returns 503 without credential.
+Frontend App.test.tsx: POST {username,key_pattern} + CSRF, no password;
+ ticket shows password and ignores extra secrets; URL copy only when
+ urls.primary present; dismiss clears password then inspects; ticket
+ clears on logout/section/other inspect; Create hidden when
+ not_configured/unavailable; login never POST /redis/users; no
+ Storage.setItem.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
+ v25.3.0 (web/.nvmrc pins 24.19.0):
+ Writer API worktree feat/redis-003-create-api `6a93136`:
+  gofmt -w touched Go → success
+  go test -count=1 ./internal/redisadmin ./internal/httpapi ./internal/config
+   → ok redisadmin 1.591s; httpapi 11.530s; config 0.464s
+  go test -count=1 ./... → ok; go vet ./... → no findings;
+  go build -o NUL ./cmd/redgres → success
+ Parent after API FF `6a93136` then UI merge `a79f67d`:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi ./internal/config
+   → ok redisadmin 1.850s; httpapi 11.839s; config 0.526s
+  go test -count=1 ./... → ok cmd/redgres, audit, auth, config, database,
+   httpapi, platform, postgresadmin, redisadmin, web; migrations no test files
+  go vet ./... → no findings
+  npm --prefix web run test:run → Test Files 3 passed (3); Tests 122 passed
+   (122); Duration 19.93s (vitest 4.1.11)
+  npm --prefix web run build → tsc --noEmit + vite v8.2.2; 36 modules;
+   ../internal/web/dist/app/{index.html, assets/index-BmRbBVSX.css 15.65 kB,
+   assets/index-BJ4gHUk2.js 245.33 kB}; built in 534ms
+ Not run: live Redis, COMPATIBILITY §6, go test -race, gitleaks,
+ govulncheck, CI, browser viewports, Playwright, frontend jobs on
+ Node 24.19.0
+Known limitations: SETUSER-then-audit-fail residual (user exists, no
+ credential returned); concurrent ACL LIST/SETUSER race (upsert);
+ no explicit HTTP canary for SETUSER modifier text containing
+ >password (classifyRedisError maps to typed ErrUnavailable);
+ ticket alertdialog has no focus trap; no viewport/zoom sign-off.
+Reviewer/date: pending independent security, UI, and evidence review.
+ Local commits: `6a93136` (API), `9652adf` (UI), `a79f67d` (merge UI).
  Not pushed.
 ```
 

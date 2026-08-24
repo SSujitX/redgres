@@ -364,7 +364,7 @@ Success `201` when `SETUSER` succeeded:
 | 409 | `conflict` | Exact username already present in `ACL LIST`. |
 | 503 | `dependency_unavailable` | Nil adapter, `ErrNotConfigured`, or Redis auth/permission/unreachable. No `reason` key. Typed public message only. |
 
-The action is `redis.user.create`; target is the username; outcome is success or failure; metadata is `username`, `preset=cache-read-write`, and `key_pattern`. Passwords, URLs, and CSRF values are never audited. If `SETUSER` succeeds but the audit insert fails, the handler returns `503` and does not return the credential. If `SETUSER` fails, a failure audit is written and the Redis error is returned.
+The action is `redis.user.create`; target is the username; outcome is success or failure; metadata is `username`, `preset=cache-read-write`, and `key_pattern`. Passwords, URLs, and CSRF values are never audited. If `SETUSER` succeeds but the audit insert fails, the handler returns `503` and does not return the credential. If `SETUSER` fails, a failure audit is written and the client receives typed `503` `dependency_unavailable` only — never Redis `ERR` text, `err.Error()`, or a `>password` modifier.
 
 `PATCH`/`DELETE` enable, disable, rotate, delete, and `GET /api/v1/redis/presets` are not implemented in this slice.
 
