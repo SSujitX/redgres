@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { errorMessage, fetchRedisUser, fetchRedisUsers, type RedisAclUserListItem } from "../../api/redis";
+import {
+  createRedisUser,
+  errorMessage,
+  fetchRedisUser,
+  fetchRedisUsers,
+  type RedisAclUserListItem,
+} from "../../api/redis";
 import { displayText } from "../../text/displayText";
+import CreateAclUserForm from "./CreateAclUserForm";
+import CredentialTicket, { type ShownCredential } from "./CredentialTicket";
 
 const sessionExpired = "Your session has expired. Sign in again to continue.";
 const notConfigured = "Redis is not configured.";
@@ -106,18 +114,43 @@ function IsolatedId({ value }: { value: string }) {
   return <span className="bidi-isolate identifier">{displayText(value)}</span>;
 }
 
+function parseCredential(raw: unknown): ShownCredential | null {
+  const record = asRecord(raw);
+  if (!record) {
+    return null;
+  }
+  const username = stringField(record, "username");
+  const password = stringField(record, "password");
+  if (username === "" || password === "") {
+    return null;
+  }
+  const urls = asRecord(record.urls);
+  const url = urls ? stringField(urls, "primary") : "";
+  if (url === "") {
+    return { username, password };
+  }
+  return { username, password, url };
+}
+
 type AclUsersPageProps = {
+  csrf: string;
   focusUsername?: string | null;
   focusNonce?: number;
 };
 
-export default function AclUsersPage({ focusUsername = null, focusNonce = 0 }: AclUsersPageProps) {
+export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 0 }: AclUsersPageProps) {
   const [list, setList] = useState<ListView>({ kind: "loading" });
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailUser | null>(null);
   const [detailError, setDetailError] = useState("");
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [ticket, setTicket] = useState<ShownCredential | null>(null);
+  const [pendingInspect, setPendingInspect] = useState<string | null>(null);
   const selectionAbort = useRef<AbortController | null>(null);
+  const listAbort = useRef<AbortController | null>(null);
   const inspectorRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -126,48 +159,67 @@ export default function AclUsersPage({ focusUsername = null, focusNonce = 0 }: A
     }
   }, [selected]);
 
-  useEffect(() => {
+  function applyListResult(
+    result: Awaited<ReturnType<typeof fetchRedisUsers>>,
+    controller: AbortController,
+  ) {
+    if (controller.signal.aborted) {
+      return;
+    }
+    if (result.status === 401) {
+      clearTicket();
+      setCreateOpen(false);
+      setList({ kind: "session_expired" });
+      return;
+    }
+    if (result.status === 200 && result.body.state === "not_configured") {
+      setList({ kind: "not_configured" });
+      return;
+    }
+    if (result.status === 200 && result.body.state === "unavailable") {
+      setList({ kind: "unavailable", copy: unavailableCopy(result.body.reason) });
+      return;
+    }
+    if (result.status === 200 && result.body.state === "ok" && Array.isArray(result.body.users)) {
+      const users = result.body.users.flatMap((item: RedisAclUserListItem) => {
+        const parsed = parseListUser(item);
+        return parsed ? [parsed] : [];
+      });
+      setList({ kind: "ok", users, truncated: result.body.truncated === true });
+      return;
+    }
+    setList({ kind: "error", copy: errorMessage(result.body, redisUnavailable) });
+  }
+
+  function requestList() {
+    listAbort.current?.abort();
     const controller = new AbortController();
+    listAbort.current = controller;
     fetchRedisUsers({ signal: controller.signal })
-      .then((result) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        if (result.status === 401) {
-          setList({ kind: "session_expired" });
-          return;
-        }
-        if (result.status === 200 && result.body.state === "not_configured") {
-          setList({ kind: "not_configured" });
-          return;
-        }
-        if (result.status === 200 && result.body.state === "unavailable") {
-          setList({ kind: "unavailable", copy: unavailableCopy(result.body.reason) });
-          return;
-        }
-        if (result.status === 200 && result.body.state === "ok" && Array.isArray(result.body.users)) {
-          const users = result.body.users.flatMap((item: RedisAclUserListItem) => {
-            const parsed = parseListUser(item);
-            return parsed ? [parsed] : [];
-          });
-          setList({ kind: "ok", users, truncated: result.body.truncated === true });
-          return;
-        }
-        setList({ kind: "error", copy: errorMessage(result.body, redisUnavailable) });
-      })
+      .then((result) => applyListResult(result, controller))
       .catch((err) => {
         if (controller.signal.aborted || isAbortError(err)) {
           return;
         }
         setList({ kind: "error", copy: redisUnavailable });
       });
+  }
+
+  useEffect(() => {
+    requestList();
     return () => {
-      controller.abort();
+      listAbort.current?.abort();
       selectionAbort.current?.abort();
     };
   }, []);
 
+  function clearTicket() {
+    setTicket(null);
+    setPendingInspect(null);
+  }
+
   function openDetails(username: string) {
+    clearTicket();
     selectionAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
@@ -200,6 +252,8 @@ export default function AclUsersPage({ focusUsername = null, focusNonce = 0 }: A
         return;
       }
       if (result.status === 401) {
+        clearTicket();
+        setCreateOpen(false);
         setDetail(null);
         setDetailError(sessionExpired);
         return;
@@ -237,6 +291,47 @@ export default function AclUsersPage({ focusUsername = null, focusNonce = 0 }: A
     }
   }
 
+  function dismissTicket() {
+    const name = pendingInspect;
+    setTicket(null);
+    setPendingInspect(null);
+    if (name) {
+      openDetails(name);
+    }
+  }
+
+  async function handleCreate(username: string, keyPattern: string) {
+    setCreating(true);
+    setCreateError("");
+    try {
+      const result = await createRedisUser(username, keyPattern, csrf);
+      if (result.status === 401) {
+        clearTicket();
+        setCreateOpen(false);
+        setList({ kind: "session_expired" });
+        return;
+      }
+      if (result.status === 201) {
+        const shown = parseCredential(result.body.credential);
+        if (!shown) {
+          setCreateError(errorMessage(result.body, redisUnavailable));
+          return;
+        }
+        setCreateOpen(false);
+        setCreateError("");
+        setTicket(shown);
+        setPendingInspect(shown.username);
+        requestList();
+        return;
+      }
+      setCreateError(errorMessage(result.body, redisUnavailable));
+    } catch {
+      setCreateError(redisUnavailable);
+    } finally {
+      setCreating(false);
+    }
+  }
+
   const listAlert =
     list.kind === "session_expired"
       ? sessionExpired
@@ -248,12 +343,33 @@ export default function AclUsersPage({ focusUsername = null, focusNonce = 0 }: A
             ? list.copy
             : "";
 
+  const canCreate = list.kind === "ok" && ticket === null;
+
   return (
     <article>
       <header className="page-header page-header-redis">
-        <h1>ACL users</h1>
-        <p>Inspect Redis ACL users and modeled rules. Create, rotate, and delete are not available in this slice.</p>
+        <div className="page-header-row">
+          <h1>ACL users</h1>
+          {canCreate ? (
+            <button type="button" className="primary-button" onClick={() => setCreateOpen(true)}>
+              Create ACL user
+            </button>
+          ) : null}
+        </div>
+        <p>Create a cache-read/write ACL user with a project key prefix, or inspect modeled rules. Rotate and delete are not available in this slice.</p>
       </header>
+      {ticket ? <CredentialTicket credential={ticket} onDismiss={dismissTicket} /> : null}
+      {createOpen ? (
+        <CreateAclUserForm
+          error={createError}
+          submitting={creating}
+          onCancel={() => {
+            setCreateOpen(false);
+            setCreateError("");
+          }}
+          onSubmit={(username, keyPattern) => void handleCreate(username, keyPattern)}
+        />
+      ) : null}
       {listAlert ? (
         <p className="form-warning" role="alert">
           {listAlert}

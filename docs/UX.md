@@ -55,13 +55,14 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 
 ## Redis workflow
 
-- The ACL users page lists Redis ACL users and inspects one user’s modeled rules without secrets. The title is “ACL users” from navigation. There is no Create control in this slice.
+- The ACL users page lists Redis ACL users and inspects one user’s modeled rules without secrets. The title is “ACL users” from navigation. Create ACL user is a page-header action (not the topbar) and is hidden when the list is `not_configured` or `unavailable`.
 - Authenticated `GET /api/v1/redis/users` uses the session cookie, no query string, and no CSRF. Protected users are listed and inspectable. Ledger rows are buttons showing username (Protected badge), Enabled or Disabled, preset, key prefix, and Limited when `rule_fidelity` is `limited`.
 - `state: not_configured` is not an empty healthy list. `state: unavailable` with `unreachable`, `auth_failed`, or `permission_denied` uses copy distinct from “No ACL users.” HTTP 200 `state: ok` with `users: []` is “No ACL users.” Truncation is disclosed. Envelope 401 uses “Your session has expired. Sign in again to continue.”
-- Selecting a row loads `GET /api/v1/redis/users/{username}` with AbortController; a slower first selection is ignored. Below 1024px, sibling ledger rows hide while one user is inspected (Back to users restores the list) and focus moves into the inspector. The inspector shows commands, categories, optional queue kind, and limited-rule copy when Redgres cannot model the rules exactly. It does not rewrite, create, rotate, or delete. A 404 is a not-found alert, never an empty healthy inspector. Detail `unavailable` uses the same typed Redis copy as the list.
-- Truncation is disclosed as an alert above the ledger. Painted identifiers use `displayText()` plus bidi isolate. The Redis service rail is wayfinding; healthy and limited states do not use danger red. Login never fetches `/api/v1/redis/users`. List and inspector state stay in memory (no `localStorage`) and clear on logout.
-- Permission presets remain a placeholder.
-- Residual: create form (safe preset and project-specific prefix), queue-kind selection, custom allow-list editing, enable/disable/rotate/delete.
+- Selecting a row loads `GET /api/v1/redis/users/{username}` with AbortController; a slower first selection is ignored. Below 1024px, sibling ledger rows hide while one user is inspected (Back to users restores the list) and focus moves into the inspector. The inspector shows commands, categories, optional queue kind, and limited-rule copy when Redgres cannot model the rules exactly. It does not rewrite, rotate, or delete. A 404 is a not-found alert, never an empty healthy inspector. Detail `unavailable` uses the same typed Redis copy as the list.
+- Truncation is disclosed as an alert above the ledger. Painted identifiers use `displayText()` plus bidi isolate. The Redis service rail is wayfinding; healthy and limited states do not use danger red. Login never fetches or POSTs `/api/v1/redis/users`. List, inspector, and credential-ticket state stay in memory (no `localStorage` / `sessionStorage`) and clear on logout.
+- Create uses username and key prefix only. The prefix is suggested from the username until the prefix field is edited. The permission preset is read-only Cache read/write. There is no command editor. The POST body is `{ username, key_pattern }` with CSRF and never includes a password. Search remains inspect-only.
+- A successful create refreshes the list and opens a one-time Redis credential ticket. The new user is inspected only after the ticket is dismissed, so the password does not linger in inspect state. The ticket shows username, password, and URL copy only when `credential.urls.primary` is present; it does not auto-copy. Extra secret fields in the response are ignored.
+- Residual: other presets, queue-kind selection, custom allow-list editing, enable/disable/rotate/delete, Overview quick-create.
 
 ## Audit history
 
@@ -76,10 +77,10 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 ## Credential ticket
 
 - Opens only from successful create/rotate/reveal response.
-- Clearly labels PostgreSQL revealable vs Redis one-time semantics.
-- Separate copy controls for username/password/direct/pooled URL as applicable.
-- Does not auto-copy, auto-download, include QR codes, or persist.
-- On dismissal, overwrite/clear component state; clear on logout, route/target change, or session expiry.
+- Clearly labels PostgreSQL revealable vs Redis one-time semantics. Redis create uses “shown now” one-time copy; Redgres cannot show the password again.
+- Separate copy controls for username/password/direct/pooled URL as applicable. Redis create shows URL copy only when `credential.urls.primary` is present.
+- Does not auto-copy, auto-download, include QR codes, or persist. Do not write secrets to `localStorage` or `sessionStorage`.
+- On dismissal, overwrite/clear component state; clear on logout, section change, inspect of another user, or session expiry.
 - Warn that copied data remains in OS clipboard history outside Redgres control.
 
 ## Dangerous actions

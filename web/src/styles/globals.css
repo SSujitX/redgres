@@ -99,6 +99,54 @@ input:focus-visible {
   padding: 0 var(--space-3);
 }
 
+.field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.field-stack label {
+  font-weight: 600;
+}
+
+.field-stack input,
+.readonly-field {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-3);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.readonly-field {
+  display: flex;
+  align-items: center;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.credential-ticket {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-surface);
+}
+
+.credential-ticket .text-button,
+.credential-ticket .primary-button {
+  margin-top: var(--space-2);
+}
+
 .form-error {
   color: var(--danger);
 }

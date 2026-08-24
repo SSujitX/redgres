@@ -48,8 +48,33 @@ function isRedisUsersListUrl(url: string): boolean {
   return url === "/api/v1/redis/users";
 }
 
+function isRedisUsersCreate(url: string, init?: RequestInit): boolean {
+  return isRedisUsersListUrl(url) && String(init?.method ?? "").toUpperCase() === "POST";
+}
+
 function isRedisUserDetailUrl(url: string, username: string): boolean {
   return url === `/api/v1/redis/users/${encodeURIComponent(username)}`;
+}
+
+function redisAclCreate201(extra: Record<string, unknown> = {}) {
+  return jsonResponse(201, {
+    resource: { type: "redis_user", name: "project_a" },
+    user: {
+      username: "project_a",
+      enabled: true,
+      key_pattern: "project_a:*",
+      preset: "cache-read-write",
+      protected: false,
+      rule_fidelity: "exact",
+    },
+    credential: {
+      username: "project_a",
+      password: "canary-one-time-password-32chars!!",
+      one_time: true,
+    },
+    request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ...extra,
+  });
 }
 
 function redisAclListItem(extra: Record<string, unknown> = {}) {
@@ -851,7 +876,8 @@ describe("App session and login", () => {
     expect(await screen.findByRole("heading", { name: "ACL users" })).toBeInTheDocument();
     expect(await screen.findByText("get")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "ACL user details" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create ACL user" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
     expect(screen.queryByText("canary-secret")).not.toBeInTheDocument();
     expect(setItem).not.toHaveBeenCalled();
     const urls = fetch.mock.calls.map((call) => String(call[0]));
@@ -2869,7 +2895,11 @@ describe("App session and login", () => {
     expect(await screen.findByRole("heading", { name: "ACL users" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
     expect(screen.queryByText("This adapter is not available yet.")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+    const header = screen.getByRole("heading", { name: "ACL users" }).closest("header");
+    expect(header).not.toBeNull();
+    expect(within(header as HTMLElement).getByRole("button", { name: "Create ACL user" })).toBeInTheDocument();
+    expect(document.querySelector(".topbar")).not.toBeNull();
+    expect(within(document.querySelector(".topbar") as HTMLElement).queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
   });
 
   it("requests the first ACL user list from exactly /api/v1/redis/users", async () => {
@@ -2961,7 +2991,7 @@ describe("App session and login", () => {
     expect(await screen.findByText(/cannot model these rules exactly/)).toBeInTheDocument();
     expect(screen.getByText("get")).toBeInTheDocument();
     expect(screen.getByText("@read")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create ACL user" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
 
@@ -2984,6 +3014,7 @@ describe("App session and login", () => {
     goToAclUsers();
     expect(await screen.findByRole("alert")).toHaveTextContent("Redis is not configured.");
     expect(screen.queryByText("No ACL users.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
   });
 
   it.each([
@@ -3010,6 +3041,7 @@ describe("App session and login", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(copy);
     expect(screen.queryByText("No ACL users.")).not.toBeInTheDocument();
     expect(screen.queryByText("Redis is not configured.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
   });
 
   it("shows No ACL users only for an empty healthy list", async () => {
@@ -3028,6 +3060,7 @@ describe("App session and login", () => {
     expect(await screen.findByText("No ACL users.")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText("Redis is not configured.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create ACL user" })).toBeInTheDocument();
   });
 
   it("shows a truncated ACL user list warning", async () => {
@@ -3312,5 +3345,306 @@ describe("App session and login", () => {
       expect(screen.queryByText("stale-command")).not.toBeInTheDocument();
     });
     expect(screen.getByText("fresh-command")).toBeInTheDocument();
+  });
+
+  it("POSTs a create ACL user body with CSRF and no password", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-create".padEnd(64, "0") });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return redisAclCreate201();
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    expect(within(dialog).getByLabelText("Key prefix")).toHaveValue("project_a:*");
+    expect(within(dialog).getByText("Cache read/write")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
+    });
+    const createCall = fetch.mock.calls.find((call) => isRedisUsersCreate(String(call[0]), call[1]));
+    expect(createCall?.[0]).toBe("/api/v1/redis/users");
+    expect(new Headers(createCall?.[1]?.headers).get("X-CSRF-Token")).toBe("acl-create".padEnd(64, "0"));
+    const body = JSON.parse(String(createCall?.[1]?.body));
+    expect(body).toEqual({ username: "project_a", key_pattern: "project_a:*" });
+    expect(body).not.toHaveProperty("password");
+    const getCalls = fetch.mock.calls.filter(
+      (call) => isRedisUsersListUrl(String(call[0])) && !isRedisUsersCreate(String(call[0]), call[1]),
+    );
+    expect(getCalls.length).toBeGreaterThan(1);
+    expect(getCalls.every((call) => new Headers(call[1]?.headers).get("X-CSRF-Token") === null)).toBe(true);
+  });
+
+  it("shows the one-time ticket password after 201 and ignores extra secret fields", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-ticket".padEnd(64, "0") });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return redisAclCreate201({
+          credential: {
+            username: "project_a",
+            password: "canary-one-time-password-32chars!!",
+            one_time: true,
+            extra_secret: "should-not-render",
+            private_key: "-----BEGIN PRIVATE KEY-----",
+          },
+          extra_secret: "top-level-should-not-render",
+        });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    const ticket = await screen.findByRole("alertdialog", { name: /shown now/i });
+    expect(ticket).toHaveTextContent("canary-one-time-password-32chars!!");
+    expect(ticket).toHaveTextContent("project_a");
+    expect(ticket).toHaveTextContent(/shown now/i);
+    expect(within(ticket).getByRole("button", { name: "Copy username" })).toBeInTheDocument();
+    expect(within(ticket).getByRole("button", { name: "Copy password" })).toBeInTheDocument();
+    expect(within(ticket).queryByRole("button", { name: "Copy URL" })).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render");
+    expect(document.body.textContent).not.toContain("-----BEGIN PRIVATE KEY-----");
+    expect(document.body.textContent).not.toContain("top-level-should-not-render");
+  });
+
+  it("shows URL copy only when credential.urls.primary is present", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-url".padEnd(64, "0") });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return redisAclCreate201({
+          credential: {
+            username: "project_a",
+            password: "canary-one-time-password-32chars!!",
+            one_time: true,
+            urls: { primary: "rediss://project_a:canary-one-time-password-32chars!!@127.0.0.1:6380/0" },
+          },
+        });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    const ticket = await screen.findByRole("alertdialog", { name: /shown now/i });
+    expect(within(ticket).getByRole("button", { name: "Copy URL" })).toBeInTheDocument();
+    expect(ticket).toHaveTextContent("rediss://project_a:canary-one-time-password-32chars!!@127.0.0.1:6380/0");
+  });
+
+  it("clears the ticket password on dismiss and inspects the new user afterward", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-dismiss".padEnd(64, "0") });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return redisAclCreate201();
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ commands: ["get"], categories: [] });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    expect(await screen.findByText("canary-one-time-password-32chars!!")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "ACL user details" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(screen.queryByText("canary-one-time-password-32chars!!")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("canary-one-time-password-32chars!!");
+    expect(await screen.findByRole("region", { name: "ACL user details" })).toBeInTheDocument();
+    expect(await screen.findByText("get")).toBeInTheDocument();
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("clears the ticket on logout and section change", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-ticket-out".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return redisAclCreate201();
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    expect(await screen.findByText("canary-one-time-password-32chars!!")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(screen.queryByText("canary-one-time-password-32chars!!")).not.toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const again = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(again).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.click(within(again).getByRole("button", { name: "Create" }));
+    expect(await screen.findByText("canary-one-time-password-32chars!!")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByText("canary-one-time-password-32chars!!")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("canary-one-time-password-32chars!!");
+  });
+
+  it("clears the ticket when inspecting another ACL user", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-ticket-inspect".padEnd(64, "0") });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return redisAclCreate201();
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([
+          redisAclListItem(),
+          redisAclListItem({ username: "project_b", key_pattern: "project_b:*" }),
+        ]);
+      }
+      if (isRedisUserDetailUrl(url, "project_b")) {
+        return redisAclDetailOk({
+          username: "project_b",
+          key_pattern: "project_b:*",
+          commands: ["fresh-command"],
+          categories: [],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    expect(await screen.findByText("canary-one-time-password-32chars!!")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_b/ }));
+    expect(screen.queryByText("canary-one-time-password-32chars!!")).not.toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "ACL user details" })).toBeInTheDocument();
+    expect(await screen.findByText("fresh-command")).toBeInTheDocument();
+  });
+
+  it.each([
+    [409, "ACL user already exists."],
+    [403, "You do not have permission to create ACL users."],
+    [400, "Username is invalid."],
+  ] as const)("shows create %s copy", async (status, message) => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: `acl-${status}`.padEnd(64, "0") });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return jsonResponse(status, { error: { message } });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
+    expect(screen.queryByText("canary-one-time-password-32chars!!")).not.toBeInTheDocument();
+  });
+
+  it("shows session expired on create 401 and does not keep a ticket", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-create-401".padEnd(64, "0") });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("canary-one-time-password-32chars!!")).not.toBeInTheDocument();
+  });
+
+  it("never POSTs /api/v1/redis/users from the login route", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      if (url.includes("/api/v1/auth/login")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/redis/users"))).toBe(true);
   });
 });
