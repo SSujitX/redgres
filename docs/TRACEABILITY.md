@@ -5,7 +5,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
-| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL hits unimplemented) | Partial |
+| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI (no mutations); REDIS-003–008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
@@ -1364,8 +1364,9 @@ Security tests: canary #hash / >password absent; 401 omits users/user;
 Deployment/migration impact: none. go.mod unchanged. Application rollback
  binary/config only.
 Known limitations: inspect-only preset v1; limited ≠ expanded categories;
- list cap 500; search Redis still not_implemented; no viewport/zoom sign-off;
- no create/rotate/delete; redis-presets placeholder.
+ list cap 500; no viewport/zoom sign-off; no create/rotate/delete;
+ redis-presets placeholder. Redis ACL search hits landed later as PLAT-004
+ residual (2026-08-25).
 Commands executed locally (2026-08-25) after fast-forward API `46637d0`
  then merge UI `18fa511` as `f61be71`, remediations `26286e3`/`9ac5757`/`338d88d`,
  go1.27.0 windows/amd64, Node v25.3.0 (web/.nvmrc pins 24.19.0), verifier rerun
@@ -1405,4 +1406,72 @@ Reviewer/date: Security review (2026-08-25) approve inspect-only list/GET +
  `5d754f5` (docs), `26286e3`/`9ac5757`/`338d88d` (inspect-one remediations).
  Not pushed.
 ```
+
+## PLAT-004 Redis ACL search hits (2026-08-25)
+
+```text
+Requirement: PLAT-004 (Partial residual). Authenticated GET /api/v1/search
+ redis_acl_users maps redisadmin.Search (ACL LIST via ListUsers). Status is
+ not_configured | ok | unavailable — never not_implemented. Hits only when
+ ok: {id:"redis_acl_user:<username>", type:"redis_acl_user", label:"<username>"}.
+ Empty hits are []. Protected usernames omitted from search even though
+ GET /api/v1/redis/users still lists them. UI opens ACL inspect-one in memory.
+ Keep PLAT-004 Partial (no docs corpus / deep links / command palette).
+ REDIS-002 remains inspect-only. Do not mark Complete. Do not claim
+ COMPATIBILITY.md §6.
+Decision/ADR: ADR-001; ADR-006 inspect-only (ACL LIST only).
+ platform.ResourceGroups(pg, redis) does not import postgresadmin/redisadmin.
+ HTTP maps adapter sentinels; capability remains platform.read; GET not
+ audited; no CSRF. No go.mod / go-redis bump.
+Source characterization: redis-ui has no global search API (UserLedger is a
+ local filter). Not edited.
+Implementation files: internal/redisadmin/{service.go,service_test.go};
+ internal/platform/{search.go,search_test.go};
+ internal/httpapi/{server.go,search_routes.go,search_routes_test.go};
+ web/src/components/search/NavigationSearch.tsx;
+ web/src/components/shell/AppShell.tsx;
+ web/src/features/pages/Placeholders.tsx;
+ web/src/features/redis/AclUsersPage.tsx; web/src/App.test.tsx;
+ docs/{API,ARCHITECTURE,UX,TRACEABILITY}.md; AGENTS.md
+Unit/HTTP tests: redisadmin Search omits protected, case-insensitive,
+ limit/truncation, nil not_configured, ACL errors without canary;
+ platform Redis ok hits, postgres-down keeps redis, redis-unavailable keeps
+ postgres, never not_implemented, hit fields only;
+ httpapi nil redis not_configured, nil postgres still probes redis,
+ Memory project_a hit, q=default omits protected while list still shows
+ default, auth_failed keeps postgres hits, #hash/>password canaries absent,
+ GET /status and /redis/users unchanged
+Frontend App.test.tsx: redis hit inspects project_a; extra secret fields
+ ignored; Unavailable ≠ not available yet; postgres unavailable still shows
+ redis hits; count “1 matching ACL user.”; logout clears inspector; no
+ Storage.setItem; Create absent; disconnectedSearch redis not_configured
+Integration tests: none. COMPATIBILITY.md §6 not claimed. No live Redis.
+Security tests: protected Redis usernames omitted from search; ACL canaries
+ absent; 401 has no groups; no reason on search groups; hits only
+ id/type/label; GET not audited; login never fetches /search
+Deployment/migration impact: none. go.mod unchanged. Application rollback
+ binary/config only. go-redis remains v9.22.0.
+Known limitations: no docs corpus, URL deep links, or command-palette
+ actions; ListUsers cap 500 applies to search; no viewport/zoom sign-off;
+ REDIS-003–008 not started.
+Commands executed locally (2026-08-25) after FF API `07303be` then merge UI
+ `0756f87` as `7c3fa0e`, go1.27.0 windows/amd64, Node v25.3.0 (web/.nvmrc
+ pins 24.19.0):
+  go test -count=1 ./internal/platform ./internal/redisadmin ./internal/httpapi
+   → PASS (parent after API FF)
+  go test -count=1 ./... → ok cmd/redgres, audit, auth, config, database,
+   httpapi, platform, postgresadmin, redisadmin, web; migrations no test files
+  npm --prefix web run test:run → Test Files 3 passed (3); Tests 111 passed
+   (111); Duration 15.95s (vitest 4.1.11)
+  npm --prefix web run build → tsc --noEmit + vite v8.2.2; 34 modules;
+   ../internal/web/dist/app/{index.html, assets/index-FsGibsca.css 14.75 kB,
+   assets/index-B9gZve1k.js 240.65 kB}; built in 169ms
+  Writer also ran gofmt/vet/build on API worktree and npm test 111 / build
+   on UI worktree. Not run: go test -race, gitleaks, govulncheck, CI, live
+   Redis, browser viewports, Playwright, frontend jobs on Node 24.19.0
+Reviewer/date: not yet reviewed. Keep PLAT-004 Partial.
+ Local commits: `07303be` (API), `0756f87` (UI), `7c3fa0e` (merge UI).
+ Not pushed.
+```
+
 
