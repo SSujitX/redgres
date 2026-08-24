@@ -1216,6 +1216,7 @@ describe("App session and login", () => {
               outcome: `ok\u202E`,
               request_id: `aa\u202Ebb`,
               client_ip: `1.2.3.4\u202E`,
+              created_at: `2026-08-25T04:11:09.123456789\u202EZ`,
             }),
           ],
           has_more: false,
@@ -1239,6 +1240,10 @@ describe("App session and login", () => {
       true,
     );
     expect(isolates.length).toBeGreaterThan(0);
+    for (const stamp of document.querySelectorAll("time")) {
+      expect(stamp.getAttribute("dateTime") ?? "").not.toContain("\u202E");
+      expect(stamp.getAttribute("dateTime") ?? "").toContain("\uFFFD");
+    }
   });
 
   it("renders markup-looking actor values as text nodes (AC-6)", async () => {
