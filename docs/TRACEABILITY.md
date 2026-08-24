@@ -848,7 +848,8 @@ Unit tests: web/src/text/displayText.test.ts — twelve F-2 points + U+200B,
  web/src/App.test.tsx AC-1 heading+table/list, placeholder absent; AC-2 first
  URL exactly /api/v1/audit; AC-3 verbatim cursor + Older disabled on has_more
  false / missing / empty next_cursor; AC-4 three-page forward, two Newer replay
- cursors; AC-5 array order ids 9,3,7; AC-6 bidi replacement + isolate class +
+ cursors; AC-5 array order ids 9,3,7; AC-6 bidi replacement + isolate class + created_at/dateTime poison
+ (U+202E in the timestamp; time[dateTime] contains U+FFFD, not U+202E) +
  markup actor is a text node; AC-7 verbatim RFC3339Nano + UTC, no AM/PM;
  AC-8 em dash + Not recorded, Null absent; AC-9 source-address disclosure,
  column not Client IP; AC-10 401/400/503/TypeError; AC-11 200 empty page;
@@ -893,6 +894,22 @@ Commands executed locally (2026-08-25), worktree
   Not run: go test -race ./..., gitleaks, govulncheck, CI, live PostgreSQL or
    Redis, browser viewports 360×800 / 768×1024 / 1280×800 / 1600×1000, 200%
    zoom, Playwright, frontend jobs on pinned Node 24.19.0
-Reviewer/date: pending independent redgres-ui-reviewer, redgres-security-reviewer,
- and redgres-verifier (this implementer packet does not merge).
+Reviewer/date: Security review (2026-08-25) approve, no Critical/High/Medium
+ introduced. Confirmed UAX #9 twelve Bidi_Control points enumerated (not
+ \p{Bidi_Control}), U+FFFD not deletion, every painted field including dateTime
+ through displayText, React text nodes, 400 uses a fixed string, no metadata
+ in the client type, no storage/URL persistence. Homoglyphs and login-path
+ flooding recorded as residuals, not claimed closed. One Low: AC-6 originally
+ omitted created_at; parent applied that in `7e84e6d` (timestamp now carries
+ U+202E and dateTime is asserted). Reviewer did not run tests or git diff.
+ UI review (2026-08-25) approve, no required code changes. Confirmed shared
+ tokens, no service rail, UTC-verbatim, distinct states, keyboard pager 44px,
+ displayText on every field including dateTime. Explicitly NOT viewport,
+ a11y-tree, or visual-bidi sign-off: no browser tools, app not opened. Optional
+ Lows (disabled text-button opacity, VoiceOver ol mapping, empty-state next
+ action, 401 copy pointing at Log out, empty created_at) accepted unfixed —
+ they are polish, not contract misses. Parent also applied `1adfb89` before
+ review: UX.md bidi bullet the packet required, and dateTime uses the same
+ sanitized string as visible text.
+ Verifier pending.
 ```
