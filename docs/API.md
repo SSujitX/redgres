@@ -223,7 +223,7 @@ Database/role names in URL segments are decoded then validated. Transport valida
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/v1/redis/status` | Health/performance summary |
+| GET | `/api/v1/redis/status` | Health/performance summary (implemented) |
 | GET | `/api/v1/redis/users` | Managed and visible ACL users |
 | GET | `/api/v1/redis/users/{username}` | User/preset/rules |
 | POST | `/api/v1/redis/users` | Create; one-time credential; `no-store` |
@@ -235,6 +235,39 @@ Database/role names in URL segments are decoded then validated. Transport valida
 | GET | `/api/v1/redis/presets` | Versioned available presets/commands for UI/docs |
 
 There is no generic Redis command endpoint.
+
+**GET `/api/v1/redis/status`** requires a session cookie and the `redis.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
+
+The handler always returns `200` when it runs, even if Redis is down. Redis failure is represented as `state` `unavailable`; it is not a `503`. `503` `dependency_unavailable` happens only when `requireSession` cannot read SQLite. Missing session is `401` `unauthorized` with no `state`, `metrics`, or `reason` keys. `POST`, `PUT`, `PATCH`, and `DELETE` are `405` `method_not_allowed`. The response is `Cache-Control: no-store`. There are no query parameters; the path is exactly `/api/v1/redis/status`. The Status probe uses a 2s timeout (same bound as `platform.Collect`).
+
+Success `200` when Redis is reachable:
+
+```json
+{
+  "state": "ok",
+  "metrics": {
+    "version": "8.2.1",
+    "uptime_seconds": 123,
+    "connected_clients": 4,
+    "used_memory_bytes": 1048576,
+    "max_memory_bytes": 0,
+    "ops_per_sec": 12,
+    "db_size": 50,
+    "latency_ms": 1.25
+  },
+  "request_id": "<32 lowercase hex>"
+}
+```
+
+| `state` | Keys |
+|---|---|
+| `not_configured` | `state`, `request_id` only (nil adapter or `ErrNotConfigured`) |
+| `unavailable` | `state`, `reason`, `request_id`. No `metrics`. |
+| `ok` | `state`, `metrics` (all eight keys always present), `request_id`. No `reason`. |
+
+`reason` is present only when `state` is `unavailable`, and is exactly `unreachable`, `auth_failed`, or `permission_denied`. Metrics mapping: `version` ← `redis_version`; `uptime_seconds` ← `uptime_in_seconds`; `connected_clients` ← `connected_clients`; `used_memory_bytes` ← `used_memory`; `max_memory_bytes` ← `maxmemory` (`0` means unlimited and is still present); `ops_per_sec` ← `instantaneous_ops_per_sec`; `db_size` ← `DBSIZE` of the URL-selected database; `latency_ms` ← Ping wall-clock RTT as float64 microseconds/1000 (not the Redis `LATENCY` command). Ping OK but `INFO` or `DBSIZE` failing is `unavailable` with no metrics; missing or unparseable required INFO keys are `unreachable` with no zero-filled `version`. Redis errors are classified on tokens `NOAUTH`, `WRONGPASS`, and `NOPERM`; responses never include `err.Error()`. The payload never includes host, port, DSN, password, token, URL, or `skip_verify`. This GET is not a mutation and does not write an audit event.
+
+GET `/api/v1/status` is unchanged: Redis there remains Ping-only, with `reason` only `unreachable`, and no version/uptime/metrics.
 
 ## Credential payload
 
