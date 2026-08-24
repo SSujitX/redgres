@@ -106,7 +106,12 @@ function IsolatedId({ value }: { value: string }) {
   return <span className="bidi-isolate identifier">{displayText(value)}</span>;
 }
 
-export default function AclUsersPage() {
+type AclUsersPageProps = {
+  focusUsername?: string | null;
+  focusNonce?: number;
+};
+
+export default function AclUsersPage({ focusUsername = null, focusNonce = 0 }: AclUsersPageProps) {
   const [list, setList] = useState<ListView>({ kind: "loading" });
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailUser | null>(null);
@@ -172,6 +177,13 @@ export default function AclUsersPage() {
     setLoadingDetail(true);
     void loadDetail(username, controller);
   }
+
+  useEffect(() => {
+    if (!focusUsername) {
+      return;
+    }
+    openDetails(focusUsername);
+  }, [focusUsername, focusNonce]);
 
   function clearSelection() {
     selectionAbort.current?.abort();

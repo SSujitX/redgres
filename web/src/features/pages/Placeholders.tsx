@@ -7,10 +7,16 @@ import AclUsersPage from "../redis/AclUsersPage";
 type PageProps = {
   section: SectionId;
   focusDatabase?: string | null;
+  focusUsername?: string | null;
   focusNonce?: number;
 };
 
-export function SectionPage({ section, focusDatabase = null, focusNonce = 0 }: PageProps) {
+export function SectionPage({
+  section,
+  focusDatabase = null,
+  focusUsername = null,
+  focusNonce = 0,
+}: PageProps) {
   const title = sectionTitle(section);
   if (section === "overview") {
     return <OverviewPage />;
@@ -25,7 +31,7 @@ export function SectionPage({ section, focusDatabase = null, focusNonce = 0 }: P
   }
 
   if (section === "redis") {
-    return <AclUsersPage />;
+    return <AclUsersPage focusUsername={focusUsername} focusNonce={focusNonce} />;
   }
 
   const adapter =
