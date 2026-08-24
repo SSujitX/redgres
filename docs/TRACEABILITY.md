@@ -7,7 +7,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL hits unimplemented) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
-| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002–008 not started | Partial |
+| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI (no mutations); REDIS-003–008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
@@ -1327,5 +1327,60 @@ Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
  Local commits: `6d3afc3` (API), `83826dc` (UI), `aa0a044` (merge API),
  `a5d88e2` (merge UI), `2dc4d02` (docs). Not pushed.
 ```
+
+## REDIS-002 ACL list and inspect (2026-08-25)
+
+```text
+Requirement: REDIS-002 (Partial: ACL list/inspect GET + UI). Do not mark
+ Complete. PLAT-004 Redis hits remain not_implemented. REDIS-001/PLAT-001
+ stay Partial. Do not claim COMPATIBILITY.md §6.
+Decision/ADR: ADR-001; ADR-006 inspect-only (ACL LIST; no SETUSER; no
+ deny-list grants). platform.Collect and GET /status unchanged.
+Source characterization: redis-ui ListUsers/parseACLLine/InferPreset/
+ IsProtectedUsername inspected read-only; silent skip of bad lines not
+ copied. Official ACL LIST hash-in-line; ACL GETUSER not called (passwords
+ field). go-redis v9.22.0 ACLList → ACL LIST.
+Implementation files: internal/redisadmin/{acl.go,acl_test.go,presets.go,
+ adapter.go,service.go,memory.go,errors.go,service_test.go};
+ internal/httpapi/{server.go,redis_users_routes.go,redis_users_routes_test.go};
+ web/src/api/redis.ts; web/src/features/redis/AclUsersPage.tsx;
+ web/src/features/pages/Placeholders.tsx; web/src/App.test.tsx;
+ web/src/styles/globals.css; docs/{API,ARCHITECTURE,UX,TRACEABILITY}.md;
+ AGENTS.md
+Unit/HTTP tests: official LIST lines; hash/> canary absent; +@read →
+ custom+limited; exact v1 cache-read-write; protected visible; 501st
+ truncated; classify NOAUTH/WRONGPASS/NOPERM; HTTP 401 no users/user;
+ not_configured; ok list; detail 200; 404 Not found; 400 no echo; 405;
+ no-store; /status and /redis/status unchanged
+Frontend App.test.tsx: placeholder gone; list URL exactly /api/v1/redis/users;
+ select /users/project_a; protected+limited; not_configured/unavailable/empty
+ distinct; truncated; 401; 404; canary not rendered; login does not fetch
+ users; search Redis copy unchanged; no Storage.setItem; logout clears
+ inspector
+Integration tests: none. COMPATIBILITY.md §6 not claimed. No live Redis.
+Security tests: canary #hash / >password absent; 401 omits users/user;
+ protected visible not 404; GET not audited; no-store; no ACL GETUSER.
+Deployment/migration impact: none. go.mod unchanged. Application rollback
+ binary/config only.
+Known limitations: inspect-only preset v1; limited ≠ expanded categories;
+ list cap 500; search Redis still not_implemented; no viewport; no
+ create/rotate/delete; redis-presets placeholder.
+Commands executed locally (2026-08-25) after fast-forward API `46637d0`
+ then merge UI `18fa511` as `f61be71`, go1.27.0 windows/amd64, Node v25.3.0
+ (web/.nvmrc pins 24.19.0):
+  go test -count=1 ./... → ok cmd/redgres, audit, auth, config, database,
+   httpapi, platform, postgresadmin, redisadmin, web; migrations no test files
+  go vet ./... → no findings (exit 0)
+  go build -o NUL ./cmd/redgres → success
+  npm --prefix web run test:run → Test Files 3 passed (3); Tests 103 passed (103);
+   Duration 19.15s (vitest 4.1.11)
+  npm --prefix web run build → tsc --noEmit + vite v8.2.2; 34 modules;
+   ../internal/web/dist/app/{index.html, assets/index-DI6SDmuR.css 14.26 kB,
+   assets/index-BplyvmEO.js 238.93 kB}; built in 345ms
+  Not run: go test -race ./..., gitleaks, govulncheck, CI, live Redis,
+   browser viewports, Playwright, frontend jobs on pinned Node 24.19.0
+Reviewer/date: not yet reviewed. Keep REDIS-002 Partial.
+ Local commits: `46637d0` (API), `18fa511` (UI), `f61be71` (merge UI).
+ Not pushed.
 ```
 
