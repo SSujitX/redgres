@@ -1100,6 +1100,8 @@ Commands executed locally (2026-08-25), worktree
 Reviewer/date: Security review (2026-08-25) approve; no Critical/High/Medium.
  UI review (2026-08-25) rejected two Highs (status ignored postgres hits;
  palette not a scroll container) plus Mediums (same-name refocus, stale hits,
- muted degraded copy). Parent remediated those in this tree; UI re-review pending.
- Verifier pending. Explicitly NOT viewport sign-off.
+ muted degraded copy). Parent remediated those; UI re-review approved H1/H2
+ closed with remaining Medium M1 (in-flight empty-page copy). Parent then
+ announced only “Searching.” while resource search is pending with no page
+ hits (`c671569` follow-up). Verifier pending. Explicitly NOT viewport sign-off.
 ```

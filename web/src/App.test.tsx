@@ -388,6 +388,8 @@ describe("App session and login", () => {
     expect(within(dialog).getByRole("region", { name: "Redis ACL users" })).toBeInTheDocument();
     expect(within(dialog).getByRole("region", { name: "Navigation" })).toBeInTheDocument();
     expect(within(dialog).getByRole("region", { name: "Documentation" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Searching.");
+    expect(screen.getByRole("status").textContent).not.toMatch(/No matching pages/);
     const hit = await screen.findByRole("button", { name: /project_a/ });
     expect(hit.className).toContain("nav-result-postgres");
     expect(screen.getByRole("status")).toHaveTextContent("1 matching database.");

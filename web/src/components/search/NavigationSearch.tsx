@@ -89,9 +89,9 @@ export default function NavigationSearch({
       setSearching(false);
       return;
     }
+    setSearching(true);
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      setSearching(true);
       fetchSearch(trimmed, { signal: controller.signal })
         .then((result) => {
           if (controller.signal.aborted) {
@@ -143,7 +143,12 @@ export default function NavigationSearch({
   );
   const pageCount = navResults.length + docResults.length;
   const countText = resultCountText(pageCount, postgresHits.length, trimmed === "", tooLong);
-  const statusText = searching ? `Searching. ${countText}` : countText;
+  const statusText =
+    searching && pageCount + postgresHits.length === 0
+      ? "Searching."
+      : searching
+        ? `Searching. ${countText}`
+        : countText;
 
   function activateDatabase(name: string) {
     onSelectDatabase(name);
