@@ -44,6 +44,59 @@ function isRedisStatusUrl(url: string): boolean {
   return url === "/api/v1/redis/status";
 }
 
+function isRedisUsersListUrl(url: string): boolean {
+  return url === "/api/v1/redis/users";
+}
+
+function isRedisUserDetailUrl(url: string, username: string): boolean {
+  return url === `/api/v1/redis/users/${encodeURIComponent(username)}`;
+}
+
+function redisAclListItem(extra: Record<string, unknown> = {}) {
+  return {
+    username: "project_a",
+    enabled: true,
+    key_pattern: "project_a:*",
+    preset: "cache-read-write",
+    protected: false,
+    rule_fidelity: "exact",
+    ...extra,
+  };
+}
+
+function redisAclListOk(users: unknown[], extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    state: "ok",
+    users,
+    truncated: false,
+    request_id: "44444444444444444444444444444444",
+    ...extra,
+  });
+}
+
+function redisAclDetailOk(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    state: "ok",
+    user: {
+      username: "project_a",
+      enabled: true,
+      key_pattern: "project_a:*",
+      preset: "cache-read-write",
+      protected: false,
+      rule_fidelity: "exact",
+      commands: ["get", "set"],
+      categories: [],
+      ...extra,
+    },
+    request_id: "55555555555555555555555555555555",
+  });
+}
+
+function goToAclUsers() {
+  fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "ACL users" }));
+}
+
 function isSearchUrl(url: string): boolean {
   return url === "/api/v1/search" || url.startsWith("/api/v1/search?");
 }
@@ -2540,5 +2593,397 @@ describe("App session and login", () => {
     expect(within(redis).getByText("1.0 MiB / Unlimited")).toBeInTheDocument();
     expect(redis).toHaveClass("status-card-redis");
     expect(postgres).not.toHaveClass("status-card-redis");
+  });
+
+  it("shows the ACL users ledger instead of the placeholder", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-a".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("heading", { name: "ACL users" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    expect(screen.queryByText("This adapter is not available yet.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+  });
+
+  it("requests the first ACL user list from exactly /api/v1/redis/users", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-b".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    const listCalls = fetch.mock.calls.filter((call) => isRedisUsersListUrl(String(call[0])));
+    expect(listCalls.length).toBeGreaterThan(0);
+    expect(listCalls.every((call) => String(call[0]) === "/api/v1/redis/users")).toBe(true);
+    const method = listCalls[0]?.[1]?.method;
+    expect(method === undefined || method === "GET").toBe(true);
+    expect(new Headers(listCalls[0]?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+  });
+
+  it("loads ACL user details from /api/v1/redis/users/project_a", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-c".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("region", { name: "ACL user details" })).toBeInTheDocument();
+    expect(await screen.findByText("get")).toBeInTheDocument();
+    expect(screen.getByText("set")).toBeInTheDocument();
+    const detailCalls = fetch.mock.calls.filter((call) => isRedisUserDetailUrl(String(call[0]), "project_a"));
+    expect(detailCalls.some((call) => String(call[0]) === "/api/v1/redis/users/project_a")).toBe(true);
+  });
+
+  it("shows protected and limited ACL users in the ledger", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-d".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([
+          redisAclListItem({
+            protected: true,
+            rule_fidelity: "limited",
+            enabled: false,
+            preset: "custom",
+            key_pattern: "*",
+          }),
+        ]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({
+          protected: true,
+          rule_fidelity: "limited",
+          enabled: false,
+          preset: "custom",
+          key_pattern: "*",
+          commands: ["get"],
+          categories: ["@read"],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    const row = await screen.findByRole("button", { name: /project_a/ });
+    expect(row).toHaveTextContent("Protected");
+    expect(row).toHaveTextContent("Limited");
+    expect(row).toHaveTextContent("Disabled");
+    expect(row).toHaveTextContent("custom");
+    expect(row).toHaveTextContent("*");
+    fireEvent.click(row);
+    expect(await screen.findByText(/cannot model these rules exactly/)).toBeInTheDocument();
+    expect(screen.getByText("get")).toBeInTheDocument();
+    expect(screen.getByText("@read")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
+  });
+
+  it("shows not_configured without an empty ACL user list", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-e".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return jsonResponse(200, {
+          state: "not_configured",
+          users: [],
+          request_id: "66666666666666666666666666666666",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Redis is not configured.");
+    expect(screen.queryByText("No ACL users.")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["unreachable", "Redis is unreachable."],
+    ["auth_failed", "Redis authentication failed."],
+    ["permission_denied", "Redis permission denied."],
+  ] as const)("shows unavailable %s without an empty ACL user list", async (reason, copy) => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: `acl-${reason}`.padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return jsonResponse(200, {
+          state: "unavailable",
+          reason,
+          request_id: "77777777777777777777777777777777",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("alert")).toHaveTextContent(copy);
+    expect(screen.queryByText("No ACL users.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Redis is not configured.")).not.toBeInTheDocument();
+  });
+
+  it("shows No ACL users only for an empty healthy list", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-empty".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByText("No ACL users.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("Redis is not configured.")).not.toBeInTheDocument();
+  });
+
+  it("shows a truncated ACL user list warning", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-trunc".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()], { truncated: true });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    expect(screen.getByText("ACL user list truncated.")).toBeInTheDocument();
+  });
+
+  it("shows a session-expired ACL users alert without an empty list", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-401".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByText("No ACL users.")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
+  });
+
+  it("shows a not-found alert for a missing ACL user without a healthy inspector", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-404".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return jsonResponse(404, { error: { code: "not_found", message: "Not found" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not found");
+    expect(screen.queryByText("No commands.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No categories.")).not.toBeInTheDocument();
+  });
+
+  it("does not render a canary secret from Redis ACL payloads", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-canary".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk(
+          [
+            redisAclListItem({
+              password: "canary-secret",
+              hash: "canary-secret",
+              acl_rule: "+@all canary-secret",
+            }),
+          ],
+          { password: "canary-secret" },
+        );
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({
+          password: "canary-secret",
+          hash: "canary-secret",
+          acl_rule: "+@all canary-secret",
+          commands: ["get", "<img src=x>"],
+          categories: [],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("get")).toBeInTheDocument();
+    expect(screen.getByText("<img src=x>")).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByText("canary-secret")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("canary-secret");
+  });
+
+  it("does not fetch Redis ACL users on the login route", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/redis/users"))).toBe(true);
+  });
+
+  it("keeps Redis ACL user search copy unchanged from the ACL users page", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-search".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages and databases"), { target: { value: "acl" } });
+    expect(await screen.findByText(/Redis ACL user search is not available yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/No matching Redis ACL users/i)).not.toBeInTheDocument();
+  });
+
+  it("does not persist ACL users and clears the inspector on logout", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-out".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ commands: ["visible-acl-command"], categories: [] });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("visible-acl-command")).toBeInTheDocument();
+    expect(setItem).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByText("visible-acl-command")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "ACL users" })).not.toBeInTheDocument();
+    setItem.mockRestore();
+  });
+
+  it("ignores a slower first ACL user selection", async () => {
+    let releaseA: () => void = () => {};
+    const blockedA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-stale".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem(), redisAclListItem({ username: "project_b", key_pattern: "project_b:*" })]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedA.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            if (init?.signal?.aborted) {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+              return;
+            }
+            resolve();
+          });
+        });
+        return redisAclDetailOk({ commands: ["stale-command"], categories: [] });
+      }
+      if (isRedisUserDetailUrl(url, "project_b")) {
+        return redisAclDetailOk({
+          username: "project_b",
+          key_pattern: "project_b:*",
+          commands: ["fresh-command"],
+          categories: [],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_b/ }));
+    expect(await screen.findByText("fresh-command")).toBeInTheDocument();
+    releaseA();
+    await waitFor(() => {
+      expect(screen.queryByText("stale-command")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("fresh-command")).toBeInTheDocument();
   });
 });
