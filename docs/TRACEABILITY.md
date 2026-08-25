@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page (no vault/rotation); PG-005 Partial: in-process Fernet/KDF fixtures in `internal/secrets` (no HTTP reveal/vault SQL); PG-003/004/006/008–011 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET (no decrypt/reveal); PG-003/004/006/008–011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete); REDIS-008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -2598,6 +2598,61 @@ Non-blocking nits: SOURCE_BASELINE.md Redgres row still says vault not
 Keep PG-005 Partial. Do not mark Complete.
 Local commits: `2bd4e40`, `1268dbf`, `cec6587`, `cf29328`, `e859af6`,
  this verifier record. Not pushed.
+```
+
+## PG-005/PG-012 vault existence GET (2026-08-25)
+
+```text
+Requirement: PG-005/PG-012/PG-002 Partial (vault existence GET; no decrypt/reveal)
+Decision/ADR: ADR-004; API freeze `e915912`
+Source characterization: database-app has_role_password +
+ _saved_role_names/get_security_overview at 1c3e8e2; Redgres does not
+ copy ensure_vault() or except Exception: return set(); lists
+ database_console_vault; no has_saved_password
+Implementation files: internal/postgresadmin/{errors,types,memory,adapter,service}.go
+ + matching tests; internal/httpapi/postgres_routes_test.go,
+ postgres_security_routes_test.go; docs/ARCHITECTURE.md implemented-now;
+ web/src/api/postgres.ts; web/src/features/postgres/{DatabasesPage,SecurityOverview}.tsx;
+ web/src/App.test.tsx; docs/UX.md
+Unit tests: SavedRoleNames empty/no-connect; SQL forbids encrypted_password/
+ updated_at; catalog/list SQL still has no vault; Details present/missing/
+ not_available; Security ok + missing_password_count (incl. 0 and pre-cap
+ 501); vault_unavailable omits count and keeps databases; canaries absent;
+ 3D000/42P01 → ErrVaultUnavailable
+HTTP tests: details present/missing/vault_unavailable 200; security ok +
+ count; vault_unavailable 200 omits count; 401 omits keys; no
+ has_saved_password/can_rotate
+UI tests: Details Saved/Not saved/Not available; Security Missing vault
+ entries (1 and 0); unavailable omits count; no reason-string leak
+Integration tests: none — live PostgreSQL not run
+Security tests: ciphertext columns absent from SQL; ErrVaultUnavailable not
+ 503; canaries absent from HTTP
+Deployment/migration impact: none. go.mod unchanged (pgx v5.10.0,
+ go-redis v9.22.0). No new routes or config keys.
+Known limitations: connect-time 3D000 classified by failure class after
+ connectTarget collapses to ErrUnavailable; unique owners SQL-capped at 500;
+ Gate 4, POST reveal, REDGRES_LEGACY_VAULT_SECRET_FILE, decrypt of vault
+ rows outstanding
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0):
+ Writer API feat/pg-012-vault-existence-api `fea4764`:
+  gofmt -l internal/postgresadmin internal/httpapi → empty
+  go test -count=1 ./internal/postgresadmin ./internal/httpapi
+   → ok postgresadmin 0.933s; httpapi 21.229s
+  go vet ./internal/postgresadmin ./internal/httpapi → no findings
+ Parent rerun API worktree before merge:
+  gofmt -l → empty
+  go test -count=1 ./internal/postgresadmin ./internal/httpapi
+   → ok postgresadmin 0.938s; httpapi 20.761s
+  go vet → no findings
+ Writer UI feat/pg-012-vault-existence-ui `2a29cf6`:
+  npm --prefix web run test:run → Tests 213 passed (213)
+ Parent rerun UI worktree before merge:
+  npm --prefix web run test:run → Tests 213 passed (213)
+ Not run: race, live PostgreSQL, COMPATIBILITY.md §6, Playwright, viewport/zoom
+Local commits: `e915912` (freeze), `fea4764` (API), `2a29cf6` (UI),
+ `6f55c1d` (merge UI), this docs record. Reviews pending. Not pushed.
+Keep PG-005 Partial. Keep PG-012 Partial. Do not mark Complete.
 ```
 
 
