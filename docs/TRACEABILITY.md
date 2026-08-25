@@ -1640,11 +1640,15 @@ Reviewer/date: Security review (2026-08-25) approve Partial; no
  Critical/High/Medium. L1 GetUser/SETUSER recreate race accepted
  unfixed. UI review (2026-08-25) approve Partial UI; no Critical/High.
  Explicitly NOT viewport/zoom sign-off. Evidence review (2026-08-25)
- docs-correction-required then keep-Partial (`014e0dc`). Verifier
- pending. Do not mark Complete (rotate missing).
+ docs-correction-required then keep-Partial (`014e0dc`).
+ Verifier (2026-08-25) PASS Partial on master `85586b8`. Re-ran gofmt
+ empty, focused + ./... tests, race, vet, go build, npm test:run 138
+ passed, npm run build. go-redis stays v9.22.0. Forbidden paths empty
+ vs `66c4053`. Keep REDIS-007 Partial (rotate missing).
  Local commits: `beaa606` (API), `8158c6a` (UI), `6ecd075` (merge UI),
  `8eac4eb` (docs record), `74af2c4` (parent test results), `014e0dc`
- (catalog implemented), `c45f05f` (security approve). Not pushed.
+ (catalog implemented), `c45f05f` (security approve), `85586b8`
+ (UI approve). Not pushed.
 ```
 
 
