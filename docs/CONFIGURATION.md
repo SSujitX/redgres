@@ -1,6 +1,6 @@
 # Configuration reference
 
-Core keys, the PostgreSQL administrative connection keys, and the Redis URL-file / plaintext-override / optional public host-port keys listed as implemented below are loaded by `internal/config`. Remaining Redis, feature-gate, tool-link, URL-generation, and vault-secret keys remain target. Machine-checked reference generation from the config struct is still outstanding.
+Core keys, the PostgreSQL administrative connection keys, the Redis URL-file / plaintext-override / optional public host-port keys, and the optional expert tool-link hrefs listed as implemented below are loaded by `internal/config`. Remaining Redis expected-series, feature-gate, URL-generation, and vault-secret keys remain target. Machine-checked reference generation from the config struct is still outstanding.
 
 ## Core
 
@@ -60,10 +60,14 @@ Supported service versions are defined by the Redgres release and [COMPATIBILITY
 
 ## UI/tool links
 
-- `REDGRES_PGADMIN_URL`
-- `REDGRES_REDISINSIGHT_URL`
+Status: optional pgAdmin and RedisInsight hrefs implemented for GET `/api/v1/session` and GET `/api/v1/status` presence. They are links, not embedded privileged sessions. Redgres never fetches, pings, proxies, or iframes these URLs at Load or on GET `/status`.
 
-Both are optional and must be validated `https://` URLs in production. They are links, not embedded privileged sessions.
+| Variable | Status | Purpose |
+|---|---|---|
+| `REDGRES_PGADMIN_URL` | Implemented | Optional absolute href for the expert pgAdmin tool. Empty/unset is valid. Production `serve` does not require it. Independent of `REDGRES_REDISINSIGHT_URL`. |
+| `REDGRES_REDISINSIGHT_URL` | Implemented | Optional absolute href for RedisInsight. Empty/unset is valid. Production `serve` does not require it. Independent of `REDGRES_PGADMIN_URL`. |
+
+When set, the value must be an absolute URL with a scheme and host, no userinfo, and no fragment. Query string and path are allowed. Relative URLs and `javascript:`, `data:`, and `file:` schemes are rejected. Production requires `https`. Development accepts `http` or `https`. Validation errors name the environment variable and never echo the URL. There is no silent default hostname.
 
 ## Feature gates
 

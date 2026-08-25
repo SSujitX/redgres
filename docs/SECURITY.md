@@ -35,7 +35,7 @@ Cloudflare, the VPS provider, OS root, and backup administrator are privileged t
 | Backup theft or unusable backup | root-only local permissions, encryption off-host/in transit, checksums, retention, periodic isolated restore |
 | Vault incompatibility/key loss | Immutable legacy secret backup, compatibility vectors, copied-record dry run, no in-place conversion during cutover |
 | Cross-site scripting | React escaping, no unsafe HTML by default, self-only CSP, no external runtime script/font CDN |
-| SSRF | No arbitrary connection tester/URL fetch endpoint; admin endpoints come only from trusted server config |
+| SSRF | No arbitrary connection tester/URL fetch endpoint; admin endpoints come only from trusted server config. Optional `REDGRES_PGADMIN_URL` / `REDGRES_REDISINSIGHT_URL` are operator-configured hrefs returned on GET `/session` only; Load and GET `/status` never fetch, ping, proxy, or embed them. |
 
 `rediss` administrator URLs that set go-redis `skip_verify` so TLS `InsecureSkipVerify` is true are rejected in every environment; the error names `REDGRES_REDIS_ADMIN_URL_FILE` and never includes the URL or password.
 

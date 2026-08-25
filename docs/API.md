@@ -73,7 +73,16 @@ Generic failure is `401` `unauthorized` with message `Invalid username or passwo
 }
 ```
 
-`tool_links` stays empty until optional tool-link configuration exists.
+`tool_links` is an object, never `null`. Unconfigured (both `REDGRES_PGADMIN_URL` and `REDGRES_REDISINSIGHT_URL` empty/unset) is `{}`. Configured keys are present only when that URL is set: string hrefs, never `null`, never `""`. Allowed keys: `pgadmin`, `redisinsight`. Example when both are set:
+
+```json
+"tool_links": {
+  "pgadmin": "https://pgadmin.example.com",
+  "redisinsight": "https://redis-insight.example.com"
+}
+```
+
+This GET is the only href source. Login JSON is unchanged and has no `tool_links`. GET `/session` still rotates CSRF and is not a mutation (no audit). `Cache-Control: no-store` is unchanged. The payload never includes passwords, session tokens, or CSRF in `tool_links`.
 
 **GET `/api/v1/status`** requires a session cookie and the `platform.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
 
@@ -96,7 +105,7 @@ Success `200`:
 
 `components` is always an array of length 5 in this fixed order, never `null`. `state` is one of `ok`, `unavailable`, `not_configured`, `not_implemented`. `reason` is omitted except when `state` is `unavailable`, in which case it is always `"unreachable"`. The payload never includes host, port, DSN, password, token, SQL, driver text, `err.Error()`, version, uptime, or URLs.
 
-Independent checks, sequential, each with a 2s timeout:
+Independent checks, sequential. Ping probes use a 2s timeout; `tool_links` is config presence only (no timeout, no network):
 
 | `id` | Probe |
 |---|---|
@@ -104,7 +113,7 @@ Independent checks, sequential, each with a 2s timeout:
 | `postgres_direct` | Absent adapter → `not_configured`. Else `Inventory.Ping`: `ErrNotConfigured` → `not_configured`; success → `ok`; any other error → `unavailable` + `unreachable`. Ping uses `pgxpool.Ping` on the admin pool. List/details are not used as health. |
 | `pgbouncer` | Absent/empty `REDGRES_POSTGRES_POOLED_PORT` or nil ping → `not_configured`. Else `Inventory.PingPooled`: `ErrNotConfigured` → `not_configured`; success → `ok`; any other error → `unavailable` + `unreachable`. Probe connects to virtual database `pgbouncer` on the pooled port (same host/user/password/sslmode as the admin PostgreSQL connection) with pooled `ConnConfig.DefaultQueryExecMode = QueryExecModeSimpleProtocol` (not `QueryExecModeExec`) and issues `SHOW VERSION` (prefer `Exec` with no args; do not `Scan`; do not use `pgxpool.Ping`, whose `-- ping` is invalid console syntax). Success is no error; the version string is discarded; empty rows are ok. Independent of `postgres_direct`. This component must not emit `not_implemented`. List/details/security/tables/rows/DDL stay on 5432. |
 | `redis` | Absent adapter → `not_configured`. Else `Service.Ping`: `ErrNotConfigured` → `not_configured`; success → `ok`; any other error → `unavailable` + `unreachable`. Ping uses go-redis `Ping` only. INFO, DBSIZE, latency, and ACL are not used as health. |
-| `tool_links` | Always `not_configured` in this slice. |
+| `tool_links` | Not a probe. Both optional URLs empty/unset → `not_configured`. One or both set → `ok`. Never `unavailable` (no fetch/ping). Never `not_implemented`. Independent of `postgres_direct` / `pgbouncer` / `redis`. Status JSON never includes the URLs; hrefs are GET `/session` only. |
 
 This GET is not a mutation and does not write an audit event.
 
@@ -154,7 +163,7 @@ Success `200`:
 
 Navigation and documentation matches are client-side `filterNav` only; they are not in this response. This GET is not a mutation and does not write an audit event.
 
-**GET `/api/v1/healthz`** is unchanged: unauthenticated liveness that pings the state DB only. Success `200` is `{"status":"ok","request_id":"…"}` with `Cache-Control: no-store`. It has no `components` array, does not require a session, and does not ping PostgreSQL, Redis, or PgBouncer.
+**GET `/api/v1/healthz`** is unchanged: unauthenticated liveness that pings the state DB only. Success `200` is `{"status":"ok","request_id":"…"}` with `Cache-Control: no-store`. It has no `components` array, does not require a session, does not ping PostgreSQL, Redis, or PgBouncer, and does not read or fetch tool-link URLs.
 
 **GET `/api/v1/audit`** requires a session cookie and the `audit.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
 
