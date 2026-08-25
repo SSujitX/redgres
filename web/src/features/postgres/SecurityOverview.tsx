@@ -70,6 +70,7 @@ function parseDatabase(raw: unknown): PostgresSecurityDatabase | null {
     owner_createrole: optionalBoolean(record.owner_createrole),
     owner_replication: optionalBoolean(record.owner_replication),
     active_connections: finiteNumber(record.active_connections),
+    rotation_eligible: optionalBoolean(record.rotation_eligible),
   };
 }
 
@@ -259,6 +260,7 @@ function DatabaseLedger({ rows }: { rows: PostgresSecurityDatabase[] }) {
               <th scope="col">Create roles</th>
               <th scope="col">Replication</th>
               <th scope="col">Connections</th>
+              <th scope="col">Rotation eligible</th>
             </tr>
           </thead>
           <tbody>
@@ -278,6 +280,7 @@ function DatabaseLedger({ rows }: { rows: PostgresSecurityDatabase[] }) {
                 <td>{yesNo(row.owner_createrole)}</td>
                 <td>{yesNo(row.owner_replication)}</td>
                 <td className="metric">{metricText(row.active_connections)}</td>
+                <td>{yesNo(row.rotation_eligible)}</td>
               </tr>
             ))}
           </tbody>
@@ -330,6 +333,10 @@ function DatabaseLedger({ rows }: { rows: PostgresSecurityDatabase[] }) {
               <div>
                 <dt>Connections</dt>
                 <dd className="metric">{metricText(row.active_connections)}</dd>
+              </div>
+              <div>
+                <dt>Rotation eligible</dt>
+                <dd>{yesNo(row.rotation_eligible)}</dd>
               </div>
             </dl>
           </li>

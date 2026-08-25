@@ -130,7 +130,7 @@ function isPostgresSecurityUrl(url: string): boolean {
   return url === "/api/v1/postgres/security";
 }
 
-function postgresSecurityDatabase(extra: Record<string, unknown> = {}) {
+function postgresSecurityDatabase(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     name: "postgres",
     owner: "postgres",
@@ -142,6 +142,7 @@ function postgresSecurityDatabase(extra: Record<string, unknown> = {}) {
     owner_createrole: true,
     owner_replication: true,
     active_connections: 1,
+    rotation_eligible: false,
     ...extra,
   };
 }
@@ -181,6 +182,7 @@ function postgresSecurityOk(extra: Record<string, unknown> = {}) {
         owner_createrole: false,
         owner_replication: false,
         active_connections: 2,
+        rotation_eligible: true,
       }),
     ],
     connections: [
@@ -2584,6 +2586,83 @@ describe("App session and login", () => {
     expect(within(article as HTMLElement).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
     expect(within(article as HTMLElement).queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
     expect(within(article as HTMLElement).queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+  });
+
+  it("shows Rotation eligible Yes and No as the last ledger and stack column", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-rot".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("heading", { name: "Security overview" })).toBeInTheDocument();
+    expect(screen.getByText(/Rotation is not available/)).toBeInTheDocument();
+
+    const table = screen.getByRole("table", { name: "Database security" });
+    const rows = within(table).getAllByRole("row");
+    const headers = within(rows[0] as HTMLElement).getAllByRole("columnheader");
+    expect(headers[headers.length - 2]).toHaveTextContent("Connections");
+    expect(headers[headers.length - 1]).toHaveTextContent("Rotation eligible");
+    const postgresCells = within(rows[1] as HTMLElement).getAllByRole("cell");
+    expect(postgresCells[0]).toHaveTextContent("postgres");
+    expect(postgresCells[postgresCells.length - 1]).toHaveTextContent("No");
+    const projectCells = within(rows[2] as HTMLElement).getAllByRole("cell");
+    expect(projectCells[0]).toHaveTextContent("project_a");
+    expect(projectCells[projectCells.length - 1]).toHaveTextContent("Yes");
+
+    const stack = screen.getByRole("list", { name: "Database security" });
+    const items = within(stack).getAllByRole("listitem");
+    const postgresTerms = within(items[0] as HTMLElement).getAllByRole("term");
+    expect(postgresTerms[postgresTerms.length - 1]).toHaveTextContent("Rotation eligible");
+    expect(within(items[0] as HTMLElement).getByText("Rotation eligible").closest("div")).toHaveTextContent("No");
+    const projectTerms = within(items[1] as HTMLElement).getAllByRole("term");
+    expect(projectTerms[projectTerms.length - 1]).toHaveTextContent("Rotation eligible");
+    expect(within(items[1] as HTMLElement).getByText("Rotation eligible").closest("div")).toHaveTextContent("Yes");
+
+    const article = screen.getByRole("heading", { name: "Security overview" }).closest("article");
+    expect(article).not.toBeNull();
+    expect(within(article as HTMLElement).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
+    expect(within(article as HTMLElement).queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
+    expect(within(article as HTMLElement).queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+    expect(within(article as HTMLElement).queryByText("Rotate")).not.toBeInTheDocument();
+    expect(within(article as HTMLElement).queryByText("Reveal")).not.toBeInTheDocument();
+    expect(within(article as HTMLElement).queryByText("Create")).not.toBeInTheDocument();
+  });
+
+  it("shows Rotation eligible as an em dash when the field is missing", async () => {
+    const missingEligibility = postgresSecurityDatabase();
+    delete missingEligibility.rotation_eligible;
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-rot-miss".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk({ databases: [missingEligibility] });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    const table = await screen.findByRole("table", { name: "Database security" });
+    const rows = within(table).getAllByRole("row");
+    const postgresCells = within(rows[1] as HTMLElement).getAllByRole("cell");
+    expect(postgresCells[postgresCells.length - 1]).toHaveTextContent("—");
+    const stack = screen.getByRole("list", { name: "Database security" });
+    const items = within(stack).getAllByRole("listitem");
+    expect(within(items[0] as HTMLElement).getByText("Rotation eligible").closest("div")).toHaveTextContent("—");
   });
 
   it("shows Missing vault entries when cluster saved_credential is ok", async () => {
