@@ -2930,4 +2930,23 @@ Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  Do not mark Complete.
 ```
 
+## PG-012 rotation eligibility UI pin (2026-08-25)
+
+```text
+Requirement: PG-012 Partial (Security overview paints rotation_eligible; no rotate)
+Decision/ADR: ADR-004; freeze `674bd5c`
+Reviewer/date: UI review (2026-08-25) on `41ef55a` approve Partial UI;
+ no Critical/High/Medium. Frozen copy holds: last ledger/stack column after
+ Connections; Yes/No/— via yesNo/optionalBoolean; header still “Rotation
+ is not available.”; no Rotate/Reveal/Create; loading/401/503 unchanged;
+ no toasts; persistence test still no setItem. Explicitly NOT viewport/zoom
+ sign-off. Missing evidence (non-blocking): extra column overflow/stack
+ swap unproven in jsdom; reviewer did not re-run npm tests. Optional polish
+ (non-blocking): em dash has no extra SR phrase.
+Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
+ POST rotate, POST reveal, Gate 4, live PostgreSQL 17/18, Playwright
+ viewports remain Complete blockers.
+Not pushed.
+```
+
 
