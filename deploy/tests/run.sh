@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# POSIX installer dispatcher tests (OPS-001 / OPS-002 / OPS-006 Partial).
+# POSIX installer dispatcher tests (OPS-001 / OPS-002 / OPS-003 / OPS-006 Partial).
 # Prepends failing mutation stubs so a real host call fails the test.
 # Detection stubs print fixture --version stdout and must not append to stub_log.
 set -euo pipefail
@@ -239,6 +239,60 @@ expect_status_and_stages() {
   pass "${name}"
 }
 
+expect_verify_partial() {
+  local name="$1"
+  if ! assert_no_mutation "${name}"; then
+    return
+  fi
+  if ! assert_no_canary "${name}"; then
+    return
+  fi
+  if [[ "${status}" -ne 0 ]]; then
+    fail "${name}: expected exit 0, got ${status}: ${output}"
+    return
+  fi
+  case "${output}" in
+    *'Inventory (read-only'*)
+      fail "${name}: must not call inventory"
+      return
+      ;;
+    *'result=ok'*)
+      fail "${name}: skips must not be result=ok"
+      return
+      ;;
+  esac
+  local missing=''
+  local keyword
+  for keyword in \
+    'Verify (read-only --dry-run; not DNS/Cloudflare/public TLS; not Complete):' \
+    'config: path-ok (unread, not sourced)' \
+    'dns: skipped (this Partial cannot check DNS)' \
+    'cloudflare: skipped (this Partial cannot check Tunnel/Access/routes)' \
+    'tls_public: skipped (this Partial cannot check public certificates/TLS)' \
+    'http_healthz: skipped (GET /api/v1/healthz not probed; curl not invoked)' \
+    'auth_boundaries: skipped (GET /api/v1/status not probed)' \
+    'bindings: skipped (live sockets deferred; intended redgres 127.0.0.1:8790)' \
+    'services: skipped (cluster SHOW/INFO deferred; PATH --version is OPS-002 install)' \
+    'backup_prerequisites: skipped (no named backup keys; OPS-004 owns backup)' \
+    'result=partial'; do
+    case "${output}" in
+      *"${keyword}"*) ;;
+      *) missing="${missing} |${keyword}|" ;;
+    esac
+  done
+  if [[ -n "${missing}" ]]; then
+    fail "${name}: missing:${missing}: ${output}"
+    return
+  fi
+  case "$(tr '\n' ' ' <"${stub_log}")" in
+    *curl*)
+      fail "${name}: curl in stub_log"
+      return
+      ;;
+  esac
+  pass "${name}"
+}
+
 # --- --help ---
 run_install --help
 expect_status 'help exits 0' 0
@@ -346,10 +400,37 @@ expect_status '--redis-version with redis-mode existing exits 1' 1
 run_install --non-interactive --dry-run --mode fresh-postgres --postgres-version 17 --redis-mode fresh --redis-version 8.2 --expect-redis-series 8.2 --pgbouncer-mode existing
 expect_status '--expect-redis-series with redis-mode fresh exits 1' 1
 
-# --- subcommands: not implemented, exit 2, no mutation ---
-run_install verify
-expect_status 'verify subcommand exits 2' 2
+# --- OPS-003 verify --dry-run skip matrix ---
+run_install verify --non-interactive --dry-run --config "${config_file}"
+expect_verify_partial 'verify dry-run skip matrix exits 0'
 
+run_install verify
+expect_status 'verify without flags exits 1' 1
+
+run_install verify --non-interactive --config "${config_file}"
+expect_status 'verify without --dry-run exits 2' 2
+case "${output}" in
+  *'Inventory (read-only'*)
+    fail 'verify without --dry-run must not inventory'
+    ;;
+  *)
+    pass 'verify without --dry-run skips inventory'
+    ;;
+esac
+
+run_install verify --non-interactive --dry-run
+expect_status 'verify missing --config exits 1' 1
+
+run_install verify --non-interactive --dry-run --config "${tmpdir}/missing.env"
+expect_status 'verify --config missing path exits 1' 1
+
+run_install verify --non-interactive --dry-run --config "${tmpdir}"
+expect_status 'verify --config directory exits 1' 1
+
+run_install verify --non-interactive --dry-run --config "${config_file}" --mode existing-postgres
+expect_status 'verify unknown --mode flag exits 1' 1
+
+# --- subcommands: not implemented, exit 2, no mutation ---
 run_install backup
 expect_status 'backup subcommand exits 2' 2
 

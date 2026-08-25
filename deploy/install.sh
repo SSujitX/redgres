@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fail-closed installer dispatcher. OPS-001 / OPS-002 / OPS-006 Partial: no host mutation.
+# Fail-closed installer dispatcher. OPS-001 / OPS-002 / OPS-003 / OPS-006 Partial: no host mutation.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -7,6 +7,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/lib/common.sh"
 # shellcheck disable=SC1091
 source "${script_dir}/lib/inventory.sh"
+# shellcheck disable=SC1091
+source "${script_dir}/lib/verify.sh"
 
 usage() {
   cat <<'EOF'
@@ -17,15 +19,18 @@ Usage:
       [--postgres-version 17|18] [--expect-postgres-major 17|18]
       [--redis-version 8.2|8.8] [--expect-redis-series 8.2|8.8]
       [--config PATH] [--extension-plan PATH] [--approve-postgres-restart]
+  deploy/install.sh verify --non-interactive --dry-run --config PATH
 
 This Partial prints the planned stage list on --dry-run and inventories PATH
-host --version for existing PostgreSQL/Redis/PgBouncer. It does not install
-packages, pull images, write systemd, open a firewall, or change DNS/Cloudflare.
-It does not start servers, source --config, or run SQL SHOW / Redis INFO.
+host --version for existing PostgreSQL/Redis/PgBouncer. verify --dry-run prints
+a skip matrix (result=partial); it does not probe DNS/Cloudflare/public TLS.
+It does not install packages, pull images, write systemd, open a firewall, or
+change DNS/Cloudflare. It does not start servers, source --config, call curl,
+or run SQL SHOW / Redis INFO.
 
-Exit 0: --help, or valid --non-interactive --dry-run plan
+Exit 0: --help, valid --non-interactive --dry-run plan, or verify skip matrix
 Exit 1: unsupported, incomplete, missing, unparseable, or mismatched selection
-Exit 2: mutation install path or subcommand not implemented
+Exit 2: mutation install, live verify, or other subcommand not implemented
 
 Majors/series only (not Hub tags). latest and latest-tested are rejected.
 EOF
@@ -77,7 +82,52 @@ is_redis_series() {
   esac
 }
 
-if [[ "${1:-}" == "verify" || "${1:-}" == "backup" || "${1:-}" == "update" || "${1:-}" == "rollback" || "${1:-}" == "postgres-plan" || "${1:-}" == "postgres-extensions" ]]; then
+if [[ "${1:-}" == "verify" ]]; then
+  shift
+  verify_dry_run=0
+  verify_non_interactive=0
+  verify_config_path=''
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --non-interactive)
+        verify_non_interactive=1
+        shift
+        ;;
+      --dry-run)
+        verify_dry_run=1
+        shift
+        ;;
+      --config)
+        [[ $# -ge 2 ]] || redgres_die "missing value for --config"
+        verify_config_path="$2"
+        shift 2
+        ;;
+      -*)
+        redgres_die "unknown flag: $1"
+        ;;
+      *)
+        redgres_die "unknown argument: $1"
+        ;;
+    esac
+  done
+  if [[ "${verify_non_interactive}" -ne 1 ]]; then
+    redgres_die "--non-interactive is required"
+  fi
+  if [[ -z "${verify_config_path}" ]]; then
+    redgres_die "--config is required"
+  fi
+  # Existence only. Never source, eval, or cat the file; never print contents.
+  if [[ ! -f "${verify_config_path}" ]]; then
+    redgres_die "--config must be an existing regular file"
+  fi
+  if [[ "${verify_dry_run}" -ne 1 ]]; then
+    redgres_not_implemented "verify without --dry-run is not implemented"
+  fi
+  redgres_verify_dry_run
+  exit 0
+fi
+
+if [[ "${1:-}" == "backup" || "${1:-}" == "update" || "${1:-}" == "rollback" || "${1:-}" == "postgres-plan" || "${1:-}" == "postgres-extensions" ]]; then
   redgres_not_implemented "subcommand ${1} is not implemented"
 fi
 

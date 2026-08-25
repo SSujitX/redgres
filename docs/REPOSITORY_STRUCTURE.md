@@ -111,6 +111,7 @@ Redgres/
 │   ├── lib/
 │   │   ├── common.sh
 │   │   ├── inventory.sh
+│   │   ├── verify.sh
 │   │   ├── checks.sh
 │   │   ├── logging.sh
 │   │   ├── secrets.sh

@@ -47,7 +47,7 @@ The installer does not guess zones, delete records, generate publicly trusted cr
 9. **Application release** — verify artifact checksum, install immutable release, migrate SQLite, configure systemd credentials/unit.
 10. **Cloudflare** — install/validate cloudflared and routes; token stays protected.
 11. **Firewall** — calculate intended rules, preserve SSH access, apply, then verify listeners externally and locally.
-12. **End-to-end verify** — run [TESTING.md](TESTING.md) deployment checks.
+12. **End-to-end verify** — run [TESTING.md](TESTING.md) deployment checks. **This Partial (OPS-003):** `verify --non-interactive --dry-run --config PATH` only; PATH must be an existing regular file (`[[ -f ]]`) and is never sourced, evaluated, or printed. Prints an explicit skip matrix (`result=partial`) for DNS, Cloudflare Tunnel/Access/routes, public TLS, GET `/api/v1/healthz` (curl not invoked), GET `/api/v1/status` auth boundaries, live bindings (intended redgres `127.0.0.1:8790`), cluster SHOW/INFO, and backup prerequisites (no named backup keys; OPS-004). Does not call inventory, curl, wget, cloudflared, or certbot. Live verify without `--dry-run` exits 2. Missing `--non-interactive`, missing/non-file `--config`, or unknown flags (including `--mode`) exit 1. DNS/Cloudflare/public TLS remain skipped; this Partial is not Complete.
 13. **Report** — produce a redacted manifest with changed/skipped items and exact follow-ups. Never emit credentials.
 
 ## Idempotency
