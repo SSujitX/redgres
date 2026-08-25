@@ -2427,7 +2427,7 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
  govulncheck, Node 24.19.0
 Local commits: `1a528cd` (freeze), `33087b6` (API), `fb0c6ce` (UI),
  `28faa83` (merge UI), `bf47017` (docs record), `46fdf6c` (UI review pin),
- this security pin. Not pushed.
+ `a0240d8` (security pin), this evidence pin. Not pushed.
 Reviewer/date: Security review (2026-08-25) on `bf47017`/`33087b6`/`28faa83`
  approve Partial; no Critical/High/Medium. GET /session session-gated hrefs;
  GET /status session + platform.read; no CSRF/audit; no-store; 401 omits
@@ -2442,6 +2442,10 @@ Reviewer/date: Security review (2026-08-25) on `bf47017`/`33087b6`/`28faa83`
  no Critical/High. Optional Low (non-blocking): shared `--focus` outline is
  button/input only, so the new `.text-button` anchors use the UA outline.
  Explicitly NOT viewport/zoom sign-off.
+ Evidence review (2026-08-25) on `a0240d8` keep-Partial / reject-Complete.
+ Parent-executed: focused Go config/platform/httpapi + npm test:run 208.
+ Writer-only (not parent-executed): `go test ./...`, vet, build, `go list -m`,
+ `npm run build`. Hygiene: `a0240d8` added to local-commits. Verifier pending.
 Keep PLAT-001 Partial. Keep PG-012 Partial. Keep REDIS-005 Partial.
  Do not mark Complete.
 ```
