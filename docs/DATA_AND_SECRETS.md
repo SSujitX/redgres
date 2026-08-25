@@ -20,7 +20,7 @@
 4. PostgreSQL project passwords: encrypted in the legacy-compatible PostgreSQL vault; revealed only through explicit action.
 5. Legacy vault key material: current Python `SESSION_SECRET`; must remain stable and root-protected throughout migration.
 6. Redis ACL administrator URL/password: root-owned file consumed by Redgres service; never displayed.
-7. Redis project passwords: shown only on create/rotate, not persisted by Redgres.
+7. Redis project passwords: shown only on create/rotate, not persisted by Redgres. DELETE `/api/v1/redis/users/{username}` request body `owner_password` is the Redgres owner password for AUTH-006 reauth; it is never logged, audited, cached, persisted, or returned.
 8. Cloudflare tunnel token: root-owned bearer token file.
 9. Cloudflare Certbot DNS token: separate least-privilege root-owned file.
 10. TLS private keys: readable only by root and the exact service group where necessary.

@@ -378,7 +378,7 @@ PG-012 stays Partial: existence GET, `missing_password_count` (when the vault qu
 | POST | `/api/v1/redis/users/{username}/enable` | Enable (implemented) |
 | POST | `/api/v1/redis/users/{username}/disable` | Disable (implemented) |
 | POST | `/api/v1/redis/users/{username}/credentials/rotate` | One-time credential; `no-store` (implemented) |
-| DELETE | `/api/v1/redis/users/{username}` | Exact confirmation + owner password |
+| DELETE | `/api/v1/redis/users/{username}` | Exact confirmation + owner password (REDIS-008/AUTH-006 Partial freeze) |
 | GET | `/api/v1/redis/presets` | Versioned named presets/commands for UI/docs (implemented; no Redis) |
 | GET | `/api/v1/redis/commands` | Unique-sorted union of named-preset commands (implemented; no Redis) |
 
@@ -417,7 +417,7 @@ Success `200` when Redis is reachable:
 
 GET `/api/v1/status` is unchanged: Redis there remains Ping-only, with `reason` only `unreachable`, and no version/uptime/metrics.
 
-**GET `/api/v1/redis/users`** and **GET `/api/v1/redis/users/{username}`** require a session cookie and the `redis.read` capability, and do not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny these routes today; the session check is what enforces access. Paths are exact. The probe uses a 2s timeout. Responses are `Cache-Control: no-store`. These GETs are not mutations and do not write an audit event. `PUT`, `PATCH`, and `DELETE` on `/api/v1/redis/users` are `405` `method_not_allowed`. `POST`, `PUT`, and `DELETE` on `/api/v1/redis/users/{username}` are `405` `method_not_allowed`. `PATCH` on `/api/v1/redis/users/{username}` is the named-preset or custom allow-list permissions update. Missing session is `401` `unauthorized` with no `state`, `users`, `user`, `reason`, or `credential` keys. The GET adapter issues Redis `ACL LIST` only (go-redis `ACLList`). It does not call `ACL GETUSER` or `ACL USERS`.
+**GET `/api/v1/redis/users`** and **GET `/api/v1/redis/users/{username}`** require a session cookie and the `redis.read` capability, and do not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny these routes today; the session check is what enforces access. Paths are exact. The probe uses a 2s timeout. Responses are `Cache-Control: no-store`. These GETs are not mutations and do not write an audit event. `PUT`, `PATCH`, and `DELETE` on `/api/v1/redis/users` are `405` `method_not_allowed`. `POST` and `PUT` on `/api/v1/redis/users/{username}` are `405` `method_not_allowed`. `PATCH` on `/api/v1/redis/users/{username}` is the named-preset or custom allow-list permissions update. `DELETE` on `/api/v1/redis/users/{username}` is ACL delete (REDIS-008/AUTH-006 Partial freeze below). Missing session is `401` `unauthorized` with no `state`, `users`, `user`, `reason`, or `credential` keys. The GET adapter issues Redis `ACL LIST` only (go-redis `ACLList`). It does not call `ACL GETUSER` or `ACL USERS`.
 
 The handlers always return `200` when they run against a configured or unconfigured adapter, even if Redis is down, except for missing users (`404`) and invalid usernames (`400`). Redis failure is `state` `unavailable`; it is not a `503`. `503` `dependency_unavailable` happens only when `requireSession` cannot read SQLite. Responses never include `err.Error()`, host, URL, `acl_rule`, password, passwords, hash, raw ACL line, or `nopass` as a credential.
 
@@ -615,7 +615,39 @@ Success `200`:
 }
 ```
 
-Delete is not implemented in this slice.
+**DELETE `/api/v1/redis/users/{username}` (REDIS-008 / AUTH-006 Partial freeze).** Session cookie, `redis.destructive` capability, and CSRF (`requireMutation`). It is not `redis.provision` or `redis.credentials`. Username path validation matches GET inspect (`parseRedisUsernameParam`: 1–64 `[A-Za-z0-9_-]`). Invalid usernames return `400` `validation_error` without querying Redis, without writing audit, and without echoing the raw parameter. The probe uses a 2s timeout (`redisUsersTimeout`). Responses are `Cache-Control: no-store`. There is no `REDGRES_FEATURE_REDIS_USER_DELETE` flag. There is no `POST /api/v1/auth/reauth` and no short-lived reauth grant (that needs a future ADR). Collection `DELETE /api/v1/redis/users` stays `405`. Item `POST` and `PUT` (no suffix) stay `405`. Enable/disable/rotate suffixes are unchanged. Do not bump go-redis (`v9.22.0`).
+
+`DisallowUnknownFields` applies. Unknown fields (including `password`, `username`, `reason`) return `400` `validation_error` with message `Unknown field`.
+
+Body:
+
+```json
+{ "username_confirmation": "project_a", "owner_password": "<owner password>" }
+```
+
+**Check order:**
+
+1. Middleware: session, capability, CSRF.
+2. Path username parse.
+3. JSON decode.
+4. `username_confirmation` **exact** match to the parsed path username. Mismatch or empty → `400` `validation_error` with `fields.username_confirmation`, message `Type the exact Redis username to confirm deletion`, no Redis, **no audit**.
+5. AUTH-006: `LookupOwnerByUsername(sess.Username)` + `Verify`. Wrong password → `403` `reauth_required`, message `Owner password is incorrect`, failure audit action `redis.user.delete` with metadata `username` only (never `reason: reauth`, never the password), **no Redis**. Missing owner (`sql.ErrNoRows`) → `VerifyUnknown` then `401` `unauthorized`, no Redis, no audit. Other SQLite lookup errors → `503` `dependency_unavailable`. **Do not** increment AUTH-005 login-attempt rows. **Do not** return `429` from this handler.
+6. `Service.DeleteUser`: protected (`default`, `admin`, `redact_admin`, configured admin `EqualFold`) → `403` `protected_resource`, message `This Redis user is protected`, failure audit, **no** `ACL DELUSER`. Then `GetUser` (`ACL LIST`); missing → `404` `not_found`, message `Not found`, failure audit, no DELUSER. Then one `ACLDelUser` (go-redis `ACLDelUser(ctx, username) *IntCmd` → `(int64, error)`). `n == 0` → `404` `Not found`, failure audit. Redis/adapter errors → `503` `dependency_unavailable` (same operator copy as other Redis mutations), never `err.Error()`, never `owner_password`.
+7. Success audit (`redis.user.delete`, metadata `username` only) then `200`. Audit insert fail after DELUSER → `503` `dependency_unavailable` (user already gone; same fail-closed pattern as create/rotate).
+
+Redis commands on this path: `ACL LIST` (existence) + `ACL DELUSER`. No `ACL SETUSER`, `CLIENT KILL`, `KEYS`, `DEL`, `FLUSH*`, generic `Do`. Official Redis `ACL DELUSER` deletes the user, terminates that user’s connections, cannot remove `default`, and returns the count deleted. Keys are not deleted.
+
+Success `200`:
+
+```json
+{ "request_id": "<32 lowercase hex>" }
+```
+
+No `ok`, `user`, `state`, `credential`, `reason`. Sibling redis-ui `{ok: true}` is **not** copied.
+
+AUTH-006 stays Partial: this DELETE only. PostgreSQL drop/truncate/row-delete reauth is not this slice. REDIS-008 stays Partial: MemoryClient/HTTP/jsdom; not COMPATIBILITY.md §6; not Playwright viewports. Do not mark Complete.
+
+**UI copy (frozen with this contract):** Inspector **Delete** for non-protected users when list `state` is `ok`; hidden for protected / `not_configured` / `unavailable` / while detail loading. Danger surface (`--danger`, not Redis identity `--redis`). Disabled while delete/enable/rotate/edit is in flight or a credential ticket is open. Dialog `role=dialog` title **Delete Redis user**. Copy: type the exact username and owner password; this removes the ACL user; **existing Redis connections for that user are terminated; keys are not deleted; cannot be undone**. Fields: username confirm `autocomplete=off`; owner password `type=password` `autocomplete=current-password`. Confirm **Delete** disabled until confirmation equals the selected username **and** password length > 0. Client confirmation is not authorization. CSRF + `encodeURIComponent(username)` + JSON body. HTTP 200: close dialog, **clear password and confirmation**, clear inspector selection, refresh list. 401: session-expired, clear secrets, no leftover password. `reauth_required`: stay on dialog, announce error, **clear password field**, keep confirmation. 403 protected / 404 / 503: same copy families as rotate. State in memory only; clear on logout, section change, inspect another user, dismiss. Search still never deletes. Login never DELETE.
 
 ## Credential payload
 
