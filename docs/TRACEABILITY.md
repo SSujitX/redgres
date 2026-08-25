@@ -8,7 +8,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; PG-008 Partial: GET `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` + flagged `DELETE …/rows` API (`postgres.destructive` + CSRF + AUTH-006) + inspector single-column PK checkboxes and danger Delete selected dialog (no live PG, no Playwright); PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; POST rotate is PG-006); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no Gate 4); PG-006 Partial: POST `/api/v1/postgres/databases/{db}/credentials/rotate` (`postgres.credentials` + CSRF) + ALTER ROLE + vault upsert + inspector Rotate (no live PG, no Gate 4, no AUTH-006); PG-010 Partial: POST `/api/v1/postgres/databases/{db}/duplicate` (`postgres.provision` + CSRF) TEMPLATE clone + unique owner + vault INSERT + clone-only compensation + inspector Duplicate (no live PG, no 202, no AUTH-006); PG-009 Partial: flagged `POST /api/v1/postgres/databases/{db}/truncate` (`postgres.destructive` + CSRF + AUTH-006, one `TRUNCATE … RESTART IDENTITY`) + inspector danger Truncate dialog (no live PG, no Playwright); PG-011 Partial: flagged `DELETE /api/v1/postgres/databases/{db}` (`postgres.destructive` + CSRF + AUTH-006, terminate excluding current backend then `DROP DATABASE`, optional `DROP ROLE` + vault DELETE; **BF-1** no backup HTTP gate) + inspector danger Drop dialog (no live PG, no Playwright) | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
-| OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | OPS-001/006 Partial: `deploy/install.sh` fail-closed dispatcher + `--dry-run` stage print (`bash deploy/tests/run.sh`); no packages/host mutation. OPS-002..005/007 Planned | Partial |
+| OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | OPS-001/006 Partial: fail-closed dispatcher + `--dry-run` stage print. OPS-002 Partial: PATH host `--version` inventory on `--dry-run` only (`deploy/lib/inventory.sh`; Git Bash `deploy/tests/run.sh` 41 passed). OPS-003..005/007 Planned. No packages/host mutation. | Partial |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
 ## Per-feature completion template
@@ -5223,4 +5223,45 @@ Evidence: redgres-compatibility-researcher (2026-08-26),
 Implementation files: docs/COMPATIBILITY.md §8; docs/TESTING.md
  merge-gate note (GHA integration job still first-cell only).
 Do not mark Complete.
+```
+
+## OPS-002 PATH host --version inventory (2026-08-26)
+
+```text
+Requirement: OPS-002 Partial (PATH host --version inventory on
+ --non-interactive --dry-run only). OPS-006 Partial extra
+ (unsupported/unparseable/expect-mismatch fail-closed before
+ mutation). OPS-007 skip-only for fresh/disabled. Keep OPS-001
+ dispatcher. Keep OPS-003..005/007 Planned. Reject Complete.
+ Not COMPATIBILITY.md §6. Not SQL SHOW / Redis INFO /
+ PgBouncer SHOW VERSION. Not backup/safety-gate. Not production.
+Decision/ADR: ADR-008/009; INSTALLER_SPEC stage 2 Partial;
+ COMPATIBILITY.md §3 installer PATH --version until a non-eval
+ credential path exists; runtime remains SHOW/INFO/SHOW VERSION.
+ §8 pins unchanged (postgres:17.11 / redis:8.2.9).
+Source characterization: PostgreSQL docs --version/-V print and
+ exit; Redis 8.2 server.c --version prints then exit(0) before
+ conf load; PgBouncer usage -V/--version with no ini (parse
+ shape only).
+Implementation files: deploy/install.sh; deploy/lib/inventory.sh;
+ deploy/tests/run.sh; deploy/tests/fixtures/*; deploy/README.md;
+ docs/INSTALLER_SPEC.md (stage 2 Partial); docs/COMPATIBILITY.md
+ §3 one paragraph only; AGENTS.md current-truth;
+ docs/REPOSITORY_STRUCTURE.md (inventory.sh).
+Unit tests: parent re-ran Git Bash deploy/tests/run.sh on
+ integrated master `868b3a0` → 41 passed, 0 failed
+ (PATH stubs; mutation STUB_NAMES unchanged; --config canary
+ not sourced; no Docker/live services). Writer claimed the
+ same on `a04b2e8`.
+Integration tests: none — PATH --version only; not §6.
+Security tests: canary env/config not printed; --config not
+ sourced/eval'd; no passwords/URLs-with-passwords in output.
+Deployment/migration impact: none deployed. Dry-run only.
+Known limitations: PATH-only; binary ≠ running cluster; no
+ SHOW/INFO; no backup; no cluster identity/listeners/datadir;
+ missing /usr/lib/postgresql/N/bin not on PATH fails closed;
+ PgBouncer recorded without a support allow-list.
+Do not mark Complete.
+Local commit: cherry-pick `868b3a0` of writer `a04b2e8` on
+ feat/ops-002-inventory-dry-run (parent will push).
 ```
