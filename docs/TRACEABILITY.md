@@ -1806,9 +1806,27 @@ Reviewer/date: Security review (2026-08-25) approve Partial; no
  Partial UI; no Critical/High. Explicitly NOT viewport/zoom sign-off.
  Evidence review (2026-08-25) keep-Partial; no required corrections.
  Writer-only ./... / vet / build and UI npm build are not parent-after-merge
- re-runs of those exact commands. Verifier pending this pin commit.
+ re-runs of those exact commands.
+ Verifier (2026-08-25) PASS Partial on master `651ecb1`. Independent re-runs
+ go1.27.0 windows/amd64, Node v25.3.0 (not web/.nvmrc 24.19.0):
+  gofmt -l touched Go → empty
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 2.067s; httpapi 15.470s
+  go test -count=1 ./... → ok (serial after dist settled)
+  go test -race -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 3.102s; httpapi 21.570s
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+  npm --prefix web run test:run → Tests 155 passed (155)
+  npm --prefix web run build → tsc + vite 8.2.2
+ inspect* membership unchanged vs `343f807`; no XNACK/XDELEX/XACKDEL.
+ Forbidden paths empty vs `343f807` (no go.mod, siblings, secrets).
+ Not executed: live Redis, §6, representative workloads, viewport/Playwright,
+ gitleaks, govulncheck, CI, Node 24.19.0.
  Local commits: `8846d7f` (API), `b7f905f` (UI), `7ca8c93` (merge UI),
- `1d48e8f` (docs record). Not pushed. Keep REDIS-004 Partial.
+ `1d48e8f` (docs record), `651ecb1` (review pin). Not pushed.
+ Keep REDIS-004 Partial.
 ```
 
 
