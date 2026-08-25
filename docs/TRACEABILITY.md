@@ -2208,7 +2208,7 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  Not run: race, live PostgreSQL 17/18, CI, COMPATIBILITY.md §6, viewport/zoom
 Local commits: `9507111` (API FF), `5d2f258` (API docs), `18c467f` (UI),
  `7bfc3a3` (merge UI onto master), `b594502` (UI docs), `38cfc63` (API
- security pin). Not pushed.
+ security pin), `f449ee1` (UI security pin). Not pushed.
 Reviewer/date: Security review (2026-08-25) on `9507111` approve Partial;
  no Critical/High/Medium/Low this-slice; session + postgres.read; no CSRF
  or audit; no-store; vault stub without project_credentials; static
@@ -2223,7 +2223,13 @@ Reviewer/date: Security review (2026-08-25) on `9507111` approve Partial;
  only; no rotate/create/reveal or web storage. Questions (not defects):
  no 200 extra-field canary; non-401 uses errorMessage; 401 does not force
  shell logout.
- UI/evidence/verifier pending.
+ UI review (2026-08-25) on `b594502`/`18c467f`/`7bfc3a3` approve Partial UI;
+ no Critical/High/Medium. Optional Low (non-blocking, not required):
+ table owner-flag headers shorter than stack/inspector; “this slice”
+ jargon in page copy; ledger-badge left margin in Protected column.
+ Explicitly NOT viewport/zoom sign-off: 360/768/1280/1600 and 200% zoom
+ were not opened.
+ Evidence/verifier pending.
  Keep PG-012 Partial. Keep REDIS-005 Partial. Not pushed.
 ```
 
