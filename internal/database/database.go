@@ -92,6 +92,12 @@ func prepareStatePath(path string) (*os.File, error) {
 		_ = f.Close()
 		return nil, fmt.Errorf("restrict sqlite file: %w", err)
 	}
+	for _, suffix := range stateSidecarSuffixes {
+		if err := chmodIfExist(path+suffix, 0o600); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+	}
 	return f, nil
 }
 
