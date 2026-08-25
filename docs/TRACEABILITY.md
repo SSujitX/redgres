@@ -5342,7 +5342,8 @@ Implementation files: deploy/install.sh; deploy/lib/release.sh;
  deploy/tests/run.sh; deploy/README.md;
  docs/INSTALLER_SPEC.md (update/rollback command lines, stage 9,
  Rollback limits This Partial only);
- docs/REPOSITORY_STRUCTURE.md (lib/release.sh; no deploy/update.sh);
+ docs/REPOSITORY_STRUCTURE.md (lib/release.sh listed; target tree
+ still names deploy/update.sh; this Partial did not create it);
  AGENTS.md current-truth; docs/TESTING.md installer note.
 Unit tests: parent re-ran Git Bash deploy/tests/run.sh on
  integrated master `4a8fa4d` → 63 passed, 0 failed
@@ -5363,7 +5364,10 @@ Security tests: canary env/config not printed; --release not
  Independent redgres-security-reviewer Approve Partial /
  reject Complete on `8bbbdbe` (no Critical/High/Medium; Low
  test-net gaps only: stub ln/sha256sum/gpg, `--to .`, rollback
- unknown --config/--mode).
+ unknown --config/--mode). Independent redgres-evidence-reviewer
+ Approve Partial / reject Complete on `8bbbdbe` (63 pass()
+ sites; required correction: TRACEABILITY must not claim the
+ target tree dropped deploy/update.sh).
 Limitations: result=partial is required so exit 0 is not Complete.
  Live update/rollback without --dry-run remain exit 2. OPS-004
  backup remains Planned (exit 2). bash argv cannot carry NUL.
