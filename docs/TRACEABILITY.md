@@ -4262,3 +4262,40 @@ Keep PG-008 Partial. Keep AUTH-006 Partial (Redis DELETE plus this
 Not pushed.
 ```
 
+## PG-008 row delete security pin (2026-08-26)
+
+```text
+Requirement: PG-008 Partial + AUTH-006 Partial
+ (GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key
+ + flagged DELETE …/rows). Keep AUTH-006 Partial (Redis DELETE plus this
+ DELETE). Keep PG-010 Partial. Do not mark Complete. Gate 4 N/A.
+Decision/ADR: freeze a05da3d. In-handler Reauthenticate. No POST
+ /api/v1/auth/reauth. REDGRES_FEATURE_POSTGRES_ROW_DELETE via envBool.
+Reviewer/date: security review (2026-08-26) on 47dfa4d
+ (47dfa4ddf3488b44052f5c659094ae35a8536dbd); Go 0e9f6fa; UI dad0c9f;
+ range a05da3d..47dfa4d. Approve Partial. Critical: none. High: none.
+ Medium: none.
+ Confirmed: GET primary-key session + postgres.read no CSRF no flag;
+ DELETE session + postgres.destructive + CSRF; flag off 403 before JSON
+ decode no audit no PostgreSQL; envBool unset false invalid names env
+ never echoes value; DisallowUnknownFields primary_key_column unknown;
+ table_confirmation exact path table; PK values 1–500 string/number/bool;
+ AUTH-006 in-handler Reauthenticate no POST /api/v1/auth/reauth no 429
+ no login_attempts; wrong password 403 reauth_required failure audit
+ database+schema+table only no SQL; protected 404 no DML; information_schema
+ PK join not ::regclass/indisprimary/LIMIT 1; width ≠ 1 400 no DELETE;
+ quoted DELETE IN ($1..$n) QuoteCatalogIdentifier empty/NUL fail closed;
+ success audit then 200; audit-fail after DML 503; UI CSRF +
+ encodeURIComponent three frozen fields; no setItem; Search/login/
+ Security overview never DELETE rows.
+ Lows (non-blocking, not corrected here): L1 DML connection skips BASE
+ TABLE re-confirm (TOCTOU; PrimaryKey in same Service.DeleteRows does
+ confirm; not a freeze break). L2 pager/search retain selectedPks
+ (freeze did not require clear).
+ Parent notes verified non-defects: JSON numbers→float64; flag-off 403
+ keeps password; audit target=database + schema/table metadata.
+ UI pin b7e826c stands. Keep PG-008 Partial. Keep AUTH-006 Partial.
+ Keep PG-010 Partial. Do not mark Complete.
+Not pushed.
+```
+
