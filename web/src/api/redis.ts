@@ -208,4 +208,29 @@ export async function fetchRedisCommands(init: RequestInit = {}) {
   return apiRequest<RedisCommandsPayload & ApiErrorBody>("/api/v1/redis/commands", init);
 }
 
+export type RedisDeleteUserPayload = {
+  request_id?: string;
+};
+
+export async function deleteRedisUser(
+  username: string,
+  csrf: string,
+  usernameConfirmation: string,
+  ownerPassword: string,
+  init: RequestInit = {},
+) {
+  return apiRequest<RedisDeleteUserPayload & ApiErrorBody>(
+    `/api/v1/redis/users/${encodeURIComponent(username)}`,
+    {
+      ...init,
+      method: "DELETE",
+      csrf,
+      body: JSON.stringify({
+        username_confirmation: usernameConfirmation,
+        owner_password: ownerPassword,
+      }),
+    },
+  );
+}
+
 export { errorMessage };
