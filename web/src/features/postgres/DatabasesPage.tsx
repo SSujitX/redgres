@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   errorMessage,
+  fetchPostgresConnection,
   fetchPostgresDatabase,
   fetchPostgresDatabases,
   fetchPostgresRows,
@@ -10,8 +11,26 @@ import {
   type RowPage,
   type TableItem,
 } from "../../api/postgres";
+import { displayText } from "../../text/displayText";
 
 const maxRowQueryRunes = 128;
+const sessionExpired = "Your session has expired. Sign in again to continue.";
+const postgresUnavailable = "PostgreSQL is unavailable";
+
+type ConnectionUrls = {
+  maskedDirectUrl: string | null;
+  maskedPooledUrl: string | null;
+};
+
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+  }
+}
+
+function presentUrl(value: unknown): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
 
 type SelectedTable = {
   schema: string;
@@ -39,6 +58,9 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
   const [details, setDetails] = useState<DatabaseDetails | null>(null);
   const [detailsError, setDetailsError] = useState("");
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [connection, setConnection] = useState<ConnectionUrls | null>(null);
+  const [connectionError, setConnectionError] = useState("");
+  const [loadingConnection, setLoadingConnection] = useState(false);
   const [tables, setTables] = useState<TableItem[] | null>(null);
   const [tablesError, setTablesError] = useState("");
   const [tablesTruncated, setTablesTruncated] = useState(false);
@@ -113,12 +135,16 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
     setDetails(null);
     setDetailsError("");
     setLoadingDetails(true);
+    setConnection(null);
+    setConnectionError("");
+    setLoadingConnection(true);
     setTables(null);
     setTablesError("");
     setTablesTruncated(false);
     setLoadingTables(true);
     clearRowState();
     void loadDetails(name, controller);
+    void loadConnection(name, controller);
     void loadTables(name, controller);
   }
 
@@ -151,6 +177,40 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
     } finally {
       if (!controller.signal.aborted) {
         setLoadingDetails(false);
+      }
+    }
+  }
+
+  async function loadConnection(name: string, controller: AbortController) {
+    try {
+      const result = await fetchPostgresConnection(name, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 401) {
+        setConnection(null);
+        setConnectionError(sessionExpired);
+        return;
+      }
+      if (result.status === 200) {
+        setConnection({
+          maskedDirectUrl: presentUrl(result.body.masked_direct_url),
+          maskedPooledUrl: presentUrl(result.body.masked_pooled_url),
+        });
+        setConnectionError("");
+        return;
+      }
+      setConnection(null);
+      setConnectionError(errorMessage(result.body, postgresUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setConnection(null);
+      setConnectionError(postgresUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setLoadingConnection(false);
       }
     }
   }
@@ -323,7 +383,7 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
         <section
           className="detail-panel"
           aria-label="Database details"
-          aria-busy={loadingDetails || loadingTables || loadingRows}
+          aria-busy={loadingDetails || loadingConnection || loadingTables || loadingRows}
         >
           <h2 className="identifier">{selected}</h2>
           {loadingDetails ? (
@@ -337,6 +397,17 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
             </p>
           ) : null}
           {details ? <DetailsFacts details={details} /> : null}
+          {loadingConnection ? (
+            <p className="muted-copy" role="status">
+              Loading connection.
+            </p>
+          ) : null}
+          {connectionError ? (
+            <p className="form-warning" role="alert">
+              {connectionError}
+            </p>
+          ) : null}
+          {connection ? <ConnectionFacts urls={connection} /> : null}
           <h3>Tables</h3>
           {loadingTables ? (
             <p className="muted-copy" role="status">
@@ -611,6 +682,36 @@ function formatCell(value: unknown): { text: string; nullish: boolean } {
   } catch {
     return { text: "Null", nullish: true };
   }
+}
+
+function ConnectionFacts({ urls }: { urls: ConnectionUrls }) {
+  const directUrl = urls.maskedDirectUrl;
+  const pooledUrl = urls.maskedPooledUrl;
+  if (!directUrl && !pooledUrl) {
+    return null;
+  }
+  return (
+    <dl className="fact-list">
+      {directUrl ? (
+        <div>
+          <dt>Direct URL</dt>
+          <dd className="bidi-isolate identifier">{displayText(directUrl)}</dd>
+          <button type="button" className="text-button" onClick={() => void copyText(directUrl)}>
+            Copy Direct URL
+          </button>
+        </div>
+      ) : null}
+      {pooledUrl ? (
+        <div>
+          <dt>Pooled URL</dt>
+          <dd className="bidi-isolate identifier">{displayText(pooledUrl)}</dd>
+          <button type="button" className="text-button" onClick={() => void copyText(pooledUrl)}>
+            Copy Pooled URL
+          </button>
+        </div>
+      ) : null}
+    </dl>
+  );
 }
 
 function DetailsFacts({ details }: { details: DatabaseDetails }) {

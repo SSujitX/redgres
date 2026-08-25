@@ -45,6 +45,25 @@ export async function fetchPostgresDatabase(name: string, init: RequestInit = {}
   );
 }
 
+export type DatabaseConnection = {
+  database?: string;
+  owner?: string;
+  saved_credential?: {
+    status?: string;
+    reason?: string;
+  };
+  masked_direct_url?: string;
+  masked_pooled_url?: string;
+  request_id?: string;
+};
+
+export async function fetchPostgresConnection(name: string, init: RequestInit = {}) {
+  return apiRequest<DatabaseConnection & ApiErrorBody>(
+    `/api/v1/postgres/databases/${encodeURIComponent(name)}/connection`,
+    init,
+  );
+}
+
 export type TableItem = {
   schema?: string;
   name?: string;
