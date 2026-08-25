@@ -2203,12 +2203,17 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  Writer feat/pg-012-security-ui `18c467f` (Node v25.3.0, not web/.nvmrc 24.19.0):
   npm --prefix web run test:run → Tests 196 passed (196)
   npm --prefix web run build → tsc 7.0.2 + vite 8.2.2 (dist gitignored)
- Parent after UI merge `7bfc3a3`:
-  npm --prefix web run test:run → Tests 196 passed (196)
+ Parent after UI merge `7bfc3a3` (parent-executed, not writer copy):
+  npm --prefix web run test:run → Tests 196 passed (196), 30.70s
+ Parent after evidence review on `6479e61`:
+  npm --prefix web run test:run → Tests 196 passed (196), 29.03s
+  git diff --name-only 0edf881..HEAD -- go.mod go.sum
+   migrations/001_initial.sql → empty
  Not run: race, live PostgreSQL 17/18, CI, COMPATIBILITY.md §6, viewport/zoom
-Local commits: `9507111` (API FF), `5d2f258` (API docs), `18c467f` (UI),
- `7bfc3a3` (merge UI onto master), `b594502` (UI docs), `38cfc63` (API
- security pin), `f449ee1` (UI security pin). Not pushed.
+Local commits: `0edf881` (API freeze), `9507111` (API FF), `5d2f258` (API docs),
+ `18c467f` (UI), `7bfc3a3` (merge UI), `b594502` (UI docs), `38cfc63` (API
+ security pin), `f449ee1` (UI security pin), `6479e61` (UI review pin).
+ Not pushed.
 Reviewer/date: Security review (2026-08-25) on `9507111` approve Partial;
  no Critical/High/Medium/Low this-slice; session + postgres.read; no CSRF
  or audit; no-store; vault stub without project_credentials; static
@@ -2229,7 +2234,12 @@ Reviewer/date: Security review (2026-08-25) on `9507111` approve Partial;
  jargon in page copy; ledger-badge left margin in Protected column.
  Explicitly NOT viewport/zoom sign-off: 360/768/1280/1600 and 200% zoom
  were not opened.
- Evidence/verifier pending.
+ Evidence review (2026-08-25) on `b594502` keep-Partial / reject-Complete;
+ required docs fix: parent npm 196 after `7bfc3a3` is parent-executed
+ (30.70s) and re-run on `6479e61` (29.03s); local-commits now include
+ `0edf881` and `b594502`. Mocked UI GET is not live PostgreSQL.
+ Optional SECURITY.md/DATA_AND_SECRETS.md GET name omitted (not a
+ Partial blocker). Verifier pending.
  Keep PG-012 Partial. Keep REDIS-005 Partial. Not pushed.
 ```
 
