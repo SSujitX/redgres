@@ -2324,12 +2324,20 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  Not run: race, live PgBouncer, COMPATIBILITY.md §6, CI, viewport/zoom
 Local commits: `87b6914` (freeze), `b554b1b` (anti-patterns), `df8a9c2`
  (API), `1966cf4` (merge API), `d37f299` (UI), `4ab1f03` (merge UI),
- `01d91be` (docs record). Not pushed.
-Reviewer/date: UI review (2026-08-25) on `01d91be`/`d37f299`/`4ab1f03`
- approve Partial UI; no Critical/High/Medium. Optional Low (non-blocking):
- envelope 401/malformed tests do not name PgBouncer labels (showCards is
- all-or-nothing). Explicitly NOT viewport/zoom sign-off.
- Security/evidence/verifier pending.
+ `01d91be` (docs record), `928cbee` (UI review pin). Not pushed.
+Reviewer/date: Security review (2026-08-25) on `01d91be`/`df8a9c2`/`1966cf4`
+ approve Partial; no Critical/High/Medium. GET /status session +
+ platform.read, no CSRF/audit, no-store; 401 omits components; healthz
+ does not ping PgBouncer; canary host/password/version omitted; observer
+ dbname pgbouncer, QueryExecModeSimpleProtocol, Exec SHOW VERSION no Scan
+ and no pgxpool.Ping; catalog stays 5432; no second password file;
+ production serve does not require pooled port; Open does not startup-Ping
+ the console. Optional Low (non-blocking): no GET /status audit-count
+ pin; optional pooled NewWithConfig failure still fails Open.
+ UI review (2026-08-25) on `01d91be`/`d37f299`/`4ab1f03` approve Partial UI;
+ no Critical/High/Medium. Optional Low (non-blocking): envelope 401/malformed
+ tests do not name PgBouncer labels. Explicitly NOT viewport/zoom sign-off.
+ Evidence/verifier pending.
  Keep PLAT-001 Partial. Keep PG-012 Partial. Keep REDIS-005 Partial.
  Not pushed.
 ```
