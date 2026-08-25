@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import globalsCss from "./styles/globals.css?raw";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -115,6 +116,13 @@ function isRedisUserPatch(url: string, username: string, init?: RequestInit): bo
   return (
     url === `/api/v1/redis/users/${encodeURIComponent(username)}` &&
     String(init?.method ?? "").toUpperCase() === "PATCH"
+  );
+}
+
+function isRedisUserDelete(url: string, username: string, init?: RequestInit): boolean {
+  return (
+    url === `/api/v1/redis/users/${encodeURIComponent(username)}` &&
+    String(init?.method ?? "").toUpperCase() === "DELETE"
   );
 }
 
@@ -330,6 +338,11 @@ function redisAclDetailOk(extra: Record<string, unknown> = {}) {
 function goToAclUsers() {
   fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
   fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "ACL users" }));
+}
+
+function fillDeleteDialog(dialog: HTMLElement, username = "project_a", password = "owner-secret-15") {
+  fireEvent.change(within(dialog).getByLabelText("Confirm username"), { target: { value: username } });
+  fireEvent.change(within(dialog).getByLabelText("Owner password"), { target: { value: password } });
 }
 
 function goToSecurityOverview() {
@@ -5552,6 +5565,7 @@ describe("App session and login", () => {
     expect(await within(details).findByText("Protected")).toBeInTheDocument();
     expect(within(details).queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
     expect(within(details).queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
   });
 
   it("hides Enable and Disable while ACL user details are loading", async () => {
@@ -5975,6 +5989,7 @@ describe("App session and login", () => {
     const details = await screen.findByRole("region", { name: "ACL user details" });
     expect(await within(details).findByText("Protected")).toBeInTheDocument();
     expect(within(details).queryByRole("button", { name: "Rotate" })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
   });
 
   it("hides Rotate while ACL user details are loading", async () => {
@@ -6440,6 +6455,7 @@ describe("App session and login", () => {
     const details = await screen.findByRole("region", { name: "ACL user details" });
     expect(await within(details).findByText("Protected")).toBeInTheDocument();
     expect(within(details).queryByRole("button", { name: "Edit permissions" })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
   });
 
   it("hides Edit permissions while ACL user details are loading", async () => {
@@ -7157,5 +7173,580 @@ describe("App session and login", () => {
     expect(within(dialog).queryByRole("checkbox", { name: "set" })).not.toBeInTheDocument();
     expect(fetch.mock.calls.some((call) => isRedisCommandsUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => String(call[1]?.method ?? "").toUpperCase() !== "PATCH")).toBe(true);
+  });
+
+  it("shows Delete next to inspector actions for a non-protected user when the ACL list is ok", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-ok".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    const header = screen.getByRole("heading", { name: "ACL users" }).closest("header");
+    expect(header).not.toBeNull();
+    expect(header).toHaveTextContent(/delete a non-protected ACL user/i);
+    expect(header).not.toHaveTextContent(/Delete is not available in this slice/);
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(await within(details).findByRole("button", { name: "Disable" })).toBeInTheDocument();
+    expect(within(details).getByRole("button", { name: "Rotate" })).toBeInTheDocument();
+    expect(within(details).getByRole("button", { name: "Edit permissions" })).toBeInTheDocument();
+    const remove = within(details).getByRole("button", { name: "Delete" });
+    expect(remove).toBeEnabled();
+    expect(remove).toHaveClass("danger-button");
+    expect(remove.className).not.toMatch(/redis/);
+  });
+
+  it("hides Delete while ACL user details are loading", async () => {
+    let releaseDetail: () => void = () => {};
+    const blockedDetail = new Promise<void>((resolve) => {
+      releaseDetail = resolve;
+    });
+    stubFetch(async (url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-load".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        await blockedDetail;
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(within(details).getByText("Loading details.")).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    releaseDetail();
+    expect(await within(details).findByRole("button", { name: "Delete" })).toBeInTheDocument();
+  });
+
+  it.each(["not_configured", "unavailable"] as const)(
+    "hides Delete when the ACL list is %s",
+    async (state) => {
+      stubFetch((url) => {
+        if (url.includes("/api/v1/session")) {
+          return jsonResponse(200, { owner: { username: "admin" }, csrf_token: `acl-delete-${state}`.padEnd(64, "0") });
+        }
+        if (isRedisUsersListUrl(url)) {
+          return jsonResponse(200, {
+            state,
+            ...(state === "unavailable" ? { reason: "unreachable" } : { users: [] }),
+            request_id: "77777777777777777777777777777777",
+          });
+        }
+        return unknownApi(url);
+      });
+      render(<App />);
+      expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+      goToAclUsers();
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("shows delete confirm copy and does not DELETE until fields are valid and Confirm is used", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-copy".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Redis user" });
+    expect(dialog).toHaveTextContent(/type the exact username and owner password/i);
+    expect(dialog).toHaveTextContent(/removes the ACL user/i);
+    expect(dialog).toHaveTextContent(/existing Redis connections for that user are terminated/i);
+    expect(dialog).toHaveTextContent(/keys are not deleted/i);
+    expect(dialog).toHaveTextContent(/cannot be undone/i);
+    const confirmUsername = within(dialog).getByLabelText("Confirm username");
+    const ownerPassword = within(dialog).getByLabelText("Owner password");
+    expect(confirmUsername).toHaveAttribute("autocomplete", "off");
+    expect(ownerPassword).toHaveAttribute("type", "password");
+    expect(ownerPassword).toHaveAttribute("autocomplete", "current-password");
+    const confirm = within(dialog).getByRole("button", { name: "Delete" });
+    expect(confirm).toHaveClass("danger-button");
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    fireEvent.change(confirmUsername, { target: { value: "project_b" } });
+    fireEvent.change(ownerPassword, { target: { value: "owner-secret-15" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(confirmUsername, { target: { value: "project_a" } });
+    fireEvent.change(ownerPassword, { target: { value: "" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Delete Redis user" })).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isRedisUserDelete(String(call[0]), "project_a", call[1]))).toBe(true);
+  });
+
+  it("DELETEs with CSRF, encodeURIComponent, and only username_confirmation plus owner_password", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDelete(url, "project_a", init)) {
+        return jsonResponse(200, { request_id: "66666666666666666666666666666666" });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Redis user" });
+    fillDeleteDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isRedisUserDelete(String(call[0]), "project_a", call[1]))).toBe(true);
+    });
+    const deleteCall = fetch.mock.calls.find((call) => isRedisUserDelete(String(call[0]), "project_a", call[1]));
+    expect(deleteCall?.[0]).toBe("/api/v1/redis/users/project_a");
+    expect(deleteCall?.[0]).toBe(`/api/v1/redis/users/${encodeURIComponent("project_a")}`);
+    expect(new Headers(deleteCall?.[1]?.headers).get("X-CSRF-Token")).toBe("acl-delete".padEnd(64, "0"));
+    const body = JSON.parse(String(deleteCall?.[1]?.body));
+    expect(Object.keys(body).sort()).toEqual(["owner_password", "username_confirmation"]);
+    expect(body).toEqual({ username_confirmation: "project_a", owner_password: "owner-secret-15" });
+  });
+
+  it("clears secrets and inspector selection after delete 200 and refreshes the list without storage", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    let deleted = false;
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-200".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk(
+          deleted
+            ? [redisAclListItem({ username: "project_b", key_pattern: "project_b:*" })]
+            : [redisAclListItem(), redisAclListItem({ username: "project_b", key_pattern: "project_b:*" })],
+        );
+      }
+      if (isRedisUserDelete(url, "project_a", init)) {
+        deleted = true;
+        return jsonResponse(200, { request_id: "66666666666666666666666666666666" });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("region", { name: "ACL user details" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Redis user" });
+    fillDeleteDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Delete Redis user" })).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole("region", { name: "ACL user details" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    expect(await screen.findByRole("button", { name: /project_b/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /project_a/ })).not.toBeInTheDocument();
+    const listGets = fetch.mock.calls.filter(
+      (call) => isRedisUsersListUrl(String(call[0])) && !isRedisUsersCreate(String(call[0]), call[1]),
+    );
+    expect(listGets.length).toBeGreaterThan(1);
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("shows session-expired copy on delete 401 and leaves no leftover password", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-401".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDelete(url, "project_a", init)) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Redis user" });
+    fillDeleteDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("dialog", { name: "Delete Redis user" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+  });
+
+  it("stays on the delete dialog for reauth_required, announces the error, and clears only the password", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-reauth".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDelete(url, "project_a", init)) {
+        return jsonResponse(403, {
+          error: { code: "reauth_required", message: "Owner password is incorrect" },
+        });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Redis user" });
+    fillDeleteDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Owner password is incorrect");
+    expect(screen.getByRole("dialog", { name: "Delete Redis user" })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Confirm username")).toHaveValue("project_a");
+    expect(within(dialog).getByLabelText("Owner password")).toHaveValue("");
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
+  });
+
+  it("shows protected copy on delete 403 without closing the dialog", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-403".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDelete(url, "project_a", init)) {
+        return jsonResponse(403, { error: { code: "protected_resource", message: "This Redis user is protected" } });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Redis user" });
+    fillDeleteDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("This Redis user is protected");
+    expect(screen.getByRole("dialog", { name: "Delete Redis user" })).toBeInTheDocument();
+  });
+
+  it("shows not-found copy on delete 404", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-404".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDelete(url, "project_a", init)) {
+        return jsonResponse(404, { error: { code: "not_found", message: "Not found" } });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Redis user" });
+    fillDeleteDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not found");
+    expect(screen.queryByRole("dialog", { name: "Delete Redis user" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    expect(screen.queryByText("No commands.")).not.toBeInTheDocument();
+  });
+
+  it("shows Redis unavailable copy on delete 503", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-503".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDelete(url, "project_a", init)) {
+        return jsonResponse(503, { error: { code: "dependency_unavailable", message: "Redis is unavailable." } });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Redis user" });
+    fillDeleteDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Redis is unavailable.");
+    expect(screen.getByRole("dialog", { name: "Delete Redis user" })).toBeInTheDocument();
+  });
+
+  it("traps focus in the delete dialog", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-trap".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Redis user" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fillDeleteDialog(dialog);
+    const confirm = within(dialog).getByRole("button", { name: "Delete" });
+    confirm.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toHaveAccessibleName("Confirm username");
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(confirm);
+  });
+
+  it("styles Delete with the danger token, not Redis identity red", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-danger".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    const remove = await within(details).findByRole("button", { name: "Delete" });
+    expect(remove).toHaveClass("danger-button");
+    expect(remove.className).not.toMatch(/redis/);
+    expect(globalsCss).toMatch(/\.danger-button\s*\{[^}]*background:\s*var\(--danger\)/s);
+    expect(globalsCss).not.toMatch(/\.danger-button\s*\{[^}]*var\(--redis\)/s);
+    fireEvent.click(remove);
+    const confirm = within(await screen.findByRole("dialog", { name: "Delete Redis user" })).getByRole("button", {
+      name: "Delete",
+    });
+    expect(confirm).toHaveClass("danger-button");
+    expect(confirm.className).not.toMatch(/redis/);
+  });
+
+  it("clears delete secrets on dismiss, inspect of another user, and logout", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-clear".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([
+          redisAclListItem(),
+          redisAclListItem({ username: "project_b", key_pattern: "project_b:*" }),
+        ]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserDetailUrl(url, "project_b")) {
+        return redisAclDetailOk({ username: "project_b", key_pattern: "project_b:*" });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    fillDeleteDialog(await screen.findByRole("dialog", { name: "Delete Redis user" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Delete Redis user" })).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Delete Redis user" })).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    fillDeleteDialog(await screen.findByRole("dialog", { name: "Delete Redis user" }));
+    fireEvent.click(screen.getByRole("button", { name: /project_b/ }));
+    expect(await screen.findByText("project_b:*")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Delete Redis user" })).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    fillDeleteDialog(await screen.findByRole("dialog", { name: "Delete Redis user" }), "project_b");
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Delete Redis user" })).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("disables Delete while delete is in flight or a credential ticket is open", async () => {
+    let releaseDelete: () => void = () => {};
+    const blockedDelete = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-delete-wait".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDelete(url, "project_a", init)) {
+        await blockedDelete;
+        return jsonResponse(200, { request_id: "66666666666666666666666666666666" });
+      }
+      if (isRedisUserRotate(url, "project_a", init)) {
+        return redisAclRotate200();
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Redis user" });
+    fillDeleteDialog(dialog);
+    const confirm = within(dialog).getByRole("button", { name: "Delete" });
+    fireEvent.click(confirm);
+    await waitFor(() => {
+      expect(confirm).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Delete" })).toBeDisabled();
+    });
+    releaseDelete();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Delete Redis user" })).not.toBeInTheDocument();
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Rotate password?" })).getByRole("button", { name: "Rotate now" }));
+    expect(await screen.findByRole("alertdialog", { name: /shown now/i })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "ACL user details" })).getByRole("button", { name: "Delete" })).toBeDisabled();
+  });
+
+  it("never DELETEs Redis ACL users from the login route", async () => {
+    let authed = false;
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-delete-session".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/login")) {
+        authed = true;
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-delete".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => String(call[1]?.method ?? "").toUpperCase() !== "DELETE")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+  });
+
+  it("never DELETEs from search results", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-search-delete".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isSearchUrl(url)) {
+        return redisHitSearch();
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
+    const dialog = await screen.findByRole("dialog", { name: "Search" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("region", { name: "ACL user details" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => String(call[1]?.method ?? "").toUpperCase() !== "DELETE")).toBe(true);
   });
 });

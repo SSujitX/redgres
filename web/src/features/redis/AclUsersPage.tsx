@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   createRedisUser,
+  deleteRedisUser,
   disableRedisUser,
   enableRedisUser,
   errorMessage,
@@ -15,6 +16,7 @@ import {
 import { displayText } from "../../text/displayText";
 import CreateAclUserForm from "./CreateAclUserForm";
 import CredentialTicket, { type ShownCredential } from "./CredentialTicket";
+import DeleteAclUserDialog from "./DeleteAclUserDialog";
 import EditPermissionsDialog from "./EditPermissionsDialog";
 import RotatePasswordDialog from "./RotatePasswordDialog";
 
@@ -180,11 +182,17 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editError, setEditError] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
   const selectionAbort = useRef<AbortController | null>(null);
   const listAbort = useRef<AbortController | null>(null);
   const toggleAbort = useRef<AbortController | null>(null);
   const rotateAbort = useRef<AbortController | null>(null);
   const editAbort = useRef<AbortController | null>(null);
+  const deleteAbort = useRef<AbortController | null>(null);
   const inspectorRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -206,6 +214,10 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
       setRotateOpen(false);
       setEditOpen(false);
       setEditError("");
+      setDeleteOpen(false);
+      setDeleteError("");
+      setDeleteConfirmation("");
+      setDeletePassword("");
       setList({ kind: "session_expired" });
       return;
     }
@@ -250,6 +262,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
       toggleAbort.current?.abort();
       rotateAbort.current?.abort();
       editAbort.current?.abort();
+      deleteAbort.current?.abort();
     };
   }, []);
 
@@ -264,6 +277,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     toggleAbort.current?.abort();
     rotateAbort.current?.abort();
     editAbort.current?.abort();
+    deleteAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
     setSelected(username);
@@ -277,6 +291,11 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     setEditOpen(false);
     setEditing(false);
     setEditError("");
+    setDeleteOpen(false);
+    setDeleting(false);
+    setDeleteError("");
+    setDeleteConfirmation("");
+    setDeletePassword("");
     setLoadingDetail(true);
     void loadDetail(username, controller);
   }
@@ -293,6 +312,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     toggleAbort.current?.abort();
     rotateAbort.current?.abort();
     editAbort.current?.abort();
+    deleteAbort.current?.abort();
     setSelected(null);
     setDetail(null);
     setDetailError("");
@@ -304,6 +324,11 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     setEditOpen(false);
     setEditing(false);
     setEditError("");
+    setDeleteOpen(false);
+    setDeleting(false);
+    setDeleteError("");
+    setDeleteConfirmation("");
+    setDeletePassword("");
     setLoadingDetail(false);
   }
 
@@ -319,6 +344,10 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
         setRotateOpen(false);
         setEditOpen(false);
         setEditError("");
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
         setDetail(null);
         setDetailError(sessionExpired);
         return;
@@ -398,6 +427,10 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
         setRotateOpen(false);
         setEditOpen(false);
         setEditError("");
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
         setList({ kind: "session_expired" });
         return;
       }
@@ -423,7 +456,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
   }
 
   async function handleToggleEnabled() {
-    if (!detail || detail.protected || list.kind !== "ok" || toggling) {
+    if (!detail || detail.protected || list.kind !== "ok" || toggling || deleting) {
       return;
     }
     const username = detail.username;
@@ -446,6 +479,10 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
         setRotateOpen(false);
         setEditOpen(false);
         setEditError("");
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
         setList({ kind: "session_expired" });
         return;
       }
@@ -486,7 +523,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
   }
 
   async function handleRotate() {
-    if (!detail || detail.protected || list.kind !== "ok" || rotating || ticket) {
+    if (!detail || detail.protected || list.kind !== "ok" || rotating || ticket || deleting) {
       return;
     }
     const username = detail.username;
@@ -507,6 +544,10 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
         setRotateOpen(false);
         setEditOpen(false);
         setEditError("");
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
         setList({ kind: "session_expired" });
         return;
       }
@@ -550,7 +591,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     queueKind?: RedisAclQueueKind,
     commands?: string[],
   ) {
-    if (!detail || detail.protected || list.kind !== "ok" || editing || toggling || rotating || ticket) {
+    if (!detail || detail.protected || list.kind !== "ok" || editing || toggling || rotating || deleting || ticket) {
       return;
     }
     const username = detail.username;
@@ -578,6 +619,10 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
         setRotateOpen(false);
         setEditOpen(false);
         setEditError("");
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
         setList({ kind: "session_expired" });
         return;
       }
@@ -633,6 +678,85 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     }
   }
 
+  async function handleDelete() {
+    if (!detail || detail.protected || list.kind !== "ok" || deleting || toggling || rotating || editing || ticket) {
+      return;
+    }
+    if (deleteConfirmation !== detail.username || deletePassword.length === 0) {
+      return;
+    }
+    const username = detail.username;
+    const usernameConfirmation = deleteConfirmation;
+    const ownerPassword = deletePassword;
+    setDeleting(true);
+    setDeleteError("");
+    setActionError("");
+    deleteAbort.current?.abort();
+    const controller = new AbortController();
+    deleteAbort.current = controller;
+    try {
+      const result = await deleteRedisUser(username, csrf, usernameConfirmation, ownerPassword, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 401) {
+        deleteAbort.current = null;
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
+        clearTicket();
+        setCreateOpen(false);
+        setRotateOpen(false);
+        setEditOpen(false);
+        setEditError("");
+        setList({ kind: "session_expired" });
+        return;
+      }
+      if (result.status === 404) {
+        deleteAbort.current = null;
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
+        setDetail(null);
+        setDetailError(errorMessage(result.body, notFound));
+        return;
+      }
+      if (result.status === 403) {
+        if (result.body.error?.code === "reauth_required") {
+          setDeleteError(errorMessage(result.body, "Owner password is incorrect"));
+          setDeletePassword("");
+          return;
+        }
+        setDeleteError(errorMessage(result.body, protectedCopy));
+        return;
+      }
+      if (result.status === 200) {
+        deleteAbort.current = null;
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
+        clearSelection();
+        requestList();
+        return;
+      }
+      setDeleteError(errorMessage(result.body, redisUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setDeleteError(redisUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setDeleting(false);
+      }
+    }
+  }
+
   const listAlert =
     list.kind === "session_expired"
       ? sessionExpired
@@ -657,7 +781,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             </button>
           ) : null}
         </div>
-        <p>Create an ACL user with a named permission preset or custom allow-list and a project key prefix, inspect modeled rules, edit named or custom allow-list permissions, or rotate a non-protected password. Delete is not available in this slice.</p>
+        <p>Create an ACL user with a named permission preset or custom allow-list and a project key prefix, inspect modeled rules, edit named or custom allow-list permissions, rotate a non-protected password, or delete a non-protected ACL user.</p>
       </header>
       {ticket ? <CredentialTicket credential={ticket} onDismiss={dismissTicket} /> : null}
       {createOpen ? (
@@ -706,6 +830,27 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
           onSubmit={(keyPattern, preset, queueKind, commands) =>
             void handlePatch(keyPattern, preset, queueKind, commands)
           }
+        />
+      ) : null}
+      {deleteOpen && detail ? (
+        <DeleteAclUserDialog
+          username={detail.username}
+          confirmation={deleteConfirmation}
+          password={deletePassword}
+          error={deleteError}
+          submitting={deleting}
+          onConfirmationChange={setDeleteConfirmation}
+          onPasswordChange={setDeletePassword}
+          onCancel={() => {
+            if (deleting) {
+              return;
+            }
+            setDeleteOpen(false);
+            setDeleteError("");
+            setDeleteConfirmation("");
+            setDeletePassword("");
+          }}
+          onConfirm={() => void handleDelete()}
         />
       ) : null}
       {listAlert ? (
@@ -804,7 +949,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
               <button
                 type="button"
                 className="text-button"
-                disabled={toggling || editing}
+                disabled={toggling || editing || deleting}
                 onClick={() => void handleToggleEnabled()}
               >
                 {detail.enabled ? "Disable" : "Enable"}
@@ -812,9 +957,9 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
               <button
                 type="button"
                 className="text-button"
-                disabled={rotating || ticket !== null || editing}
+                disabled={rotating || ticket !== null || editing || deleting}
                 onClick={() => {
-                  if (rotating || ticket || editing) {
+                  if (rotating || ticket || editing || deleting) {
                     return;
                   }
                   setRotateError("");
@@ -826,9 +971,9 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
               <button
                 type="button"
                 className="text-button"
-                disabled={editing || toggling || rotating || ticket !== null}
+                disabled={editing || toggling || rotating || deleting || ticket !== null}
                 onClick={() => {
-                  if (editing || toggling || rotating || ticket) {
+                  if (editing || toggling || rotating || deleting || ticket) {
                     return;
                   }
                   setEditError("");
@@ -836,6 +981,22 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
                 }}
               >
                 Edit permissions
+              </button>
+              <button
+                type="button"
+                className="danger-button"
+                disabled={deleting || toggling || rotating || editing || ticket !== null}
+                onClick={() => {
+                  if (deleting || toggling || rotating || editing || ticket) {
+                    return;
+                  }
+                  setDeleteError("");
+                  setDeleteConfirmation("");
+                  setDeletePassword("");
+                  setDeleteOpen(true);
+                }}
+              >
+                Delete
               </button>
             </div>
           ) : null}

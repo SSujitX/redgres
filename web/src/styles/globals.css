@@ -58,6 +58,7 @@ input:focus-visible {
 
 .primary-button,
 .text-button,
+.danger-button,
 .icon-button,
 .owner-button,
 .nav-item,
@@ -86,6 +87,18 @@ input:focus-visible {
 }
 
 .primary-button:disabled {
+  opacity: 0.6;
+}
+
+.danger-button {
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--danger);
+  color: var(--surface);
+  padding: 0 var(--space-4);
+}
+
+.danger-button:disabled {
   opacity: 0.6;
 }
 
