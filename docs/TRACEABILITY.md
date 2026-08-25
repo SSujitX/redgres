@@ -3907,7 +3907,8 @@ Reviewer/date: UI Approve Partial on `26a2a62` (pin `a10e0d9`);
  security Approve Partial with conditions on `26a2a62` (pin `e10cc08`);
  catalog quoting / superuser-skip correction `1c0ad73`/`7d3b5a8`;
  security re-review Approve Partial on `7d3b5a8` (pin `8cf383a`); evidence
- PASS Partial on `8cf383a` (following pin); verifier still pending. Keep Partial.
+ PASS Partial on `8cf383a` (pin `4223a8c`); verifier PASS Partial
+ (following pin). Keep Partial.
 Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial.
  Keep PG-005 Partial. Keep PG-006 Partial. Keep PG-012 Partial.
  Keep REDIS-008 Partial. Keep AUTH-006 Partial. Do not mark Complete.
@@ -4008,8 +4009,8 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  go test -count=1 ./... → all ok (httpapi 29.256s; postgresadmin 1.241s)
  go vet ./... → no findings
 Reviewer/date: security re-review Approve Partial on `7d3b5a8` (pin
- `8cf383a`). UI pin `a10e0d9` unchanged. Evidence PASS Partial (following
- pin). Verifier still pending.
+ `8cf383a`). UI pin `a10e0d9` unchanged. Evidence PASS Partial (pin
+ `4223a8c`). Verifier PASS Partial (following pin).
 Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
  Partial. Keep PG-006 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
  Keep AUTH-006 Partial.
@@ -4038,8 +4039,8 @@ Reviewer/date: security re-review (2026-08-25) on `7d3b5a8` (`376f11e..7d3b5a8`;
  pg_get_function_identity_arguments interpolated; unknown 1-char prokind
  defaults to ALTER FUNCTION (SQL error → compensate); compensated failures
  not audited; TEMPLATE datacl not stripped of source CONNECT.
-Keep PG-010 Partial. Do not mark Complete. Evidence PASS Partial (following
- pin). Verifier still pending.
+Keep PG-010 Partial. Do not mark Complete. Evidence PASS Partial (pin
+ `4223a8c`). Verifier PASS Partial (following pin).
  Gate 4, live PostgreSQL 17/18, Playwright, 202/operations remain Complete
  blockers.
 Not pushed.
@@ -4073,6 +4074,48 @@ Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
  202/operations, POST /api/v1/auth/reauth, ensure_vault, dual-secret ADR,
  production vault-secret probe remain Complete blockers.
 Not pushed.
+```
+
+## PG-010 POST duplicate verifier PASS Partial (2026-08-25)
+
+```text
+Requirement: PG-010 Partial (POST /api/v1/postgres/databases/{db}/duplicate
+ TEMPLATE clone + unique owner + vault INSERT + clone-only compensation +
+ Databases inspector Duplicate). Keep PG-003 Partial. Keep PG-004 Partial.
+ Keep PG-005 Partial. Keep PG-006 Partial.
+Decision/ADR: ADR-004; freeze `376f11e`. AUTH-006 does not apply. No 202.
+ No feature flag.
+Verifier/date: independent verifier (2026-08-25) on product tree `7d3b5a8`
+ / HEAD `4223a8c`. PASS Partial. Do not mark Complete.
+Freeze: session + postgres.provision + CSRF requireMutation; body
+ {database, owner} DisallowUnknownFields; unique owner; TEMPLATE clone
+ execSimple no transaction; source terminate parameterized; no REASSIGN
+ OWNED / SET ROLE; vault INSERT no ON CONFLICT; clone-only compensation;
+ QuoteCatalogIdentifier empty/NUL fail closed; skip superuser object
+ owners; 201 no-store one_time JSON false; audit metadata
+ database+owner+source only; inspector Duplicate text-button; Security
+ overview / search / login never POST duplicate; no AUTH-006; no 202;
+ no REDGRES_FEATURE_POSTGRES_DUPLICATE.
+Commands executed (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/postgresadmin ./internal/httpapi
+ → ok postgresadmin 1.029s; httpapi 27.618s
+ go test -count=1 ./... → all ok (httpapi 31.953s; cmd/redgres 2.835s;
+ postgresadmin 1.363s; secrets 0.687s; web 0.737s; migrations no tests)
+ go vet ./... → no findings
+ go build -o NUL ./cmd/redgres → success
+ npm --prefix web run test:run → Tests 309 passed (309), 71.82s
+Unexecuted: Gate 4, live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright
+ viewports, Python Gate 2, 202/operations, POST /api/v1/auth/reauth,
+ ensure_vault, dual-secret ADR, production vault-secret probe, CI, Node
+ 24.19.0, gitleaks, govulncheck, go test -race ./..., npm web build.
+No secret artifacts in 376f11e..4223a8c. Prior UI `a10e0d9`, security
+ `8cf383a`, evidence `4223a8c` pins stand.
+ Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
+ Partial. Keep PG-006 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
+ Keep AUTH-006 Partial.
+ Not pushed.
 ```
 
 
