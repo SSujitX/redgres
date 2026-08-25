@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 Partial: in-handler `Reauthenticate` on `DELETE /api/v1/redis/users/{username}` only (no `POST /api/v1/auth/reauth`, no AUTH-005 `login_attempts` increment) | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; no POST rotate); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog (no live PG, no POST rotate, no Gate 4); PG-006/008–011 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; no POST rotate); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no POST rotate, no Gate 4); PG-006/008–011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -3452,7 +3452,8 @@ UI: header Create database; hidden on list error/503; shown on HTTP 200 includin
  empty; dialog title Create database; no password field; POST CSRF {database,owner};
  201 vault-repeatable ticket; 401/403/409/400/503 as frozen; postgres-create not
  placeholder; inspector/Security/search/login never POST create; Redis tickets
- still shown now; no setItem.
+ still shown now; no setItem; nav/search Create does not open or POST while a
+ ticket is open; list GET 401 after 201 clears ticket (session-expired copy).
 Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
  (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
  Writer API feat/pg-003-create-api `70cd1ab`:
@@ -3475,19 +3476,77 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
   go build -o NUL ./cmd/redgres → success
   npm --prefix web run test:run → Tests 267 passed (267), 42.24s (after UI merge;
    API merge did not touch web)
+ Parent UI correction `f49d9e5`:
+  npm --prefix web run test:run → Tests 269 passed (269), 40.58s
 Python Gate 2 not executed (Python 3.14.6 present; cryptography not installed).
 Not run: live PostgreSQL 17/18, Gate 4, COMPATIBILITY.md §6, Playwright,
  gitleaks, govulncheck, CI, race, Node 24.19.0.
 Known limitations: GRANT SET skipped when admin is empty or postgres or equals
  the new role. Unregistered POST rotate is chi 404. Header still says
- “Passwords are not revealed.”
+ “Passwords are not revealed.” Compensated create failures are not audited
+ (security Low L1; freeze requires success audit + nil-adapter failure only).
 Local commits: `7e85055` (freeze), `70cd1ab` (API), `584c075` (UI),
- `0b7b3e3` (merge UI), `d533e63` (merge API), this docs record.
+ `0b7b3e3` (merge UI), `d533e63` (merge API), `0ec4af6` (docs record),
+ `f49d9e5` (UI Medium 1–2 ticket guards).
  Not pushed.
-Reviewer/date: pending parent/security/verifier. Keep Partial.
+Reviewer/date: Security Approve Partial on `0ec4af6`; UI first pass at
+ `0ec4af6` (Medium 1–2); UI Approve Partial on correction `f49d9e5`
+ (Medium 1–2 closed). Evidence/verifier pending. Keep Partial.
 Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
  Do not mark Complete.
+```
+
+## PG-003 POST create security pin (2026-08-25)
+
+```text
+Requirement: PG-003 Partial (POST /api/v1/postgres/databases create + vault INSERT
+ + compensation + Databases Create dialog). Keep PG-004 Partial. Keep PG-005 Partial.
+Decision/ADR: ADR-004; freeze `7e85055`. AUTH-006 does not apply.
+Reviewer/date: Security review (2026-08-25) on `0ec4af6` Approve Partial;
+ no Critical/High/Medium. Freeze holds: session + postgres.provision + CSRF
+ (requireMutation); not postgres.read / credentials / destructive; protected
+ never DDL (403 before catalog mutation); missing vault key 503 before DDL;
+ parameterized vault INSERT no ON CONFLICT / no ensure_vault; audit-fail 503
+ no credential (cluster+vault remain); public host/ports sslmode=require;
+ no POST /api/v1/auth/reauth; body {database, owner} only; pgx v5.10.0;
+ go-redis v9.22.0; no fernet-go. UI at that SHA: CSRF header; POST body
+ {database, owner}; no setItem.
+ Low L1 (non-blocking): compensated create failures are not audited; leftover
+ LOGIN role possible if OwnedDatabaseCount errors during compensation.
+ Independent UI correction landed after this pin as `f49d9e5` (API unchanged).
+Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
+ Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Gate 4, live PostgreSQL 17/18, Playwright, PG-006 POST rotate,
+ POST /api/v1/auth/reauth, ensure_vault, production vault-secret probe,
+ Python Gate 2 remain Complete blockers.
+Not pushed.
+```
+
+## PG-003 POST create UI pin (2026-08-25)
+
+```text
+Requirement: PG-003 Partial (Databases Create dialog + 201 vault-repeatable ticket).
+ Keep PG-004 Partial. Keep PG-005 Partial.
+Decision/ADR: ADR-004; freeze `7e85055`.
+Reviewer/date: UI review (2026-08-25) on `0ec4af6` Approve Partial with Medium
+ 1–2; correction `f49d9e5` UI re-review (2026-08-25) Approve Partial, Medium 1–2
+ closed, no new Critical/High/Medium.
+ Medium 1 closed: openCreate effect requires ticket === null; handleCreate
+ no-ops while ticket open; createOpened.current latched only in that branch;
+ search/nav share AppShell.go postgres-create on the same mounted page.
+ Medium 2 closed: loadList 401 clearTicket, pendingSelect null, close create,
+ session-expired copy; ticket unmounts.
+ Explicitly NOT viewport/zoom/Playwright sign-off. This reviewer did not
+ re-run npm tests; parent recorded 269 passed at `f49d9e5`.
+ Low (out of freeze): header still says “Passwords are not revealed.”
+ Missing (non-blocking): dedicated search-while-ticket and Reveal+nav tests
+ (same ticket + openCreate path as the nav test).
+Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
+ Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Playwright 360×800 / 768×1024 / 1280×800 / 1600×1000 + 200% zoom, live
+ PostgreSQL 17/18, Gate 4 remain Complete blockers.
+Not pushed.
 ```
 
 
