@@ -4,9 +4,9 @@ This file prevents “documented” from being mistaken for “implemented.” A
 
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
-| AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 Partial: in-handler `Reauthenticate` on `DELETE /api/v1/redis/users/{username}` only (no `POST /api/v1/auth/reauth`, no AUTH-005 `login_attempts` increment) | Partial |
+| AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 Partial: in-handler `Reauthenticate` on `DELETE /api/v1/redis/users/{username}` and flagged `DELETE /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` (no `POST /api/v1/auth/reauth`, no AUTH-005 `login_attempts` increment) | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; POST rotate is PG-006); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no Gate 4); PG-006 Partial: POST `/api/v1/postgres/databases/{db}/credentials/rotate` (`postgres.credentials` + CSRF) + ALTER ROLE + vault upsert + inspector Rotate (no live PG, no Gate 4, no AUTH-006); PG-010 Partial: POST `/api/v1/postgres/databases/{db}/duplicate` (`postgres.provision` + CSRF) TEMPLATE clone + unique owner + vault INSERT + clone-only compensation + inspector Duplicate (no live PG, no 202, no AUTH-006); PG-008/009/011 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; PG-008 Partial: GET `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` + flagged `DELETE …/rows` API (`postgres.destructive` + CSRF + AUTH-006; no inspector UI yet, no live PG); PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; POST rotate is PG-006); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no Gate 4); PG-006 Partial: POST `/api/v1/postgres/databases/{db}/credentials/rotate` (`postgres.credentials` + CSRF) + ALTER ROLE + vault upsert + inspector Rotate (no live PG, no Gate 4, no AUTH-006); PG-010 Partial: POST `/api/v1/postgres/databases/{db}/duplicate` (`postgres.provision` + CSRF) TEMPLATE clone + unique owner + vault INSERT + clone-only compensation + inspector Duplicate (no live PG, no 202, no AUTH-006); PG-009/011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -4118,8 +4118,57 @@ No secret artifacts in 376f11e..4223a8c. Prior UI `a10e0d9`, security
  Not pushed.
 ```
 
+## PG-008 row delete + AUTH-006 Partial (2026-08-25)
 
-
-
-
+```text
+Requirement: PG-008 Partial + AUTH-006 Partial (GET
+ /api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key plus
+ DELETE …/rows). Keep AUTH-006 Partial (Redis DELETE
+ /api/v1/redis/users/{username} plus this DELETE). Keep PG-010 Partial.
+ Do not mark Complete. Gate 4 does not apply.
+Decision/ADR: freeze `a05da3d`. AUTH-006 is in-handler LookupOwnerByUsername
+ + Verify on body owner_password (no POST /api/v1/auth/reauth). Feature
+ flag REDGRES_FEATURE_POSTGRES_ROW_DELETE via envBool (unset=false;
+ invalid Load names the env var and never echoes the value). Do not load
+ truncate/drop keys. No TryLock. No 202. pgx stays v5.10.0.
+Implementation: product tree fast-forward of feat/pg-008-row-delete-api
+ `0e9f6fa` (`0e9f6fa2afad3c7666e07c5fcd015cb71fd8e7f0`) from freeze
+ `a05da3d`. Writer worktree
+ D:/code/github/Redgres-worktrees/pg-008-row-delete-api. GET primary-key:
+ session + postgres.read, no CSRF, no flag; confirm BASE TABLE then
+ information_schema.table_constraints JOIN key_column_usage on
+ constraint_catalog/schema/name AND table_schema/table_name,
+ constraint_type PRIMARY KEY, $1 schema $2 table, ORDER BY
+ kcu.ordinal_position; QuoteCatalogIdentifier on catalog column names
+ (empty/NUL fail closed); missing table 404; none []; composite all
+ names. DELETE rows: session + postgres.destructive + CSRF + flag; flag
+ off 403 "Row delete is turned off." before JSON decode, no audit, no
+ PostgreSQL; DisallowUnknownFields (primary_key_column is unknown);
+ table_confirmation exact path table; PK values 1–500
+ string/number/bool; Reauthenticate; wrong password 403 reauth_required
+ failure audit database+schema+table only, no SQL; protected 404 like
+ GET rows, no DML; width ≠ 1 → 400 fields.primary_key "This table does
+ not have a single-column primary key."; DELETE FROM quoted schema.table
+ WHERE quoted pk IN ($1..$n); 200 {deleted, request_id} RowsAffected;
+ success audit database+schema+table+deleted; audit-fail after DML →
+ 503. Timeout 30s. Sibling FastAPI no-CSRF / ENABLE_DESTRUCTIVE_ACTIONS /
+ client PK column / ::regclass+LIMIT 1 / pg_index.indisprimary / HTTP 500
+ str(e) not copied. Inspector UI not landed.
+Commands executed (2026-08-25) on product tree after ff-merge, go1.27.0
+ windows/amd64:
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/config ./internal/postgresadmin
+ ./internal/httpapi → ok config 0.958s; postgresadmin 1.245s; httpapi
+ 37.844s
+ go test -count=1 ./... → all ok (httpapi 39.949s; cmd/redgres 2.635s;
+ postgresadmin 1.565s)
+ go vet ./... → no findings
+ go build -o NUL ./cmd/redgres → success
+Unexecuted: live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright
+ viewports, go test -race, CI, Node 24.19.0, web UI checkboxes/dialog,
+ POST /api/v1/auth/reauth, truncate/drop flags, Gate 4.
+No secret artifacts in a05da3d..0e9f6fa.
+Keep PG-008 Partial. Keep AUTH-006 Partial. Keep PG-010 Partial.
+Not pushed.
+```
 
