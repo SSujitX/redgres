@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview (no vault/rotation/UI); PG-003–006/008–011 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page (no vault/rotation); PG-003–006/008–011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete); REDIS-008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -2160,25 +2160,34 @@ Reviewer/date: Security review (2026-08-25) on `f9457de` approve Partial;
 ## PostgreSQL cluster security overview API (2026-08-25)
 
 ```text
-Requirement: PG-012 Partial (cluster GET only; no vault entries, rotation, or UI)
+Requirement: PG-012 Partial (cluster GET + Security overview UI; no vault entries, rotation, or create)
 Decision/ADR: ADR-001, ADR-004 (vault not implemented)
 Source characterization: database-app get_security_overview at 1c3e8e2
  (connection grouping); Redgres lists all non-template DBs including
  postgres/database_console_vault; JSON key name; saved_credential always
  vault_not_implemented; no project_credentials query
 Implementation files: internal/postgresadmin/{types,service,memory,adapter}.go;
- internal/httpapi/{server,postgres_routes}.go
+ internal/httpapi/{server,postgres_routes}.go;
+ web/src/api/postgres.ts (fetchPostgresSecurity + types);
+ web/src/features/postgres/SecurityOverview.tsx;
+ web/src/features/pages/Placeholders.tsx (postgres-security only);
+ web/src/App.test.tsx; docs/UX.md
 Unit tests: internal/postgresadmin/service_test.go (templates omitted,
  protected included, List still filters, nil catalog, no vault SQL, cap/
  truncated, connection labels, canary);
  internal/httpapi/postgres_security_routes_test.go (401/405/503/200 shape,
- arrays non-null, cap, canary absent, list/details still 404)
-Integration tests: none run (no live PostgreSQL claimed)
+ arrays non-null, cap, canary absent, list/details still 404);
+ App.test.tsx loading / 503 / 401 / empty-200 / protected vs project /
+ vault Not available / connections table / truncated / login never GET /
+ no localStorage
+Integration tests: none run (no live PostgreSQL claimed; GET mocked in UI)
 Security tests: 401 omits summary/databases/connections/saved_credential/
- truncated; canary redacted; no-store; vault_not_implemented without vault SQL
+ truncated; canary redacted; no-store; vault_not_implemented without vault SQL;
+ 401 body keys ignored in UI; 503 ≠ empty healthy; no CSRF; identifiers
+ displayText + bidi isolate; no localStorage/sessionStorage; no rotate/create/reveal
 Deployment/migration impact: none. 001_initial.sql and go.mod unchanged.
 Known limitations: no vault decrypt; no missing_password_count/can_rotate;
- no security UI; live PG 17/18 unproven
+ no rotate/create/reveal; live PG 17/18 unproven; no viewport/zoom sign-off
 Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  Writer feat/pg-012-security-api `9507111`:
   gofmt -l (touched Go) → empty
@@ -2191,10 +2200,15 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
   gofmt -l (touched Go) → empty
   go test -count=1 ./internal/postgresadmin ./internal/httpapi
    → ok postgresadmin 0.592s; httpapi 19.328s
- Not run: race, live PostgreSQL 17/18, CI, frontend, COMPATIBILITY.md §6
-Local commit: `9507111bc80bfcd63b96e59b730ba32c1471fb00` on
- `feat/pg-012-security-api` (FF onto master; not pushed)
-Reviewer/date: pending UI merge + security/UI/evidence/verifier
+ Writer feat/pg-012-security-ui `18c467f` (Node v25.3.0, not web/.nvmrc 24.19.0):
+  npm --prefix web run test:run → Tests 196 passed (196)
+  npm --prefix web run build → tsc 7.0.2 + vite 8.2.2 (dist gitignored)
+ Parent after UI merge `7bfc3a3`:
+  npm --prefix web run test:run → Tests 196 passed (196)
+ Not run: race, live PostgreSQL 17/18, CI, COMPATIBILITY.md §6, viewport/zoom
+Local commits: `9507111` (API FF), `5d2f258` (API docs), `18c467f` (UI),
+ `7bfc3a3` (merge UI onto master). Not pushed.
+Reviewer/date: pending security/UI/evidence/verifier
  Keep PG-012 Partial. Keep REDIS-005 Partial. Not pushed.
 ```
 
