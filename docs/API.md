@@ -354,7 +354,7 @@ Zero tables: still require AUTH-006; then **200** with `truncated: 0`, `failed: 
 TRUNCATE TABLE {quoted schema.table, ...} RESTART IDENTITY
 ```
 
-No `CASCADE` (RESTRICT default). No `ONLY`. No `CONTINUE IDENTITY`. No per-table loop. Identifiers only (table names are not query parameters). pgx **v5.10.0**. Sibling per-table `CASCADE` + swallowed exceptions is forbidden. `failed` is `[]` on HTTP 200. Statement failure after listing → `503` `dependency_unavailable` (“PostgreSQL is unavailable”), failure audit `database` only, no 200 with a partial count.
+No `CASCADE` (RESTRICT default). No `ONLY` (required: `TRUNCATE ONLY` on a partitioned parent always errors on PostgreSQL 17 and 18 — [17 partitioning](https://www.postgresql.org/docs/17/ddl-partitioning.html), [18 partitioning](https://www.postgresql.org/docs/18/ddl-partitioning.html) §5.12.2.3; omitting `ONLY` includes descendants). No `CONTINUE IDENTITY`. No per-table loop. Identifiers only (table names are not query parameters). pgx **v5.10.0**. Sibling per-table `CASCADE` + swallowed exceptions is forbidden. `failed` is `[]` on HTTP 200. Statement failure after listing → `503` `dependency_unavailable` (“PostgreSQL is unavailable”), failure audit `database` only, no 200 with a partial count. `information_schema.tables` has no `enforced` column; do not filter it. Foreign partitions are `FOREIGN`, so they are omitted from the BASE TABLE list, but omitting `ONLY` can still truncate them as descendants of a named parent; FDW failure is whole-statement `503`.
 
 Success `200`:
 

@@ -4393,3 +4393,27 @@ Keep PG-008 Partial. Keep AUTH-006 Partial. Keep PG-010 Partial.
 Not pushed.
 ```
 
+## PG-009 truncate compatibility pin (2026-08-26)
+
+```text
+Requirement: PG-009 Partial freeze facts (not implementation). Keep
+ PG-008 Partial. Keep PG-010 Partial. Do not mark Complete.
+Decision/ADR: freeze 74bf746 (SQL unchanged). Compatibility research
+ (2026-08-26) on PostgreSQL 17 vs 18 official TRUNCATE and
+ information_schema.tables (docs as of PG 17.11 / 18.6). No 17/18
+ TRUNCATE syntax delta for CASCADE / RESTRICT / RESTART IDENTITY /
+ CONTINUE IDENTITY / ONLY. Omit ONLY is required when a partitioned
+ parent is listed (TRUNCATE ONLY on a partitioned table errors, 17
+ and 18 §5.12.2.3). BASE TABLE lists partitioned parents and local
+ partitions; foreign partitions are FOREIGN and omitted from the
+ list but can still be truncated as descendants of a named parent
+ (FDW failure → 503). Do not filter information_schema.enforced
+ (not a column of tables). RESTART IDENTITY restarts sequences
+ owned by truncated columns; standalone sequences unchanged.
+ Sibling 1c3e8e2 per-table CASCADE + swallowed exceptions is
+ do-not-copy. Live COMPATIBILITY.md §6 not executed. pgx stays
+ v5.10.0.
+Keep PG-009 Partial (writers in flight). Keep PG-008 Partial.
+Not pushed.
+```
+
