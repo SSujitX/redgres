@@ -3372,7 +3372,47 @@ Reviewer/date: Evidence review (2026-08-25) on `f7ed0de` PASS Partial /
  asserted as derived-key inequality not zeroed bytes. Do not mark Complete.
 Keep PG-005 Partial. Keep PG-004 Partial. Keep PG-012 Partial.
  Keep REDIS-008 Partial. Keep AUTH-006 Partial.
- Verifier pending. Not pushed.
+ Verifier PASS Partial on `658f61d`. Not pushed.
+```
+
+## PG-005 POST reveal verifier PASS Partial (2026-08-25)
+
+```text
+Requirement: PG-005 Partial (POST /api/v1/postgres/databases/{db}/connection/reveal
+ + inspector Reveal). Keep PG-004 Partial (GET /connection still no decrypt).
+Decision/ADR: ADR-004; freeze `cece386`. AUTH-006 does not apply.
+Verifier/date: independent verifier (2026-08-25) on HEAD
+ `658f61d37df645191b82f9f8dfc087da9a412345`. Tracked tree clean.
+ PASS Partial. Do not mark Complete.
+Freeze: check order holds; postgres.credentials + CSRF; empty body never
+ owner_password; path 400 no catalog/vault/audit; protected never SELECT;
+ EncryptedPassword parameterized; no ensure_vault; vault file fail-closed;
+ derived key on Service only; missing vault row 404; invalid token 503;
+ audit-fail 503 no credential; 200 no-store one_time false; GET connection
+ still SavedRoleNames only; no POST /api/v1/auth/reauth; pgx v5.10.0;
+ go-redis v9.22.0.
+ UI: present text-button Reveal; hidden missing/not_available/loading;
+ no confirm; CSRF + encodeURIComponent + empty body; vault-repeatable
+ ticket; Security overview no Reveal; login/search never POST reveal.
+Commands executed (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/config ./internal/postgresadmin ./internal/httpapi
+ → ok config 2.347s; postgresadmin 1.190s; httpapi 44.882s
+ go test -count=1 ./... → all ok (httpapi 77.710s; cmd/redgres 4.625s;
+ postgresadmin 2.900s; web 0.958s; migrations no tests)
+ go vet ./... → no findings
+ go build -o NUL ./cmd/redgres → success
+ npm --prefix web run test:run → Tests 252 passed (252), 49.49s
+Unexecuted: Gate 4, live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright
+ viewports, PG-003 create, PG-006 POST rotate, POST /api/v1/auth/reauth,
+ ensure_vault, GET decrypt, production vault-secret probe, CI, Node 24.19.0,
+ gitleaks, govulncheck, go test -race ./..., npm web build.
+No secret artifacts in cece386..HEAD. Prior UI/security `8e411ff`, evidence
+ `f7ed0de` pins stand (this verifier ran on evidence HEAD).
+Keep PG-005 Partial. Keep PG-004 Partial. Keep PG-012 Partial.
+ Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Not pushed.
 ```
 
 
