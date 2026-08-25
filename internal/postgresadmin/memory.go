@@ -42,6 +42,16 @@ type MemoryCatalog struct {
 	GrantCalls             int
 	LockConnectCalls       int
 	InsertCalls            int
+	AlterRolePasswordCalls int
+	LastAlterRoleSQL       string
+	AlterRolePasswordErr   error
+	AlterStarted           chan struct{}
+	AlterHold              chan struct{}
+	UpsertCalls            int
+	LastUpsertRole         string
+	LastUpsertToken        string
+	UpsertCredentialErr    error
+	UpsertFailTimes        int
 	DeleteCredentialCalls  int
 	DropDatabaseCalls      int
 	DropRoleCalls          int
@@ -301,6 +311,47 @@ func (m *MemoryCatalog) InsertCredential(_ context.Context, role, encrypted stri
 	m.InsertCalls++
 	if m.InsertCredentialErr != nil {
 		return m.InsertCredentialErr
+	}
+	m.InsertedVault = append(m.InsertedVault, role)
+	m.SavedRoles = append(m.SavedRoles, role)
+	if m.Ciphertexts == nil {
+		m.Ciphertexts = map[string]string{}
+	}
+	m.Ciphertexts[role] = encrypted
+	return nil
+}
+
+func (m *MemoryCatalog) AlterRolePassword(_ context.Context, owner, password string) error {
+	sql, err := formatAlterRolePassword(owner, password)
+	if err != nil {
+		return err
+	}
+	m.LastAlterRoleSQL = sql
+	m.AlterRolePasswordCalls++
+	if m.AlterStarted != nil {
+		select {
+		case m.AlterStarted <- struct{}{}:
+		default:
+		}
+	}
+	if m.AlterHold != nil {
+		<-m.AlterHold
+	}
+	if m.AlterRolePasswordErr != nil {
+		return m.AlterRolePasswordErr
+	}
+	return nil
+}
+
+func (m *MemoryCatalog) UpsertCredential(_ context.Context, role, encrypted string) error {
+	m.UpsertCalls++
+	m.LastUpsertRole = role
+	m.LastUpsertToken = encrypted
+	if m.UpsertCalls <= m.UpsertFailTimes {
+		return ErrUnavailable
+	}
+	if m.UpsertCredentialErr != nil {
+		return m.UpsertCredentialErr
 	}
 	m.InsertedVault = append(m.InsertedVault, role)
 	m.SavedRoles = append(m.SavedRoles, role)
