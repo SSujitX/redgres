@@ -3904,8 +3904,9 @@ Local commits: `376f11e` (freeze), `382e801` (API), `158da45` (UI),
  `0dff8d1` (merge API), this docs record.
  Not pushed.
 Reviewer/date: UI Approve Partial on `26a2a62` (pin `a10e0d9`);
- security Approve Partial with conditions on `26a2a62` (this pin);
- evidence / verifier still pending. Keep Partial.
+ security Approve Partial with conditions on `26a2a62` (pin `e10cc08`);
+ catalog quoting / superuser-skip correction this change; security
+ re-review / evidence / verifier still pending. Keep Partial.
 Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial.
  Keep PG-005 Partial. Keep PG-006 Partial. Keep PG-012 Partial.
  Keep REDIS-008 Partial. Keep AUTH-006 Partial. Do not mark Complete.
@@ -3979,6 +3980,37 @@ Reviewer/date: security review (2026-08-25) on `26a2a62` Approve Partial
  (freeze-allowed); compensated failures not audited; TEMPLATE datacl not
  stripped of source CONNECT.
  Keep PG-010 Partial. Do not mark Complete. UI pin `a10e0d9` stands.
+Not pushed.
+```
+
+## PG-010 POST duplicate security correction (2026-08-25)
+
+```text
+Requirement: PG-010 Partial security conditions from pin `e10cc08`.
+ Keep PG-010 Partial. Do not mark Complete.
+Decision/ADR: ADR-004; freeze `376f11e` plus API.md step 18 catalog quoting.
+ AUTH-006 does not apply.
+Correction: QuoteCatalogIdentifier uses pgx.Identifier.Sanitize without
+ HTTP ValidateIdentifier; empty and NUL fail closed (pgx Sanitize would
+ strip NUL). formatAlter* and formatGrantCatalogRole use catalog quoting
+ for clone object/current-owner names; HTTP new owner stays QuoteIdentifier.
+ Transfer loops return quoting errors (no continue). Unknown relkind /
+ prokind length fail closed. Clone SQLs LEFT JOIN pg_roles.rolsuper;
+ skipCloneTransferOwner skips superuser before GRANT … SET TRUE.
+Implementation files: internal/postgresadmin/{identifier.go,duplicate.go,
+ identifier_test.go,duplicate_test.go}; docs/API.md; docs/SECURITY.md;
+ AGENTS.md.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/postgresadmin → ok 0.995s
+ go test -count=1 ./internal/httpapi → ok 28.726s
+ go test -count=1 ./... → all ok (httpapi 29.256s; postgresadmin 1.241s)
+ go vet ./... → no findings
+Reviewer/date: security re-review pending on this commit. UI pin `a10e0d9`
+ unchanged (no UI diff). Evidence / verifier still pending.
+Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
+ Partial. Keep PG-006 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
+ Keep AUTH-006 Partial.
 Not pushed.
 ```
 
