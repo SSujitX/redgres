@@ -2695,4 +2695,43 @@ Reviewer/date: UI review (2026-08-25) on `7bc2db6` approve Partial UI;
 Keep PG-005 Partial. Keep PG-012 Partial. Verifier pending. Not pushed.
 ```
 
+## PG-005/PG-012 vault existence verifier PASS Partial (2026-08-25)
+
+```text
+Requirement: PG-005/PG-012/PG-002 Partial (vault existence GET; no decrypt/reveal)
+Decision/ADR: ADR-004; API freeze `e915912`
+Reviewer/date: Verifier (2026-08-25) on `d45b1d7` PASS Partial. HEAD
+ `d45b1d7dacc7af44b20d1a74507418dee6dfa6de`; working tree clean. Security
+ approve Partial on `7bc2db6` (no C/H/M/L). UI approve Partial UI on
+ `7bc2db6` (NOT viewport/zoom). Evidence keep-Partial / reject-Complete
+ on `7bc2db6`. Sibling database-app `1c3e8e2` untouched.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
+ v25.3.0 (not web/.nvmrc 24.19.0):
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/postgresadmin ./internal/httpapi ./internal/secrets
+ → ok postgresadmin 1.249s; httpapi 21.971s; secrets 0.379s
+ go test -count=1 ./... first run FAIL embed (parallel npm build swapped
+ ignored dist hashes); re-run after dist stable → all ok (httpapi 21.174s;
+ cmd/redgres 2.953s; web 0.607s; migrations no tests)
+ go test -race -count=1 ./internal/postgresadmin ./internal/secrets
+ → ok postgresadmin 1.902s; secrets 1.369s
+ go vet ./... → no findings
+ go build -o NUL ./cmd/redgres → exit 0
+ go list -m github.com/jackc/pgx/v5 → v5.10.0
+ go list -m github.com/redis/go-redis/v9 → v9.22.0
+ npm --prefix web run test:run → Tests 213 passed (213), 55.07s
+ npm --prefix web run build → tsc + vite PASS (~1.07s); gitignored
+ internal/web/dist/app hashes
+ go.mod unchanged vs freeze. SavedRoleNames SQL is role_name ANY($1) only.
+ httpapi/postgresadmin do not import internal/secrets.
+Not run: live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright,
+ viewport/zoom, Gate 4, POST reveal, go test -race ./..., CI, gitleaks,
+ govulncheck.
+Known nits: SOURCE_BASELINE still says vault not started; no dedicated
+ details 401 saved_credential-omission test (security 401 + writeError
+ inspection); unique-owner SQL cap 500.
+Keep PG-005 Partial. Keep PG-012 Partial. Do not mark Complete.
+Local commit to verify: `d45b1d7`. This verifier record. Not pushed.
+```
+
 
