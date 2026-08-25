@@ -85,7 +85,7 @@ cd web && npm ci && npm run test:run && npm run build
 
 `.github/workflows/ci.yml` is the authoritative command list. The `Makefile` and [CONTRIBUTING.md](../CONTRIBUTING.md) mirror it.
 
-Wave 0 CI jobs: `backend` (no service containers; live `./integration` tests skip), `cross-compile` (`linux/amd64` and `linux/arm64`, `CGO_ENABLED=0`), `frontend` (Node from `web/.nvmrc`, `npm audit --omit=dev --audit-level=high`), `embedded-build`, `secret-scan` (`gitleaks-action` v3.0.0), `vulnerability` (`govulncheck` v1.7.0). Development-only disposable jobs (not COMPATIBILITY.md §6, not production): `installer` (`bash deploy/tests/run.sh`; `verify --dry-run` is a skip matrix with `result=partial`, not the Deployment tests list above), `integration` (GHA service containers `postgres:18.6` and `redis:8.8.2` digests), `playwright` (Chromium login viewports).
+Wave 0 CI jobs: `backend` (no service containers; live `./integration` tests skip), `cross-compile` (`linux/amd64` and `linux/arm64`, `CGO_ENABLED=0`), `frontend` (Node from `web/.nvmrc`, `npm audit --omit=dev --audit-level=high`), `embedded-build`, `secret-scan` (`gitleaks-action` v3.0.0), `vulnerability` (`govulncheck` v1.7.0). Development-only disposable jobs (not COMPATIBILITY.md §6, not production): `installer` (`bash deploy/tests/run.sh`; `verify --dry-run` and `update`/`rollback --dry-run` are skip matrices with `result=partial`, not the Deployment tests list above), `integration` (GHA service containers `postgres:18.6` and `redis:8.8.2` digests), `playwright` (Chromium login viewports).
 
 Deferred from Wave 0, with reasons:
 
