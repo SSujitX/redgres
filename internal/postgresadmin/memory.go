@@ -8,59 +8,78 @@ type MemoryTable struct {
 }
 
 type MemoryCatalog struct {
-	Rows                   []CatalogRow
-	Err                    error
-	PingErr                error
-	Tables                 map[string][]TableItem
-	TablesErr              error
-	LastTablesDB           string
-	TableData              map[string]MemoryTable
-	RowsErr                error
-	LastRowsKey            string
-	Connections            []ConnectionGroup
-	ConnectionsErr         error
-	SavedRoles             []string
-	VaultErr               error
-	Ciphertexts            map[string]string
-	CiphertextErr          error
-	EncryptedPasswordCalls []string
-	PooledConfigured       bool
-	PingPooledErr          error
-	ExistingRoles          []string
-	ExistsErr              error
-	CreateRoleErr          error
-	CreateDatabaseErr      error
-	GrantSetRoleErr        error
-	LockConnectErr         error
-	InsertCredentialErr    error
-	OwnedCount             int
-	OwnedCountErr          error
-	LastCreateRoleSQL      string
-	LastGrantSQL           string
-	CreateRoleCalls        int
-	CreateDatabaseCalls    int
-	GrantCalls             int
-	LockConnectCalls       int
-	InsertCalls            int
-	AlterRolePasswordCalls int
-	LastAlterRoleSQL       string
-	AlterRolePasswordErr   error
-	AlterStarted           chan struct{}
-	AlterHold              chan struct{}
-	UpsertCalls            int
-	LastUpsertRole         string
-	LastUpsertToken        string
-	UpsertCredentialErr    error
-	UpsertFailTimes        int
-	DeleteCredentialCalls  int
-	DropDatabaseCalls      int
-	DropRoleCalls          int
-	CreatedRoles           []string
-	CreatedDatabases       []string
-	InsertedVault          []string
-	DroppedRoles           []string
-	DroppedDatabases       []string
-	DeletedVault           []string
+	Rows                          []CatalogRow
+	Err                           error
+	PingErr                       error
+	Tables                        map[string][]TableItem
+	TablesErr                     error
+	LastTablesDB                  string
+	TableData                     map[string]MemoryTable
+	RowsErr                       error
+	LastRowsKey                   string
+	Connections                   []ConnectionGroup
+	ConnectionsErr                error
+	SavedRoles                    []string
+	VaultErr                      error
+	Ciphertexts                   map[string]string
+	CiphertextErr                 error
+	EncryptedPasswordCalls        []string
+	PooledConfigured              bool
+	PingPooledErr                 error
+	ExistingRoles                 []string
+	ExistsErr                     error
+	CreateRoleErr                 error
+	CreateDatabaseErr             error
+	GrantSetRoleErr               error
+	LockConnectErr                error
+	InsertCredentialErr           error
+	OwnedCount                    int
+	OwnedCountErr                 error
+	LastCreateRoleSQL             string
+	LastGrantSQL                  string
+	CreateRoleCalls               int
+	CreateDatabaseCalls           int
+	GrantCalls                    int
+	LockConnectCalls              int
+	InsertCalls                   int
+	AlterRolePasswordCalls        int
+	LastAlterRoleSQL              string
+	AlterRolePasswordErr          error
+	AlterStarted                  chan struct{}
+	AlterHold                     chan struct{}
+	UpsertCalls                   int
+	LastUpsertRole                string
+	LastUpsertToken               string
+	UpsertCredentialErr           error
+	UpsertFailTimes               int
+	DeleteCredentialCalls         int
+	DropDatabaseCalls             int
+	DropRoleCalls                 int
+	CreatedRoles                  []string
+	CreatedDatabases              []string
+	InsertedVault                 []string
+	DroppedRoles                  []string
+	DroppedDatabases              []string
+	DeletedVault                  []string
+	SnapshotSeq                   []OwnershipSnapshot
+	snapshotN                     int
+	SnapshotErr                   error
+	SnapshotCalls                 int
+	LastSnapshotName              string
+	TerminateCalls                int
+	LastTerminateName             string
+	TerminatedDatabases           []string
+	TerminateErr                  error
+	CreateDatabaseTemplateCalls   int
+	LastCreateDatabaseTemplateSQL string
+	CreateDatabaseTemplateErr     error
+	TemplateStarted               chan struct{}
+	TemplateHold                  chan struct{}
+	TransferCalls                 int
+	LastTransferDB                string
+	LastTransferOwner             string
+	TransferErr                   error
+	SkippedTransferOwners         []string
 }
 
 func (m *MemoryCatalog) Ping(context.Context) error {
@@ -394,5 +413,80 @@ func (m *MemoryCatalog) OwnedDatabaseCount(context.Context, string) (int, error)
 func (m *MemoryCatalog) DropRole(_ context.Context, owner string) error {
 	m.DropRoleCalls++
 	m.DroppedRoles = append(m.DroppedRoles, owner)
+	return nil
+}
+
+func (m *MemoryCatalog) OwnershipSnapshot(_ context.Context, name string) (OwnershipSnapshot, error) {
+	m.SnapshotCalls++
+	m.LastSnapshotName = name
+	if m.SnapshotErr != nil {
+		return OwnershipSnapshot{}, m.SnapshotErr
+	}
+	if len(m.SnapshotSeq) > 0 {
+		i := m.snapshotN
+		if i >= len(m.SnapshotSeq) {
+			i = len(m.SnapshotSeq) - 1
+		}
+		m.snapshotN++
+		return m.SnapshotSeq[i], nil
+	}
+	row, err := m.Lookup(context.Background(), name)
+	if err != nil {
+		return OwnershipSnapshot{}, err
+	}
+	return OwnershipSnapshot{Owner: row.Owner}, nil
+}
+
+func (m *MemoryCatalog) TerminateSessions(_ context.Context, database string) error {
+	m.TerminateCalls++
+	m.LastTerminateName = database
+	m.TerminatedDatabases = append(m.TerminatedDatabases, database)
+	if m.TerminateErr != nil {
+		return m.TerminateErr
+	}
+	return nil
+}
+
+func (m *MemoryCatalog) CreateDatabaseTemplate(_ context.Context, database, source, owner string) error {
+	sql, err := formatCreateDatabaseTemplate(database, source, owner)
+	if err != nil {
+		return err
+	}
+	m.LastCreateDatabaseTemplateSQL = sql
+	m.CreateDatabaseTemplateCalls++
+	if m.TemplateStarted != nil {
+		select {
+		case m.TemplateStarted <- struct{}{}:
+		default:
+		}
+	}
+	if m.TemplateHold != nil {
+		<-m.TemplateHold
+	}
+	if m.CreateDatabaseTemplateErr != nil {
+		return m.CreateDatabaseTemplateErr
+	}
+	m.CreatedDatabases = append(m.CreatedDatabases, database)
+	m.Rows = append(m.Rows, CatalogRow{Name: database, Owner: owner, AllowConn: true, OwnerCanLogin: true})
+	return nil
+}
+
+func (m *MemoryCatalog) TransferCloneOwnership(_ context.Context, database, newOwner, _ string, skipOwner func(string) bool) error {
+	m.TransferCalls++
+	m.LastTransferDB = database
+	m.LastTransferOwner = newOwner
+	if skipOwner != nil {
+		for _, row := range m.Rows {
+			if row.Name == database {
+				continue
+			}
+			if skipOwner(row.Owner) {
+				m.SkippedTransferOwners = append(m.SkippedTransferOwners, row.Owner)
+			}
+		}
+	}
+	if m.TransferErr != nil {
+		return m.TransferErr
+	}
 	return nil
 }

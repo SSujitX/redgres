@@ -45,8 +45,17 @@ type Catalog interface {
 	TerminateAndDropDatabase(ctx context.Context, database string) error
 	OwnedDatabaseCount(ctx context.Context, owner string) (int, error)
 	DropRole(ctx context.Context, owner string) error
+	OwnershipSnapshot(ctx context.Context, database string) (OwnershipSnapshot, error)
+	TerminateSessions(ctx context.Context, database string) error
+	CreateDatabaseTemplate(ctx context.Context, database, source, owner string) error
+	TransferCloneOwnership(ctx context.Context, database, newOwner, admin string, skipOwner func(string) bool) error
 	Ping(ctx context.Context) error
 	PingPooled(ctx context.Context) error
+}
+
+type OwnershipSnapshot struct {
+	Owner  string
+	Datacl string
 }
 
 type Inventory interface {
@@ -60,6 +69,7 @@ type Inventory interface {
 	Reveal(ctx context.Context, name string) (RevealedConnection, error)
 	Create(ctx context.Context, database, owner string) (CreatedDatabase, error)
 	Rotate(ctx context.Context, name string) (CreatedDatabase, error)
+	Duplicate(ctx context.Context, source, database, owner string) (CreatedDatabase, error)
 	Ping(ctx context.Context) error
 	PingPooled(ctx context.Context) error
 }

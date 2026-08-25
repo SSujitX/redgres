@@ -11,11 +11,13 @@ import (
 )
 
 type Service struct {
-	catalog  Catalog
-	policy   Policy
-	vaultKey string
-	rotateMu sync.Mutex
-	rotating map[string]struct{}
+	catalog     Catalog
+	policy      Policy
+	vaultKey    string
+	rotateMu    sync.Mutex
+	rotating    map[string]struct{}
+	duplicateMu sync.Mutex
+	duplicating map[string]struct{}
 }
 
 func NewService(catalog Catalog, policy Policy) *Service {
@@ -414,6 +416,10 @@ func catalogSchemaDenied(schema string) bool {
 }
 
 func mapCatalogError(err error) error {
+	var field FieldError
+	if errors.As(err, &field) {
+		return err
+	}
 	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidIdentifier) || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrNotConfigured) || errors.Is(err, ErrVaultUnavailable) || errors.Is(err, ErrProtected) || errors.Is(err, ErrConflict) || errors.Is(err, ErrOperationInProgress) || errors.Is(err, ErrVaultUnsynced) {
 		return err
 	}
