@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
+  createPostgresDatabase,
   errorMessage,
   fetchPostgresConnection,
   fetchPostgresDatabase,
@@ -13,6 +14,7 @@ import {
   type TableItem,
 } from "../../api/postgres";
 import CredentialTicket, { type ShownCredential } from "../redis/CredentialTicket";
+import CreateDatabaseForm from "./CreateDatabaseForm";
 import { displayText } from "../../text/displayText";
 
 const maxRowQueryRunes = 128;
@@ -87,9 +89,15 @@ type DatabasesPageProps = {
   csrf?: string;
   focusDatabase?: string | null;
   focusNonce?: number;
+  openCreate?: boolean;
 };
 
-export default function DatabasesPage({ csrf = "", focusDatabase = null, focusNonce = 0 }: DatabasesPageProps) {
+export default function DatabasesPage({
+  csrf = "",
+  focusDatabase = null,
+  focusNonce = 0,
+  openCreate = false,
+}: DatabasesPageProps) {
   const [items, setItems] = useState<DatabaseListItem[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [listError, setListError] = useState("");
@@ -103,7 +111,13 @@ export default function DatabasesPage({ csrf = "", focusDatabase = null, focusNo
   const [ticket, setTicket] = useState<ShownCredential | null>(null);
   const [revealing, setRevealing] = useState(false);
   const [revealError, setRevealError] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [pendingSelect, setPendingSelect] = useState<string | null>(null);
   const revealAbort = useRef<AbortController | null>(null);
+  const listAbort = useRef<AbortController | null>(null);
+  const createOpened = useRef(false);
   const [tables, setTables] = useState<TableItem[] | null>(null);
   const [tablesError, setTablesError] = useState("");
   const [tablesTruncated, setTablesTruncated] = useState(false);
@@ -119,29 +133,33 @@ export default function DatabasesPage({ csrf = "", focusDatabase = null, focusNo
   const rowsAbort = useRef<AbortController | null>(null);
   const rowsRegionRef = useRef<HTMLElement | null>(null);
 
+  async function loadList(controller: AbortController) {
+    try {
+      const result = await fetchPostgresDatabases({ signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 200 && Array.isArray(result.body.databases)) {
+        setItems(result.body.databases);
+        setTruncated(result.body.truncated === true);
+        setListError("");
+        return;
+      }
+      setItems(null);
+      setListError(errorMessage(result.body, postgresUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setItems(null);
+      setListError(postgresUnavailable);
+    }
+  }
+
   useEffect(() => {
     const controller = new AbortController();
-    fetchPostgresDatabases({ signal: controller.signal })
-      .then((result) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        if (result.status === 200 && Array.isArray(result.body.databases)) {
-          setItems(result.body.databases);
-          setTruncated(result.body.truncated === true);
-          setListError("");
-          return;
-        }
-        setItems(null);
-        setListError(errorMessage(result.body, "PostgreSQL is unavailable"));
-      })
-      .catch((err) => {
-        if (controller.signal.aborted || isAbortError(err)) {
-          return;
-        }
-        setItems(null);
-        setListError("PostgreSQL is unavailable");
-      });
+    listAbort.current = controller;
+    void loadList(controller);
     return () => {
       controller.abort();
       selectionAbort.current?.abort();
@@ -149,6 +167,20 @@ export default function DatabasesPage({ csrf = "", focusDatabase = null, focusNo
       revealAbort.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (!openCreate) {
+      createOpened.current = false;
+      return;
+    }
+    if (createOpened.current) {
+      return;
+    }
+    if (items !== null && listError === "") {
+      setCreateOpen(true);
+      createOpened.current = true;
+    }
+  }, [openCreate, items, listError]);
 
   useEffect(() => {
     if (!selectedTable) {
@@ -193,6 +225,7 @@ export default function DatabasesPage({ csrf = "", focusDatabase = null, focusNo
     setTablesError("");
     setTablesTruncated(false);
     setLoadingTables(true);
+    setPendingSelect(null);
     clearTicket();
     clearRowState();
     void loadDetails(name, controller);
@@ -314,6 +347,61 @@ export default function DatabasesPage({ csrf = "", focusDatabase = null, focusNo
       if (!controller.signal.aborted) {
         setRevealing(false);
       }
+    }
+  }
+
+  function refreshList() {
+    listAbort.current?.abort();
+    const controller = new AbortController();
+    listAbort.current = controller;
+    void loadList(controller);
+  }
+
+  function dismissTicket() {
+    const name = pendingSelect;
+    clearTicket();
+    setPendingSelect(null);
+    if (name) {
+      openDetails(name);
+    }
+  }
+
+  async function handleCreate(database: string, owner: string) {
+    setCreating(true);
+    setCreateError("");
+    try {
+      const result = await createPostgresDatabase(database, owner, csrf);
+      if (result.status === 401) {
+        clearTicket();
+        setPendingSelect(null);
+        setCreateOpen(false);
+        setCreateError("");
+        setItems(null);
+        setListError(sessionExpired);
+        return;
+      }
+      if (result.status === 201) {
+        const shown = parsePostgresCredential(result.body.credential);
+        if (!shown) {
+          setCreateError(errorMessage(result.body, postgresUnavailable));
+          return;
+        }
+        const createdName =
+          typeof result.body.resource?.name === "string" && result.body.resource.name !== ""
+            ? result.body.resource.name
+            : database;
+        setCreateOpen(false);
+        setCreateError("");
+        setTicket(shown);
+        setPendingSelect(createdName);
+        refreshList();
+        return;
+      }
+      setCreateError(errorMessage(result.body, postgresUnavailable));
+    } catch {
+      setCreateError(postgresUnavailable);
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -448,14 +536,45 @@ export default function DatabasesPage({ csrf = "", focusDatabase = null, focusNo
     !loadingConnection &&
     connectionError === "" &&
     connection?.savedCredentialStatus === "present";
+  const showCreate = items !== null && listError === "";
+  const createDisabled = creating || ticket !== null;
 
   return (
     <article>
       <header className="page-header">
-        <h1>Databases</h1>
+        <div className="page-header-row">
+          <h1>Databases</h1>
+          {showCreate ? (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={createDisabled}
+              onClick={() => {
+                setCreateError("");
+                setCreateOpen(true);
+              }}
+            >
+              Create database
+            </button>
+          ) : null}
+        </div>
         <p>Manageable project databases only. Passwords are not revealed.</p>
       </header>
-      {ticket ? <CredentialTicket kind="postgres" credential={ticket} onDismiss={clearTicket} /> : null}
+      {ticket ? <CredentialTicket kind="postgres" credential={ticket} onDismiss={dismissTicket} /> : null}
+      {createOpen ? (
+        <CreateDatabaseForm
+          error={createError}
+          submitting={creating}
+          onCancel={() => {
+            if (creating) {
+              return;
+            }
+            setCreateOpen(false);
+            setCreateError("");
+          }}
+          onSubmit={(database, owner) => void handleCreate(database, owner)}
+        />
+      ) : null}
       {listError ? (
         <p className="form-warning" role="alert">
           {listError}

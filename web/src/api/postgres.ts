@@ -91,6 +91,22 @@ export async function revealPostgresConnection(name: string, csrf: string, init:
   );
 }
 
+export type PostgresCreatePayload = PostgresRevealPayload;
+
+export async function createPostgresDatabase(
+  database: string,
+  owner: string,
+  csrf: string,
+  init: RequestInit = {},
+) {
+  return apiRequest<PostgresCreatePayload & ApiErrorBody>("/api/v1/postgres/databases", {
+    ...init,
+    method: "POST",
+    csrf,
+    body: JSON.stringify({ database, owner }),
+  });
+}
+
 export type TableItem = {
   schema?: string;
   name?: string;
