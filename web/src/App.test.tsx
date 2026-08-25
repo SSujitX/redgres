@@ -313,7 +313,7 @@ function disconnectedStatus() {
     components: [
       { id: "redgres_state", state: "not_configured" },
       { id: "postgres_direct", state: "not_configured" },
-      { id: "pgbouncer", state: "not_implemented" },
+      { id: "pgbouncer", state: "not_configured" },
       { id: "redis", state: "not_configured" },
       { id: "tool_links", state: "not_configured" },
     ],
@@ -326,7 +326,7 @@ function mixedStatus() {
     components: [
       { id: "redgres_state", state: "ok" },
       { id: "postgres_direct", state: "unavailable", reason: "unreachable" },
-      { id: "pgbouncer", state: "not_implemented" },
+      { id: "pgbouncer", state: "not_configured" },
       { id: "redis", state: "ok" },
       { id: "tool_links", state: "not_configured" },
     ],
@@ -377,7 +377,7 @@ function overviewOkStatus() {
     components: [
       { id: "redgres_state", state: "ok" },
       { id: "postgres_direct", state: "ok" },
-      { id: "pgbouncer", state: "not_implemented" },
+      { id: "pgbouncer", state: "not_configured" },
       { id: "redis", state: "ok" },
       { id: "tool_links", state: "not_configured" },
     ],
@@ -2851,6 +2851,117 @@ describe("App session and login", () => {
     expect(page?.querySelector(".service-rail-redis")).toBeNull();
   });
 
+  it("shows PgBouncer as Not configured from the default disconnected status", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-pgb-noconf".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    expect(screen.queryByLabelText("PgBouncer: Not connected")).not.toBeInTheDocument();
+    const pgbouncerDefault = screen.getByLabelText("PgBouncer: Not configured");
+    expect(within(pgbouncerDefault).queryByText("Version")).not.toBeInTheDocument();
+    expect(within(pgbouncerDefault).queryByText("Ops/s")).not.toBeInTheDocument();
+    expect(within(pgbouncerDefault).queryByText("Metrics unavailable")).not.toBeInTheDocument();
+  });
+
+  it("shows PgBouncer as Reachable when pgbouncer is ok without postgres or redis rails", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-pgb-ok".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "unavailable", reason: "unreachable" },
+            { id: "pgbouncer", state: "ok" },
+            { id: "redis", state: "ok" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "pgbouncerok0000000000000000000000",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const pgbouncer = await screen.findByLabelText("PgBouncer: Reachable");
+    expect(pgbouncer).not.toHaveClass("status-card-postgres");
+    expect(pgbouncer).not.toHaveClass("status-card-redis");
+    expect(within(pgbouncer).getByText("Reachable")).toHaveClass("status-ok");
+    expect(within(pgbouncer).queryByText("Version")).not.toBeInTheDocument();
+    expect(within(pgbouncer).queryByText("Ops/s")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("PostgreSQL direct: Unavailable")).toHaveClass("status-card-postgres");
+    expect(screen.getByLabelText("Redis: Reachable")).toHaveClass("status-card-redis");
+  });
+
+  it("shows PgBouncer Unavailable independently when PostgreSQL and Redis are reachable", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-pgb-unavail".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "ok" },
+            { id: "pgbouncer", state: "unavailable", reason: "unreachable" },
+            { id: "redis", state: "ok" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "pgbouncerunavail0000000000000000",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const pgbouncer = await screen.findByLabelText("PgBouncer: Unavailable");
+    expect(pgbouncer).not.toHaveClass("status-card-postgres");
+    expect(pgbouncer).not.toHaveClass("status-card-redis");
+    expect(pgbouncer.querySelector(".status-unavailable")).not.toBeNull();
+    expect(within(pgbouncer).queryByText("Ops/s")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("PostgreSQL direct: Reachable")).toHaveClass("status-card-postgres");
+    expect(screen.getByLabelText("Redis: Reachable")).toHaveClass("status-card-redis");
+  });
+
+  it("does not fetch /api/v1/status on the login route", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isStatusUrl(String(call[0])))).toBe(true);
+    expect(screen.queryByLabelText("PgBouncer: Not configured")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("PgBouncer: Not connected")).not.toBeInTheDocument();
+  });
+
+  it("does not persist Overview status in localStorage or sessionStorage", async () => {
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-pgb-storage".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    expect(localSet).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByLabelText("PgBouncer: Not configured")).not.toBeInTheDocument();
+    expect(localSet).not.toHaveBeenCalled();
+    localSet.mockRestore();
+  });
+
   it("shows mixed Overview status without blanking Redis", async () => {
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
@@ -2868,7 +2979,12 @@ describe("App session and login", () => {
     expect(screen.getByLabelText("Redis: Reachable")).toBeInTheDocument();
     expect(screen.getAllByText("Reachable").length).toBeGreaterThan(1);
     expect(screen.getByText("Unavailable")).toBeInTheDocument();
-    expect(screen.getAllByText("Not connected").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    const pgbouncer = screen.getByLabelText("PgBouncer: Not configured");
+    expect(pgbouncer).not.toHaveClass("status-card-postgres");
+    expect(pgbouncer).not.toHaveClass("status-card-redis");
+    expect(pgbouncer.querySelector(".service-rail-postgres")).toBeNull();
+    expect(pgbouncer.querySelector(".service-rail-redis")).toBeNull();
     expect(screen.getByRole("heading", { name: "Redis" })).toBeInTheDocument();
     expect(screen.queryByText("Adapters are not connected in this release slice.")).not.toBeInTheDocument();
     expect(screen.getByText("Independent component status.")).toBeInTheDocument();
@@ -2916,7 +3032,7 @@ describe("App session and login", () => {
           components: [
             { id: "redgres_state", state: "ok" },
             { id: "postgres_direct", state: "ok" },
-            { id: "pgbouncer", state: "not_implemented" },
+            { id: "pgbouncer", state: "not_configured" },
             { id: "tool_links", state: "not_configured" },
           ],
           request_id: "cccccccccccccccccccccccccccccccc",
@@ -3035,6 +3151,8 @@ describe("App session and login", () => {
     render(<App />);
     expect(await screen.findByLabelText("Redgres state: Unavailable")).toBeInTheDocument();
     expect(screen.queryByLabelText("Redgres state: Reachable")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "PgBouncer" })).toBeInTheDocument();
   });
 
   it("does not paint PostgreSQL unavailable with Redis identity red", async () => {
@@ -3090,7 +3208,7 @@ describe("App session and login", () => {
           components: [
             { id: "redgres_state", state: "ok" },
             { id: "postgres_direct", state: "ok" },
-            { id: "pgbouncer", state: "not_implemented" },
+            { id: "pgbouncer", state: "not_configured" },
             { id: "redis", state: "unavailable", reason: "unreachable" },
             { id: "tool_links", state: "not_configured" },
           ],
@@ -3103,7 +3221,7 @@ describe("App session and login", () => {
     const card = await screen.findByLabelText("Redis: Unavailable");
     expect(card).toHaveClass("status-card-redis");
     expect(screen.getByLabelText("PostgreSQL direct: Reachable")).toBeInTheDocument();
-    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
   });
 
   it("shows Redis as Not configured from not_configured", async () => {
@@ -3116,7 +3234,7 @@ describe("App session and login", () => {
           components: [
             { id: "redgres_state", state: "ok" },
             { id: "postgres_direct", state: "ok" },
-            { id: "pgbouncer", state: "not_implemented" },
+            { id: "pgbouncer", state: "not_configured" },
             { id: "redis", state: "not_configured" },
             { id: "tool_links", state: "not_configured" },
           ],
@@ -3128,7 +3246,7 @@ describe("App session and login", () => {
     render(<App />);
     expect(await screen.findByLabelText("Redis: Not configured")).toBeInTheDocument();
     expect(screen.getByLabelText("PostgreSQL direct: Reachable")).toBeInTheDocument();
-    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
   });
 
   it("shows Redis as Reachable when redis is ok", async () => {
@@ -3141,7 +3259,7 @@ describe("App session and login", () => {
           components: [
             { id: "redgres_state", state: "ok" },
             { id: "postgres_direct", state: "ok" },
-            { id: "pgbouncer", state: "not_implemented" },
+            { id: "pgbouncer", state: "not_configured" },
             { id: "redis", state: "ok" },
             { id: "tool_links", state: "not_configured" },
           ],
@@ -3153,7 +3271,7 @@ describe("App session and login", () => {
     render(<App />);
     expect(await screen.findByLabelText("Redis: Reachable")).toBeInTheDocument();
     expect(screen.getByLabelText("PostgreSQL direct: Reachable")).toBeInTheDocument();
-    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
   });
 
   it("shows Redis metrics when /status and /redis/status are both ok", async () => {
@@ -3189,7 +3307,12 @@ describe("App session and login", () => {
     expect(within(redis).getByText("Latency")).toBeInTheDocument();
     expect(within(redis).getByText("1.25 ms")).toHaveClass("metric");
     expect(screen.queryByText("Metrics unavailable")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    const pgbouncer = screen.getByLabelText("PgBouncer: Not configured");
+    expect(within(pgbouncer).queryByText("Version")).not.toBeInTheDocument();
+    expect(within(pgbouncer).queryByText("Ops/s")).not.toBeInTheDocument();
+    expect(within(pgbouncer).queryByText("Used / max memory")).not.toBeInTheDocument();
+    expect(within(pgbouncer).queryByText("8.2.1")).not.toBeInTheDocument();
     const postgres = screen.getByLabelText("PostgreSQL direct: Reachable");
     expect(within(postgres).queryByText("Ops/s")).not.toBeInTheDocument();
     expect(within(postgres).queryByText("Used / max memory")).not.toBeInTheDocument();
@@ -3205,7 +3328,7 @@ describe("App session and login", () => {
           components: [
             { id: "redgres_state", state: "ok" },
             { id: "postgres_direct", state: "ok" },
-            { id: "pgbouncer", state: "not_implemented" },
+            { id: "pgbouncer", state: "not_configured" },
             { id: "redis", state: "unavailable" },
             { id: "tool_links", state: "not_configured" },
           ],
@@ -3223,7 +3346,7 @@ describe("App session and login", () => {
     expect(within(redis).queryByText("Permission denied")).not.toBeInTheDocument();
     expect(within(redis).queryByText("Unreachable")).not.toBeInTheDocument();
     expect(within(redis).queryByText("Ops/s")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
   });
 
   it("shows Permission denied from /redis/status permission_denied", async () => {
@@ -3236,7 +3359,7 @@ describe("App session and login", () => {
           components: [
             { id: "redgres_state", state: "ok" },
             { id: "postgres_direct", state: "ok" },
-            { id: "pgbouncer", state: "not_implemented" },
+            { id: "pgbouncer", state: "not_configured" },
             { id: "redis", state: "unavailable" },
             { id: "tool_links", state: "not_configured" },
           ],
@@ -3265,7 +3388,7 @@ describe("App session and login", () => {
           components: [
             { id: "redgres_state", state: "ok" },
             { id: "postgres_direct", state: "ok" },
-            { id: "pgbouncer", state: "not_implemented" },
+            { id: "pgbouncer", state: "not_configured" },
             { id: "redis", state: "unavailable" },
             { id: "tool_links", state: "not_configured" },
           ],
@@ -3318,7 +3441,7 @@ describe("App session and login", () => {
           components: [
             { id: "redgres_state", state: "ok" },
             { id: "postgres_direct", state: "ok" },
-            { id: "pgbouncer", state: "not_implemented" },
+            { id: "pgbouncer", state: "not_configured" },
             { id: "redis", state: "not_configured" },
             { id: "tool_links", state: "not_configured" },
           ],
@@ -3333,7 +3456,7 @@ describe("App session and login", () => {
     expect(within(redis).queryByText("Uptime")).not.toBeInTheDocument();
     expect(within(redis).queryByText("Ops/s")).not.toBeInTheDocument();
     expect(within(redis).queryByText("Metrics unavailable")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
   });
 
   it("keeps PostgreSQL cards when /redis/status fails alone", async () => {
@@ -3355,7 +3478,7 @@ describe("App session and login", () => {
     expect(within(redis).getByText("Metrics unavailable")).toBeInTheDocument();
     expect(within(redis).queryByText("Ops/s")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
   });
 
   it("does not render a canary secret from /redis/status", async () => {
