@@ -12,6 +12,12 @@ type discardLog struct{}
 
 func (discardLog) Printf(context.Context, string, ...any) {}
 
+func init() {
+	// Discard library logs globally. Calling SetLogger from Open races with
+	// leftover pool dials from a previous client (go-redis logger is process-wide).
+	redis.SetLogger(discardLog{})
+}
+
 type goRedisClient struct {
 	inner *redis.Client
 }
@@ -70,7 +76,6 @@ func Open(_ context.Context, cfg config.Config) (*Service, func(), error) {
 	if err != nil {
 		return nil, noop, err
 	}
-	redis.SetLogger(discardLog{})
 	opts, err := redis.ParseURL(adminURL)
 	adminURL = ""
 	if err != nil {
