@@ -5407,7 +5407,11 @@ Integration tests: none. Security tests: no secrets persisted;
  redgres-security-reviewer Approve Partial / reject Complete
  on `fa733ea` (no Critical/High/Medium; GET has no CSRF;
  catalog not persisted; custom and 401 presets not painted;
- HTTP GET /presets unchanged).
+ HTTP GET /presets unchanged). Independent
+ redgres-evidence-reviewer Approve Partial / reject Complete
+ on `89ea7e2` (10 new presets jsdom cases; HTTP unchanged;
+ no required Partial corrections; empty-commands and loading
+ copy are code-only Complete gaps).
 Known limitations: jsdom only; no viewport/zoom; no live Redis;
  System and Documentation remain placeholders.
 Do not mark Complete.
