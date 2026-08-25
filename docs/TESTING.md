@@ -85,15 +85,14 @@ cd web && npm ci && npm run test:run && npm run build
 
 `.github/workflows/ci.yml` is the authoritative command list. The `Makefile` and [CONTRIBUTING.md](../CONTRIBUTING.md) mirror it.
 
-Wave 0 CI jobs: `backend` (no npm; proves the embed placeholder), `cross-compile` (`linux/amd64` and `linux/arm64`, `CGO_ENABLED=0`), `frontend` (Node from `web/.nvmrc`, `npm audit --omit=dev --audit-level=high`), `embedded-build`, `secret-scan` (`gitleaks-action` v3.0.0), `vulnerability` (`govulncheck` v1.7.0).
+Wave 0 CI jobs: `backend` (no service containers; live `./integration` tests skip), `cross-compile` (`linux/amd64` and `linux/arm64`, `CGO_ENABLED=0`), `frontend` (Node from `web/.nvmrc`, `npm audit --omit=dev --audit-level=high`), `embedded-build`, `secret-scan` (`gitleaks-action` v3.0.0), `vulnerability` (`govulncheck` v1.7.0). Development-only disposable jobs (not COMPATIBILITY.md §6, not production): `installer` (`bash deploy/tests/run.sh`), `integration` (GHA service containers `postgres:18.6` and `redis:8.8.2` digests), `playwright` (Chromium login viewports).
 
 Deferred from Wave 0, with reasons:
 
 - Pinned Go linter: choosing one is a durable decision; `gofmt` + `go vet` is the current static gate.
 - SBOM and license checks: tied to a release artifact that does not exist yet.
-- ShellCheck / Bats: `deploy/` has no scripts yet.
-- Dev-dependency `npm audit` policy: Wave 0 audits production dependencies only.
-- Browser-level responsive automation: login/shell exists; Playwright/Cypress is not in the repository. jsdom covers login/session/search/drawer open-close, not overflow/zoom/rail-vs-sidebar.
+- ShellCheck / Bats: still unpinned. Installer dispatcher tests are `bash deploy/tests/run.sh` (POSIX bash on ubuntu-latest).
+- Browser-level responsive automation: Playwright login harness exists (`web/e2e`, `@playwright/test` 1.62.1, Chromium). jsdom still covers session/search/drawer. Viewport/zoom login tests are Partial; authenticated shell is out of scope without TTY-safe owner bootstrap. Not NFR-012 Complete.
 - `gitleaks-action` requires a `GITLEAKS_LICENSE` if the repository is transferred to a GitHub organization; fallback is the pinned gitleaks CLI with a recorded checksum.
 
 Dependency/toolchain update changes additionally record old/new exact versions, official release/security notes, compatibility or migration impact, lockfile/checksum diff, vulnerability/license result, and full affected test/build evidence. Automated update pull requests never merge solely because dependency resolution succeeds.

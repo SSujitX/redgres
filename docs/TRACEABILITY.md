@@ -8,7 +8,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; PG-008 Partial: GET `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` + flagged `DELETE …/rows` API (`postgres.destructive` + CSRF + AUTH-006) + inspector single-column PK checkboxes and danger Delete selected dialog (no live PG, no Playwright); PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; POST rotate is PG-006); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no Gate 4); PG-006 Partial: POST `/api/v1/postgres/databases/{db}/credentials/rotate` (`postgres.credentials` + CSRF) + ALTER ROLE + vault upsert + inspector Rotate (no live PG, no Gate 4, no AUTH-006); PG-010 Partial: POST `/api/v1/postgres/databases/{db}/duplicate` (`postgres.provision` + CSRF) TEMPLATE clone + unique owner + vault INSERT + clone-only compensation + inspector Duplicate (no live PG, no 202, no AUTH-006); PG-009 Partial: flagged `POST /api/v1/postgres/databases/{db}/truncate` (`postgres.destructive` + CSRF + AUTH-006, one `TRUNCATE … RESTART IDENTITY`) + inspector danger Truncate dialog (no live PG, no Playwright); PG-011 Partial: flagged `DELETE /api/v1/postgres/databases/{db}` (`postgres.destructive` + CSRF + AUTH-006, terminate excluding current backend then `DROP DATABASE`, optional `DROP ROLE` + vault DELETE; **BF-1** no backup HTTP gate) + inspector danger Drop dialog (no live PG, no Playwright) | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
-| OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
+| OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | OPS-001/006 Partial: `deploy/install.sh` fail-closed dispatcher + `--dry-run` stage print (`bash deploy/tests/run.sh`); no packages/host mutation. OPS-002..005/007 Planned | Partial |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
 ## Per-feature completion template
@@ -5132,4 +5132,45 @@ Pins frozen in docs/COMPATIBILITY.md §8 and linked from
  not running on the parent Windows host (no pull).
 Keep all status rows unchanged. Do not mark Complete.
 Not pushed.
+```
+
+## OPS-001 dispatcher + CI live/Playwright harnesses (2026-08-26)
+
+```text
+Requirement: OPS-001 Partial (dispatcher + --dry-run stage print, no
+ mutation) + OPS-006 Partial (fail-closed 17|18 × 8.2|8.8 selection;
+ no UI; no live detection). NFR-011 Partial extra: skippable
+ integration/ Open/Ping against disposable GHA service containers
+ postgres:18.6@sha256:1957b2ff3137e4ef7f3bc813e74fff50b1e1ffddc85c8b9d6f14ade972be8687
+ and redis:8.8.2@sha256:c514823c0ec1a40764df434efc2dc4ab5ec669c71c1cb00e4f7b1a694cee9fc3.
+ NFR-012 / AUTH login Partial extra: Playwright Chromium login
+ viewports 360×800, 768×1024, 1280×800, 1600×1000, 200% zoom, no
+ credential persistence. Keep OPS-002..005/007 Planned. Keep PG/REDIS
+ rows Partial. Reject Complete. Not COMPATIBILITY.md §6 (no PG 17 pin,
+ no Redis 8.2 pin, no PgBouncer, no TLS, no backup/restore). Not
+ production/DNS/Cloudflare.
+Decision/ADR: ADR-002/008/009; INSTALLER_SPEC flags; COMPATIBILITY.md §8
+ first-cell pins. Disposable GHA service containers are development
+ evidence only.
+Implementation files: deploy/install.sh, deploy/lib/common.sh,
+ deploy/tests/run.sh, deploy/README.md, integration/*,
+ web/playwright.config.ts, web/e2e/login.spec.ts, web/package.json
+ (@playwright/test 1.62.1), web/vite.config.ts (exclude e2e from
+ vitest), .github/workflows/ci.yml (installer, integration,
+ playwright jobs), Makefile, CONTRIBUTING.md, docs/TESTING.md,
+ docs/REPOSITORY_STRUCTURE.md (deploy/tests/), AGENTS.md current-truth.
+Tests (parent):
+ Git Bash deploy/tests/run.sh → 31 passed, 0 failed
+ go test -count=1 ./integration → allow-list pass; live SKIP
+  "live integration env not set"
+ go test -count=1 ./... → all ok (httpapi 54.265s)
+ npm --prefix web run test:run → 353 passed (e2e excluded from vitest)
+ npm --prefix web run build → success
+ npx playwright install chromium → FAILED locally (Chrome for Testing
+ download timeout/ECONNRESET). CI playwright job is the browser path.
+Known limitations: no host preflight/packages; no Ubuntu staging;
+ Playwright browsers not installed on this Windows host; remaining
+ matrix cells wait for PG 17 / Redis 8.2 official patch pins; no
+ production secrets/DNS/Cloudflare.
+Do not mark Complete. Not pushed.
 ```

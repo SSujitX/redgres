@@ -120,6 +120,8 @@ Redgres/
 │   │   └── postgres-capabilities.json  # release-owned exact package/extension mapping
 │   ├── schemas/
 │   │   └── postgres-extension-plan.schema.json
+│   ├── tests/
+│   │   └── run.sh
 │   ├── systemd/
 │   ├── compose/
 │   └── cloudflare/

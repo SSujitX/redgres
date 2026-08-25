@@ -6,6 +6,9 @@
 
 # Frontend
 /web/node_modules/
+/web/test-results/
+/web/playwright-report/
+/web/blob-report/
 /internal/web/dist/app/
 
 # Runtime state and secrets

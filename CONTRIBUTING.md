@@ -16,14 +16,17 @@ Redgres is currently specification-first. Contributions must preserve the migrat
 
 ```text
 go mod verify
-gofmt -l cmd internal migrations
+gofmt -l cmd internal migrations integration
 go vet ./...
 go test ./...
 go build ./cmd/redgres
+bash deploy/tests/run.sh
 cd web
 npm ci
 npm run test:run
 npm run build
+npx playwright install --with-deps chromium
+npm run test:e2e
 ```
 
 `go test -race`, linux/amd64 and linux/arm64 cross-compiles, `govulncheck`, and gitleaks run in CI. Frontend release evidence is the CI job on Node 24.19.0; a local Node 25.x run is development feedback only.
