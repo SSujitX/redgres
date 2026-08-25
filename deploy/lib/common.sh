@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared installer helpers (OPS-001 Partial). Do not source operator --config.
+# Shared installer helpers (OPS-001/002 Partial). Do not source operator --config.
 set -euo pipefail
 
 redgres_log() {
