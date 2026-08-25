@@ -3906,8 +3906,8 @@ Local commits: `376f11e` (freeze), `382e801` (API), `158da45` (UI),
 Reviewer/date: UI Approve Partial on `26a2a62` (pin `a10e0d9`);
  security Approve Partial with conditions on `26a2a62` (pin `e10cc08`);
  catalog quoting / superuser-skip correction `1c0ad73`/`7d3b5a8`;
- security re-review Approve Partial on `7d3b5a8` (this pin); evidence /
- verifier still pending. Keep Partial.
+ security re-review Approve Partial on `7d3b5a8` (pin `8cf383a`); evidence
+ PASS Partial on `8cf383a` (following pin); verifier still pending. Keep Partial.
 Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial.
  Keep PG-005 Partial. Keep PG-006 Partial. Keep PG-012 Partial.
  Keep REDIS-008 Partial. Keep AUTH-006 Partial. Do not mark Complete.
@@ -4007,9 +4007,9 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  go test -count=1 ./internal/httpapi → ok 28.726s
  go test -count=1 ./... → all ok (httpapi 29.256s; postgresadmin 1.241s)
  go vet ./... → no findings
-Reviewer/date: security re-review Approve Partial on `7d3b5a8` (following
- pin). UI pin `a10e0d9` unchanged (no UI diff). Evidence / verifier still
- pending.
+Reviewer/date: security re-review Approve Partial on `7d3b5a8` (pin
+ `8cf383a`). UI pin `a10e0d9` unchanged. Evidence PASS Partial (following
+ pin). Verifier still pending.
 Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
  Partial. Keep PG-006 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
  Keep AUTH-006 Partial.
@@ -4038,11 +4038,43 @@ Reviewer/date: security re-review (2026-08-25) on `7d3b5a8` (`376f11e..7d3b5a8`;
  pg_get_function_identity_arguments interpolated; unknown 1-char prokind
  defaults to ALTER FUNCTION (SQL error → compensate); compensated failures
  not audited; TEMPLATE datacl not stripped of source CONNECT.
-Keep PG-010 Partial. Do not mark Complete. Evidence / verifier still pending.
+Keep PG-010 Partial. Do not mark Complete. Evidence PASS Partial (following
+ pin). Verifier still pending.
  Gate 4, live PostgreSQL 17/18, Playwright, 202/operations remain Complete
  blockers.
 Not pushed.
 ```
+
+## PG-010 POST duplicate evidence pin (2026-08-25)
+
+```text
+Requirement: PG-010 Partial (POST /api/v1/postgres/databases/{db}/duplicate
+ TEMPLATE clone + unique owner + vault INSERT + clone-only compensation +
+ Databases inspector Duplicate). Keep PG-003 Partial. Keep PG-004 Partial.
+ Keep PG-005 Partial. Keep PG-006 Partial.
+Decision/ADR: ADR-004; freeze `376f11e`. AUTH-006 does not apply. No 202.
+ No feature flag.
+Reviewer/date: Evidence review (2026-08-25) on product tree `7d3b5a8` /
+ pin `8cf383a` PASS Partial / reject-Complete. Freeze criteria map to
+ implementation and recorded tests: gofmt empty; go test ./... ok at
+ `0dff8d1` and after quoting (`httpapi` ~29s, `postgresadmin` ~1.2s);
+ go vet clean; npm 309 passed at `0dff8d1` only (UI unchanged; not quoting
+ evidence). Status row PG-010 Partial. Independent UI Approve Partial
+ `26a2a62` (pin `a10e0d9`); security conditions `e10cc08`; correction
+ `1c0ad73`; security re-review Approve Partial `7d3b5a8` (pin `8cf383a`).
+ This reviewer did not re-run tests.
+ Over-mapped (non-blocking): capability test proves export-denied not
+ provision-wrapped handler; MemoryCatalog TransferCloneOwnership stub;
+ package-wide REASSIGN scan; rotate 409 copy test in duplicate file.
+ Do not mark Complete.
+Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
+ Partial. Keep PG-006 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
+ Keep AUTH-006 Partial. Gate 4, live PostgreSQL 17/18, Playwright,
+ 202/operations, POST /api/v1/auth/reauth, ensure_vault, dual-secret ADR,
+ production vault-secret probe remain Complete blockers.
+Not pushed.
+```
+
 
 
 
