@@ -113,4 +113,17 @@ export async function disableRedisUser(username: string, csrf: string, init: Req
   );
 }
 
+export type RedisRotateUserPayload = RedisCreateUserPayload;
+
+export async function rotateRedisUser(username: string, csrf: string, init: RequestInit = {}) {
+  return apiRequest<RedisRotateUserPayload & ApiErrorBody>(
+    `/api/v1/redis/users/${encodeURIComponent(username)}/credentials/rotate`,
+    {
+      ...init,
+      method: "POST",
+      csrf,
+    },
+  );
+}
+
 export { errorMessage };
