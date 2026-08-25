@@ -4,9 +4,9 @@ This file prevents “documented” from being mistaken for “implemented.” A
 
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
-| AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 Partial: in-handler `Reauthenticate` on `DELETE /api/v1/redis/users/{username}`, flagged `DELETE /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows`, and flagged `POST /api/v1/postgres/databases/{db}/truncate` (no `POST /api/v1/auth/reauth`, no AUTH-005 `login_attempts` increment) | Partial |
+| AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 Partial: in-handler `Reauthenticate` on `DELETE /api/v1/redis/users/{username}`, flagged `DELETE /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows`, flagged `POST /api/v1/postgres/databases/{db}/truncate`, and flagged `DELETE /api/v1/postgres/databases/{db}` (no `POST /api/v1/auth/reauth`, no AUTH-005 `login_attempts` increment) | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; PG-008 Partial: GET `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` + flagged `DELETE …/rows` API (`postgres.destructive` + CSRF + AUTH-006) + inspector single-column PK checkboxes and danger Delete selected dialog (no live PG, no Playwright); PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; POST rotate is PG-006); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no Gate 4); PG-006 Partial: POST `/api/v1/postgres/databases/{db}/credentials/rotate` (`postgres.credentials` + CSRF) + ALTER ROLE + vault upsert + inspector Rotate (no live PG, no Gate 4, no AUTH-006); PG-010 Partial: POST `/api/v1/postgres/databases/{db}/duplicate` (`postgres.provision` + CSRF) TEMPLATE clone + unique owner + vault INSERT + clone-only compensation + inspector Duplicate (no live PG, no 202, no AUTH-006); PG-009 Partial: flagged `POST /api/v1/postgres/databases/{db}/truncate` (`postgres.destructive` + CSRF + AUTH-006, one `TRUNCATE … RESTART IDENTITY`) + inspector danger Truncate dialog (no live PG, no Playwright); PG-011 Partial freeze (not implemented; `DELETE /api/v1/postgres/databases/{db}` + AUTH-006 + `REDGRES_FEATURE_POSTGRES_DROP`; **BF-1** backup skip) | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; PG-008 Partial: GET `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` + flagged `DELETE …/rows` API (`postgres.destructive` + CSRF + AUTH-006) + inspector single-column PK checkboxes and danger Delete selected dialog (no live PG, no Playwright); PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; POST rotate is PG-006); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no Gate 4); PG-006 Partial: POST `/api/v1/postgres/databases/{db}/credentials/rotate` (`postgres.credentials` + CSRF) + ALTER ROLE + vault upsert + inspector Rotate (no live PG, no Gate 4, no AUTH-006); PG-010 Partial: POST `/api/v1/postgres/databases/{db}/duplicate` (`postgres.provision` + CSRF) TEMPLATE clone + unique owner + vault INSERT + clone-only compensation + inspector Duplicate (no live PG, no 202, no AUTH-006); PG-009 Partial: flagged `POST /api/v1/postgres/databases/{db}/truncate` (`postgres.destructive` + CSRF + AUTH-006, one `TRUNCATE … RESTART IDENTITY`) + inspector danger Truncate dialog (no live PG, no Playwright); PG-011 Partial: flagged `DELETE /api/v1/postgres/databases/{db}` (`postgres.destructive` + CSRF + AUTH-006, terminate excluding current backend then `DROP DATABASE`, optional `DROP ROLE` + vault DELETE; **BF-1** no backup HTTP gate) + inspector danger Drop dialog (no live PG, no Playwright) | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -4774,5 +4774,119 @@ Reviewer/date: parent freeze 2026-08-26. Writers blocked until this
  pin exists.
 Keep PG-011 Partial freeze (not implemented). Keep PG-008/009/010
  Partial. Do not mark Complete.
+Not pushed.
+```
+
+## PG-011 drop API (2026-08-26)
+
+```text
+Requirement: PG-011 Partial + AUTH-006 Partial (this DELETE
+ /api/v1/postgres/databases/{db} only). Keep PG-011 Partial.
+ Keep AUTH-006 Partial (Redis DELETE plus PG-008 row DELETE plus
+ PG-009 truncate POST plus this DELETE). Keep PG-008/009/010
+ Partial. Reject Complete. Gate 4 N/A. Playwright Complete-only.
+Decision/ADR: freeze b4674fb (b4674fb0d74a52a96dde5e27f15550f661de65b9).
+ Product choice **BF-1**: HTTP does not check backups. AUTH-006
+ in-handler LookupOwnerByUsername + Verify on body owner_password.
+ No POST /api/v1/auth/reauth. Feature flag REDGRES_FEATURE_POSTGRES_DROP
+ via envBool (unset=false). Do not use envBoolDefaultFalse.
+Implementation: writer worktree
+ D:/code/github/Redgres-worktrees/pg-011-drop-api branch
+ feat/pg-011-drop-api 8fb1d72 (8fb1d72db4329c5de5df560c834dbdf4aa249fc1).
+ Cherry-pick onto master 85372a6.
+ internal/config/config.go — FeaturePostgresDrop via envBool.
+ internal/config/drop_test.go — unset false; truthy/falsey; invalid
+ names env never echoes value; DROP does not enable truncate/row-delete;
+ ENABLE_DESTRUCTIVE_ACTIONS ignored.
+ internal/postgresadmin/drop.go — Service.Drop; TerminateSessions then
+ quoted DROP DATABASE (no IF EXISTS, no FORCE); optional DROP ROLE +
+ vault DELETE; lock order truncateMu then dropMu.
+ internal/postgresadmin/truncate.go — serialize with drop map.
+ internal/postgresadmin/errors.go — DropInProgress / RoleDropFailed /
+ VaultDeleteFailed.
+ internal/httpapi/server.go — DELETE {db} with GET {db} (method-distinct)
+ after suffix routes.
+ internal/httpapi/postgres_routes.go — flag-off 403 before decode;
+ AUTH-006; 30s; no-store; writePostgresError mappings.
+ internal/httpapi/postgres_drop_routes_test.go — HTTP coverage.
+Parent re-ran (2026-08-26) on integrated master 604a956 then this
+ TRACEABILITY pin, go1.27.0 windows/amd64:
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/config ./internal/postgresadmin
+ ./internal/httpapi → ok (config 1.448s; postgresadmin 1.173s;
+ httpapi 36.429s)
+ go test -count=1 ./... → all ok after dist rebuild (httpapi 49.409s;
+ cmd/redgres 3.112s; postgresadmin 1.868s; config 2.313s)
+ go vet ./... → no findings
+ go build -o NUL ./cmd/redgres → success
+Known limitations: no live PG 17/18. DROP DATABASE succeeded + later
+ 503 (role/vault/audit) is fail-closed; database stays dropped.
+ POST /api/v1/postgres/databases/{db} stays 405. BF-1 honored.
+No secret artifacts. Dist gitignored (not committed).
+Keep PG-011 Partial. Keep AUTH-006 Partial. Keep PG-008/009/010
+ Partial. Do not mark Complete.
+Not pushed.
+```
+
+## PG-011 drop UI (2026-08-26)
+
+```text
+Requirement: PG-011 Partial UI + AUTH-006 Partial (this DELETE UI only).
+ Keep PG-008 Partial. Keep PG-009 Partial. Keep PG-010 Partial.
+ Do not mark Complete. Playwright is Complete-only.
+Decision/ADR: freeze b4674fb (b4674fb0d74a52a96dde5e27f15550f661de65b9).
+ AUTH-006 is in-handler owner_password on
+ DELETE /api/v1/postgres/databases/{db} (REDIS-008 / PG-008 / PG-009
+ pattern). No POST /api/v1/auth/reauth. Capability
+ postgres.destructive + CSRF + REDGRES_FEATURE_POSTGRES_DROP.
+ No backup_confirmed body field. No checkbox-as-authorization.
+ Product choice BF-1: UI discloses Recovery requires a valid
+ external backup / Cannot be undone.
+Implementation: writer worktree
+ D:/code/github/Redgres-worktrees/pg-011-drop-ui branch
+ feat/pg-011-drop-ui 452a395 (452a3951eb6c695981be439e80131a96fad2bfb2).
+ Cherry-pick onto master 604a956.
+ web/src/api/postgres.ts — DELETE /api/v1/postgres/databases/{db}
+ with CSRF, encodeURIComponent(db), JSON
+ { database_confirmation, owner_password } only (no /drop suffix).
+ web/src/features/postgres/DropDatabaseDialog.tsx — Truncate /
+ Redis Delete focus-trap; title Drop database; Confirm Drop;
+ permanently deletes / connections terminated / role only if no
+ other database / Cannot be undone / Recovery requires a valid
+ external backup; no checkbox.
+ web/src/features/postgres/DatabasesPage.tsx — inspector danger
+ Drop when details loaded (not rotation-eligible); hidden while
+ details loading; disabled while drop/truncate/reveal/rotate/
+ duplicate/create/row-delete in flight or a credential ticket is
+ open; Truncate disabled while drop in flight; 200 refreshes list
+ and clears inspector selection; secret clearing on
+ 200/401/database change/Back/logout.
+ web/src/App.test.tsx — isPostgresDatabaseDrop (DELETE item path
+ without /truncate /duplicate /connection /tables); PG-011 UI
+ coverage (danger-button, Drop database vs Truncate project data,
+ dialog copy/fields, confirm disabled until name+password, CSRF +
+ encodeURIComponent + two body keys, 200 clear selection/refresh
+ list, reauth_required password clear, 401 session-expired, 403
+ Drop is turned off., Truncate/Drop disable each other, ticket
+ disables Drop, Search/login/Security overview never DELETE a
+ database, no setItem).
+Parent re-ran (2026-08-26) on integrated master 604a956, Node v25.3.0
+ (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ npm --prefix web run test:run → Tests 353 passed (353), 62.56s
+ npm --prefix web run build → tsc --noEmit && vite build success
+ (dist gitignored at internal/web/dist/app/; not committed)
+Unexecuted: Playwright viewports, live PostgreSQL 17/18, Gate 4,
+ COMPATIBILITY.md §6, go test -race, CI, Node 24.19.0, gitleaks,
+ govulncheck.
+Known limitations: jsdom does not resolve CSS variables to computed
+ RGB (danger vs postgres asserted via class + globals.css source).
+ Flag-off 403 stays on dialog and does not clear password (only
+ reauth_required does). Delete selected button is not disabled
+ during drop in flight (handler refuses). Viewports were not
+ inspected. Playwright was not run.
+No secret artifacts in b4674fb..604a956. Dist not committed.
+Keep PG-011 Partial. Keep AUTH-006 Partial (Redis DELETE plus
+ PG-008 DELETE plus PG-009 POST plus this DELETE). Keep
+ PG-008/009/010 Partial. Do not mark Complete.
 Not pushed.
 ```
