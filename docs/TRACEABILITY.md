@@ -3298,7 +3298,8 @@ Known limitations: AUTH-006 does not apply. POSIX 0600 vault-file tests skip
 Local commits: `cece386` (freeze), `7bfb569` (API), `9e00819` (merge API),
  `ad2046a` (UI), `d9a797e` (merge UI), this docs record.
  Not pushed.
-Reviewer/date: pending parent/security/verifier. Keep Partial.
+Reviewer/date: UI and security Approve Partial on `8e411ff`; evidence
+ PASS Partial on `f7ed0de`; verifier pending. Keep Partial.
 Keep PG-005 Partial. Keep PG-004 Partial. Keep PG-012 Partial.
  Keep REDIS-008 Partial. Keep AUTH-006 Partial. Do not mark Complete.
 ```
@@ -3350,6 +3351,28 @@ Keep PG-005 Partial. Keep PG-004 Partial. Keep PG-012 Partial.
  Gate 4, live PostgreSQL 17/18, Playwright, PG-003/PG-006, production
  vault-secret probe remain Complete blockers.
 Not pushed.
+```
+
+## PG-005 POST reveal evidence pin (2026-08-25)
+
+```text
+Requirement: PG-005 Partial (POST /api/v1/postgres/databases/{db}/connection/reveal
+ + inspector Reveal). Keep PG-004 Partial (GET /connection still no decrypt).
+Decision/ADR: ADR-004; freeze `cece386`. AUTH-006 does not apply.
+Reviewer/date: Evidence review (2026-08-25) on `f7ed0de` PASS Partial /
+ reject-Complete. Freeze criteria map to implementation and claimed tests.
+ Status rows PG-005/PG-004 Partial; AGENTS.md names POST reveal. Canonical
+ API/UX/SECURITY/CONFIG/DATA_AND_SECRETS frozen at `cece386`. Hygiene after
+ this review: CONFIGURATION intro no longer calls vault-secret target;
+ PG-012 remainder no longer lists POST reveal / vault file as unimplemented.
+ Independent UI and security Approve Partial on `8e411ff`. Parent command
+ set remains after `d9a797e` / record `8e411ff`. This reviewer did not
+ re-run tests. Over-mapped (non-blocking): HTTP 404 missing-vault-row is
+ service-only; credentials-vs-read test uses isolated middleware; wipe
+ asserted as derived-key inequality not zeroed bytes. Do not mark Complete.
+Keep PG-005 Partial. Keep PG-004 Partial. Keep PG-012 Partial.
+ Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Verifier pending. Not pushed.
 ```
 
 
