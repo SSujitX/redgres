@@ -3148,4 +3148,28 @@ Keep REDIS-008 Partial. Keep AUTH-006 Partial. Keep PG-012 Partial.
 Not pushed.
 ```
 
+## REDIS-008 ACL delete security pin (2026-08-25)
+
+```text
+Requirement: REDIS-008 Partial + AUTH-006 Partial (DELETE /api/v1/redis/users/{username}
+ in-handler reauth; inspector Delete; no POST /api/v1/auth/reauth)
+Decision/ADR: AUTH-006 in-handler LookupOwnerByUsername + Verify; freeze `372fbfa`
+Reviewer/date: Security review (2026-08-25) on `062fb4c` approve Partial;
+ no Critical/High/Medium. Freeze check order holds: redis.destructive +
+ CSRF; exact username_confirmation (no audit); reauth_required username-only
+ audit (never reason: reauth, never password); AUTH-005 login_attempts
+ unchanged; no 429; protected names never ACL DELUSER; 200 {request_id}
+ only; audit-fail after DELUSER is 503 fail-closed; go-redis v9.22.0;
+ no CLIENT KILL/KEYS/DEL/FLUSH*; no feature flag; collection DELETE 405.
+ Residual questions (non-blocking): missing-owner HTTP mostly unreachable
+ behind session JOIN; admin protection includes configured Redis URL
+ username. Reviewer did not re-run tests. Independent UI pin `062fb4c`
+ already landed on `7b20bd8`.
+Keep REDIS-008 Partial. Keep AUTH-006 Partial. Keep PG-012 Partial.
+ Keep PG-004 Partial. Keep PG-005 Partial.
+ Live Redis 8.2/8.8, COMPATIBILITY.md §6, dedicated reauth throttle,
+ PostgreSQL reauth consumers remain Complete blockers.
+Not pushed.
+```
+
 
