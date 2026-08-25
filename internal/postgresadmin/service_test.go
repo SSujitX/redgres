@@ -77,6 +77,9 @@ func TestServiceUnavailableWithoutCatalog(t *testing.T) {
 	if _, err := svc.Connection(context.Background(), "project_a"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("connection: %v", err)
 	}
+	if _, err := svc.Reveal(context.Background(), "project_a"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("reveal: %v", err)
+	}
 	var nilSvc *Service
 	if _, err := nilSvc.SecurityOverview(context.Background()); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("nil service: %v", err)

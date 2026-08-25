@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"unicode/utf8"
 
+	"github.com/SSujitX/redgres/internal/auth"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
 	"github.com/go-chi/chi/v5"
 )
@@ -88,6 +89,76 @@ func (s *Server) handlePostgresConnection(w http.ResponseWriter, r *http.Request
 		}
 	}
 	s.writeJSON(w, r, http.StatusOK, body)
+}
+
+type postgresRevealResource struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+}
+
+type postgresRevealURLs struct {
+	Direct string `json:"direct,omitempty"`
+	Pooled string `json:"pooled,omitempty"`
+}
+
+type postgresRevealCredential struct {
+	Username string              `json:"username"`
+	Password string              `json:"password"`
+	OneTime  bool                `json:"one_time"`
+	URLs     *postgresRevealURLs `json:"urls,omitempty"`
+}
+
+type postgresRevealResponse struct {
+	Resource   postgresRevealResource   `json:"resource"`
+	Credential postgresRevealCredential `json:"credential"`
+	RequestID  string                   `json:"request_id"`
+}
+
+func (s *Server) handlePostgresConnectionReveal(w http.ResponseWriter, r *http.Request) {
+	name, err := decodePathIdentifier(chi.URLParam(r, "db"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid database name")
+		return
+	}
+	if s.postgres == nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	revealed, err := s.postgres.Reveal(r.Context(), name)
+	if err != nil {
+		s.writePostgresError(w, r, err)
+		return
+	}
+	cred := postgresRevealCredential{
+		Username: revealed.Owner,
+		Password: revealed.Password,
+		OneTime:  false,
+	}
+	var urls postgresRevealURLs
+	if s.cfg.PostgresPublicHost != "" && s.cfg.PostgresDirectPort != "" {
+		if u, urlErr := postgresadmin.ProjectConnectionURL(s.cfg.PostgresPublicHost, s.cfg.PostgresDirectPort, revealed.Owner, revealed.Password, revealed.Database); urlErr == nil {
+			urls.Direct = u
+		}
+	}
+	if s.cfg.PostgresPublicHost != "" && s.cfg.PostgresPooledPort != "" {
+		if u, urlErr := postgresadmin.ProjectConnectionURL(s.cfg.PostgresPublicHost, s.cfg.PostgresPooledPort, revealed.Owner, revealed.Password, revealed.Database); urlErr == nil {
+			urls.Pooled = u
+		}
+	}
+	if urls.Direct != "" || urls.Pooled != "" {
+		cred.URLs = &urls
+	}
+	sess := sessionFrom(r)
+	meta := map[string]any{"database": revealed.Database, "owner": revealed.Owner}
+	if err := s.audit.Record(sess.Username, "postgres.credential.reveal", revealed.Database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, postgresRevealResponse{
+		Resource:   postgresRevealResource{Type: "postgres_database", Name: revealed.Database},
+		Credential: cred,
+		RequestID:  requestID(r),
+	})
 }
 
 type postgresTablesBody struct {

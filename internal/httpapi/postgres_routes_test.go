@@ -814,13 +814,18 @@ func TestPostgresConnectionRejectsPOST(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "method_not_allowed") {
 		t.Fatalf("connection POST body = %s", rec.Body.String())
 	}
-	reveal := httptest.NewRecorder()
-	h.ServeHTTP(reveal, authed(http.MethodPost, postgresConnectionPath+"/reveal", cookie, csrf, `{}`))
-	if reveal.Code != http.StatusNotFound {
-		t.Fatalf("reveal POST status = %d %s", reveal.Code, reveal.Body.String())
+	revealPOST := httptest.NewRecorder()
+	h.ServeHTTP(revealPOST, authed(http.MethodPost, postgresConnectionPath+"/reveal", cookie, csrf, `{}`))
+	if revealPOST.Code == http.StatusMethodNotAllowed {
+		t.Fatalf("reveal POST must be registered: %s", revealPOST.Body.String())
 	}
-	if strings.Contains(reveal.Body.String(), `"masked_direct_url"`) || strings.Contains(reveal.Body.String(), `"direct_url"`) {
-		t.Fatalf("reveal must not be implemented: %s", reveal.Body.String())
+	revealGET := httptest.NewRecorder()
+	h.ServeHTTP(revealGET, authed(http.MethodGet, postgresConnectionPath+"/reveal", cookie, csrf, ""))
+	if revealGET.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("reveal GET status = %d %s", revealGET.Code, revealGET.Body.String())
+	}
+	if strings.Contains(revealPOST.Body.String(), `"masked_direct_url"`) {
+		t.Fatalf("reveal must not return GET connection shape: %s", revealPOST.Body.String())
 	}
 }
 

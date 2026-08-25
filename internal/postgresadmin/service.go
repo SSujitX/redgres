@@ -5,15 +5,22 @@ import (
 	"errors"
 	"sort"
 	"strings"
+
+	"github.com/SSujitX/redgres/internal/secrets"
 )
 
 type Service struct {
-	catalog Catalog
-	policy  Policy
+	catalog  Catalog
+	policy   Policy
+	vaultKey string
 }
 
 func NewService(catalog Catalog, policy Policy) *Service {
-	return &Service{catalog: catalog, policy: policy}
+	return NewServiceWithVaultKey(catalog, policy, "")
+}
+
+func NewServiceWithVaultKey(catalog Catalog, policy Policy, vaultKey string) *Service {
+	return &Service{catalog: catalog, policy: policy, vaultKey: vaultKey}
 }
 
 func (s *Service) Ping(ctx context.Context) error {
@@ -143,6 +150,43 @@ func (s *Service) Connection(ctx context.Context, name string) (Connection, erro
 		Owner:           row.Owner,
 		SavedCredential: s.savedCredential(ctx, row.Owner),
 	}, nil
+}
+
+func (s *Service) Reveal(ctx context.Context, name string) (RevealedConnection, error) {
+	if err := ValidateIdentifier(name); err != nil {
+		return RevealedConnection{}, err
+	}
+	if s == nil || s.catalog == nil {
+		return RevealedConnection{}, ErrUnavailable
+	}
+	if s.policy.DatabaseDenied(name) {
+		return RevealedConnection{}, ErrNotFound
+	}
+	row, err := s.catalog.Lookup(ctx, name)
+	if err != nil {
+		return RevealedConnection{}, mapCatalogError(err)
+	}
+	if !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate) {
+		return RevealedConnection{}, ErrNotFound
+	}
+	if row.Owner == "" {
+		return RevealedConnection{}, ErrNotFound
+	}
+	token, err := s.catalog.EncryptedPassword(ctx, row.Owner)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return RevealedConnection{}, ErrNotFound
+		}
+		return RevealedConnection{}, ErrUnavailable
+	}
+	if s.vaultKey == "" {
+		return RevealedConnection{}, ErrUnavailable
+	}
+	plain, err := secrets.Decrypt(s.vaultKey, token)
+	if err != nil || len(plain) == 0 {
+		return RevealedConnection{}, ErrUnavailable
+	}
+	return RevealedConnection{Database: row.Name, Owner: row.Owner, Password: string(plain)}, nil
 }
 
 func (s *Service) Tables(ctx context.Context, name string) (TableListResult, error) {

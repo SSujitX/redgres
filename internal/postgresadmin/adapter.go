@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/SSujitX/redgres/internal/config"
+	"github.com/SSujitX/redgres/internal/secrets"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -82,6 +83,11 @@ func Open(ctx context.Context, cfg config.Config) (*Service, func(), error) {
 	if err != nil {
 		return nil, noop, err
 	}
+	vaultKey, err := loadVaultKey(cfg)
+	if err != nil {
+		password = ""
+		return nil, noop, err
+	}
 	pool, err := connectPool(ctx, cfg, password)
 	if err != nil {
 		password = ""
@@ -108,7 +114,8 @@ func Open(ctx context.Context, cfg config.Config) (*Service, func(), error) {
 		}
 		pool.Close()
 	}
-	return NewService(PoolCatalog{pool: pool, pooled: pooled}, policy), closer, nil
+	svc := NewServiceWithVaultKey(PoolCatalog{pool: pool, pooled: pooled}, policy, vaultKey)
+	return svc, closer, nil
 }
 
 func connectPool(ctx context.Context, cfg config.Config, password string) (*pgxpool.Pool, error) {
@@ -212,22 +219,54 @@ func quoteKeyword(value string) string {
 }
 
 func readPasswordFile(path string, production bool) (string, error) {
+	raw, err := readSecretFile(path, "REDGRES_POSTGRES_PASSWORD_FILE", production)
+	if err != nil {
+		return "", err
+	}
+	password := string(raw)
+	for i := range raw {
+		raw[i] = 0
+	}
+	return password, nil
+}
+
+func readSecretFile(path, envName string, production bool) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", errors.New("REDGRES_POSTGRES_PASSWORD_FILE: is unavailable")
+		return nil, errors.New(envName + ": is unavailable")
 	}
 	if production && info.Mode().Perm()&0o077 != 0 {
-		return "", errors.New("REDGRES_POSTGRES_PASSWORD_FILE: must not be group or world accessible")
+		return nil, errors.New(envName + ": must not be group or world accessible")
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return "", errors.New("REDGRES_POSTGRES_PASSWORD_FILE: is unavailable")
+		return nil, errors.New(envName + ": is unavailable")
 	}
-	password := strings.TrimRight(string(raw), "\r\n")
-	if password == "" {
-		return "", errors.New("REDGRES_POSTGRES_PASSWORD_FILE: is empty")
+	trimmed := strings.TrimRight(string(raw), "\r\n")
+	for i := range raw {
+		raw[i] = 0
 	}
-	return password, nil
+	if trimmed == "" {
+		return nil, errors.New(envName + ": is empty")
+	}
+	out := []byte(trimmed)
+	return out, nil
+}
+
+func loadVaultKey(cfg config.Config) (string, error) {
+	path := strings.TrimSpace(cfg.LegacyVaultSecretFile)
+	if path == "" {
+		return "", nil
+	}
+	raw, err := readSecretFile(path, "REDGRES_LEGACY_VAULT_SECRET_FILE", cfg.Production())
+	if err != nil {
+		return "", err
+	}
+	key := secrets.DeriveVaultKey(string(raw))
+	for i := range raw {
+		raw[i] = 0
+	}
+	return key, nil
 }
 
 func checkServerMajor(ctx context.Context, pool *pgxpool.Pool, expected int) error {
@@ -483,6 +522,30 @@ func (c PoolCatalog) SavedRoleNames(ctx context.Context, roles []string) (map[st
 		return nil, mapVaultError(err)
 	}
 	return out, nil
+}
+
+const encryptedPasswordSQL = `SELECT encrypted_password FROM public.project_credentials WHERE role_name = $1`
+
+func (c PoolCatalog) EncryptedPassword(ctx context.Context, role string) (string, error) {
+	if err := ValidateIdentifier(role); err != nil {
+		return "", err
+	}
+	conn, connectCtx, closeConn, err := c.connectTarget(ctx, vaultDatabase)
+	if err != nil {
+		return "", ErrUnavailable
+	}
+	defer closeConn()
+	var token string
+	if err := conn.QueryRow(connectCtx, encryptedPasswordSQL, role).Scan(&token); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", ErrUnavailable
+	}
+	if token == "" {
+		return "", ErrNotFound
+	}
+	return token, nil
 }
 
 type rowScanner interface {

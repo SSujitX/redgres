@@ -19,6 +19,7 @@ func (c *Config) loadPostgres() error {
 	c.PostgresPublicHost = strings.TrimSpace(envOr("REDGRES_POSTGRES_PUBLIC_HOST", ""))
 	c.PostgresDirectPort = strings.TrimSpace(envOr("REDGRES_POSTGRES_DIRECT_PORT", ""))
 	c.PostgresPooledPort = strings.TrimSpace(envOr("REDGRES_POSTGRES_POOLED_PORT", ""))
+	c.LegacyVaultSecretFile = strings.TrimSpace(envOr("REDGRES_LEGACY_VAULT_SECRET_FILE", ""))
 	if err := parseExpectedMajor(envOr("REDGRES_POSTGRES_EXPECTED_MAJOR", ""), &c.PostgresExpectedMajor); err != nil {
 		return err
 	}

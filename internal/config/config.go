@@ -53,6 +53,7 @@ type Config struct {
 	PostgresPublicHost         string
 	PostgresDirectPort         string
 	PostgresPooledPort         string
+	LegacyVaultSecretFile      string
 
 	RedisAdminURLFile   string
 	RedisAllowPlaintext bool
