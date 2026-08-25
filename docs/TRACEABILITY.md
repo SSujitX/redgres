@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET (no decrypt/reveal); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs; PG-003/006/008–011 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; no POST rotate); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET (no decrypt/reveal); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs; PG-003/006/008–011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete); REDIS-008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -2865,6 +2865,68 @@ Known limitations unchanged: POST reveal, Gate 4 copied production ciphertext,
  POST /connection/reveal is 404 (unregistered) not 405.
 Not pushed.
 Keep PG-004 Partial. Keep PG-005 Partial. Do not mark Complete.
+```
+
+## PG-012 rotation eligibility Partial (2026-08-25)
+
+```text
+Requirement: PG-012 Partial (rotation_eligible on GET /api/v1/postgres/security
+ databases[] rows + Security overview last column; no POST rotate/reveal/create)
+Decision/ADR: ADR-004 (vault decrypt still unused); freeze `674bd5c`
+Source characterization: database-app security_ops.get_security_overview at
+ 1c3e8e2 uses can_rotate = rolcanlogin && !rolsuper && owner ∉ {postgres,
+ adminpg, database_console, onelife_pg_admin}. Redgres does not emit
+ can_rotate and does not hardcode adminpg. Derives in Service from existing
+ row fields + Policy.Manageable (protected = !Manageable). No new catalog SQL.
+Implementation files: internal/postgresadmin/{types.go,service.go,rotation.go};
+ internal/httpapi/postgres_security_routes_test.go;
+ web/src/api/postgres.ts; web/src/features/postgres/SecurityOverview.tsx;
+ web/src/App.test.tsx
+Unit tests: project_a true; postgres/zeta_last/empty owner/owned_by_admin/
+ no_connect false; vault unavailable still emits booleans; JSON never omits
+ rotation_eligible; can_rotate absent
+HTTP tests: 200 boolean on every row; project_a true / protected false;
+ can_rotate/has_saved_password still nil; 401/503 unchanged
+UI tests: last-column Rotation eligible Yes/No; missing field → —; header
+ still “Rotation is not available.”; no Rotate/Reveal/Create
+Integration tests: none — live PostgreSQL 17/18 not run
+Security tests: can_rotate still absent; vault_unavailable does not change
+ eligibility; no-store unchanged; eligibility is diagnostic only
+Deployment/migration impact: none. go.mod unchanged (pgx v5.10.0,
+ go-redis v9.22.0). No REDGRES_LEGACY_VAULT_SECRET_FILE. Route table
+ unchanged.
+Known limitations: POST rotate/reveal not registered; no summary eligible
+ count; no details-GET field; Gate 4, live PostgreSQL 17/18, Playwright
+ viewports outstanding
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
+ v25.3.0 (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ Writer API feat/pg-012-rotation-eligibility-api `686bbd9`:
+  gofmt -l → empty
+  go test -count=1 ./internal/postgresadmin ./internal/httpapi
+   → ok postgresadmin 0.986s; httpapi 22.396s
+  go test -count=1 ./... → ok (httpapi 25.578s)
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+ Writer UI feat/pg-012-rotation-eligibility-ui `07130ea`:
+  npm --prefix web run test:run → Tests 224 passed (224), 33.43s
+  npm --prefix web run build → success (ignored internal/web/dist/app/)
+ Parent after merge `387b8d8` (docs record this commit):
+  gofmt -l internal/postgresadmin
+   internal/httpapi/postgres_security_routes_test.go → empty
+  go test -count=1 ./internal/postgresadmin ./internal/httpapi
+   → ok postgresadmin 1.365s; httpapi 24.792s
+  go test -count=1 ./... → all ok (httpapi 29.912s; cmd/redgres 3.689s;
+   postgresadmin 1.808s; web 0.972s; migrations no tests)
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/jackc/pgx/v5 → v5.10.0
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+  npm --prefix web run test:run → Tests 224 passed (224), 37.64s
+Local commits: `674bd5c` (freeze), `686bbd9` (API), `07130ea` (UI),
+ `744f8df` (merge API), `387b8d8` (merge UI), this docs record.
+ Not pushed.
+Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
+ Do not mark Complete.
 ```
 
 
