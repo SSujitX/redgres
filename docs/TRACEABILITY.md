@@ -2778,6 +2778,12 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
    internal/httpapi/server.go internal/config → empty
   go test -count=1 ./internal/postgresadmin ./internal/httpapi ./internal/config
    → ok postgresadmin 1.084s; httpapi 21.214s; config 0.501s
+  go test -count=1 ./... → all ok (httpapi 22.553s; cmd/redgres 2.322s;
+   postgresadmin 1.235s; web 0.587s; migrations no tests)
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/jackc/pgx/v5 → v5.10.0
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
   npm --prefix web run test:run → Tests 222 passed (222), 31.82s
 Local commits: `99986a1` (freeze), `20addbf` (API), `80c958d` (UI),
  `7ed29df` (merge API), `60825fd` (merge UI), this docs record.
