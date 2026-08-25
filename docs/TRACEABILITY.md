@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 Partial: in-handler `Reauthenticate` on `DELETE /api/v1/redis/users/{username}` and flagged `DELETE /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` (no `POST /api/v1/auth/reauth`, no AUTH-005 `login_attempts` increment) | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; PG-008 Partial: GET `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` + flagged `DELETE …/rows` API (`postgres.destructive` + CSRF + AUTH-006; no inspector UI yet, no live PG); PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; POST rotate is PG-006); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no Gate 4); PG-006 Partial: POST `/api/v1/postgres/databases/{db}/credentials/rotate` (`postgres.credentials` + CSRF) + ALTER ROLE + vault upsert + inspector Rotate (no live PG, no Gate 4, no AUTH-006); PG-010 Partial: POST `/api/v1/postgres/databases/{db}/duplicate` (`postgres.provision` + CSRF) TEMPLATE clone + unique owner + vault INSERT + clone-only compensation + inspector Duplicate (no live PG, no 202, no AUTH-006); PG-009/011 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; PG-008 Partial: GET `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` + flagged `DELETE …/rows` API (`postgres.destructive` + CSRF + AUTH-006) + inspector single-column PK checkboxes and danger Delete selected dialog (no live PG, no Playwright); PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; POST rotate is PG-006); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no Gate 4); PG-006 Partial: POST `/api/v1/postgres/databases/{db}/credentials/rotate` (`postgres.credentials` + CSRF) + ALTER ROLE + vault upsert + inspector Rotate (no live PG, no Gate 4, no AUTH-006); PG-010 Partial: POST `/api/v1/postgres/databases/{db}/duplicate` (`postgres.provision` + CSRF) TEMPLATE clone + unique owner + vault INSERT + clone-only compensation + inspector Duplicate (no live PG, no 202, no AUTH-006); PG-009/011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -4169,6 +4169,52 @@ Unexecuted: live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright
  POST /api/v1/auth/reauth, truncate/drop flags, Gate 4.
 No secret artifacts in a05da3d..0e9f6fa.
 Keep PG-008 Partial. Keep AUTH-006 Partial. Keep PG-010 Partial.
+Not pushed.
+```
+
+## PG-008 row delete UI pin (2026-08-25)
+
+```text
+Requirement: PG-008 Partial UI + AUTH-006 Partial (this DELETE UI only).
+ Keep PG-010 Partial. Keep PG-007 row-browse. Do not mark Complete.
+ Playwright is Complete-only.
+Decision/ADR: freeze a05da3d. AUTH-006 is in-handler owner_password on
+ DELETE /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows
+ (REDIS-008 pattern). No POST /api/v1/auth/reauth. Capability
+ postgres.destructive + CSRF + REDGRES_FEATURE_POSTGRES_ROW_DELETE.
+ GET .../primary-key is postgres.read, no CSRF, no flag.
+Implementation: product tree cherry-pick of feat/pg-008-row-delete-ui
+ `b7ccacf` as `dad0c9f` (`dad0c9fcd0cc71165cca1cdf3f8670e0902c11e0`)
+ after Go API `0e9f6fa`. Writer worktree
+ D:/code/github/Redgres-worktrees/pg-008-row-delete-ui.
+ web/src/api/postgres.ts — GET primary-key (no CSRF); DELETE /rows with
+ CSRF and { table_confirmation, owner_password, primary_key_values }.
+ web/src/features/postgres/DeleteSelectedRowsDialog.tsx — Redis Delete
+ focus-trap pattern; title Delete selected rows.
+ web/src/features/postgres/DatabasesPage.tsx — PK fetch with the row
+ page (same abort as table change); checkboxes only when
+ primary_key.length === 1; danger Delete selected; secret clearing on
+ 200/401/database/table/Back/logout.
+ web/src/styles/globals.css — 44px row-select hit area; danger-button
+ uses var(--danger) not --postgres.
+ web/src/App.test.tsx — PG-008 UI coverage.
+Commands executed (2026-08-25) on product tree after cherry-pick,
+ Node v25.3.0 (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI
+ evidence):
+ npm --prefix web run test:run → Tests 324 passed (324), 53.18s
+ npm --prefix web run build → tsc --noEmit && vite build success
+ (dist gitignored)
+Unexecuted: Playwright viewports, live PostgreSQL 17/18, Gate 4,
+ COMPATIBILITY.md §6, go test -race, CI, Node 24.19.0, gitleaks,
+ govulncheck.
+Known limitations: jsdom does not resolve CSS variables to computed
+ RGB (danger vs postgres asserted via class + globals.css source).
+ Flag-off 403 stays on dialog and does not clear password (only
+ reauth_required does). Selection is not cleared on row paging/search.
+ mutationBusy for Reveal/Rotate/Duplicate does not include deleting.
+No secret artifacts in a05da3d..dad0c9f. Dist not committed.
+Keep PG-008 Partial. Keep AUTH-006 Partial (Redis DELETE plus this
+ DELETE). Keep PG-010 Partial. Do not mark Complete.
 Not pushed.
 ```
 
