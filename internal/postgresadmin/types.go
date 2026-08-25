@@ -146,6 +146,7 @@ type SecurityDatabase struct {
 	OwnerCreaterole   bool   `json:"owner_createrole"`
 	OwnerReplication  bool   `json:"owner_replication"`
 	ActiveConnections int    `json:"active_connections"`
+	RotationEligible  bool   `json:"rotation_eligible"`
 }
 
 type ConnectionGroup struct {
