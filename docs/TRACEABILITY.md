@@ -2011,13 +2011,15 @@ Reviewer/date: Security review (2026-08-25) on `ed64500` approve Partial;
  UI review (2026-08-25) on `ed64500` approve Partial UI; High wrapping
  catalog labels, Medium 44px hit area, Low UA fieldset chrome + prefix
  aria-invalid on catalog errors. Parent closed those on `9f81257`.
- Re-check of `9f81257` in flight. Explicitly NOT viewport/zoom sign-off.
+ UI re-check (2026-08-25) on `9f81257` approve Partial UI; High/Medium/Low
+ closed; no remaining Critical/High. Explicitly NOT viewport/zoom sign-off.
  Evidence review (2026-08-25) on `ed64500` keep-Partial; nine mapped
  claims supported; no required corrections. API.md unique-sort vs raw
- len>256 sentence aligned in this pin.
- Verifier pending after UI re-check of `9f81257`.
+ len>256 sentence aligned in `d6a5b69`.
+ Verifier pending on this pin.
  Local commits: `00549ec` (API), `b07c0de` (UI), `76299b0` (merge UI),
- `ed64500` (docs record), `9f81257` (checklist layout), this review pin.
+ `ed64500` (docs record), `9f81257` (checklist layout), `d6a5b69`
+ (review pin), this UI re-check pin.
  Not pushed.
  Keep REDIS-005 Partial.
 ```
