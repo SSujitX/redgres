@@ -1848,17 +1848,25 @@ Implementation files: internal/redisadmin/{service.go,memory.go,update_test.go};
  web/src/{api/redis.ts,features/redis/AclUsersPage.tsx,
  features/redis/EditPermissionsDialog.tsx,App.test.tsx};
  docs/{API,ARCHITECTURE,SECURITY,UX,TRACEABILITY}.md; AGENTS.md
-Unit/HTTP: five named SETUSER vectors = inspect slices; no reset/resetpass/>/
- on/off; enabled+hash preserved; custom/limited/disabled updatable;
- protected/missing no SETUSER; empty preset does not default; CSRF/401/403/
- 400/404/503; unknown fields; PATCH collection 405; PUT/DELETE username 405;
- audit-fail after SETUSER no user; create/enable/rotate/GET/presets regressions.
+Unit: five named SETUSER vectors = inspect slices; no reset/resetpass/>/
+ on/off (assertUpdateRules); enabled+hash preserved; custom/limited/disabled
+ updatable; protected/missing no SETUSER; empty preset does not default.
+ HTTP: +CMD set equals NamedPresets(); CSRF/401/403/400/404/503; unknown
+ fields; PATCH collection 405; PUT/DELETE username 405; audit-fail after
+ SETUSER no user; create/enable/rotate/GET/presets regressions. HTTP named-
+ preset tests do not fail if reset/resetpass/> were added to SETUSER.
 Frontend: Edit permissions text-button (not danger); same visibility as
  Enable/Rotate; no Custom; custom inspect defaults cache-read-write;
  queue_kind only for queue-worker; PATCH CSRF encodeURIComponent
  {key_pattern, preset [, queue_kind]}; 200 applies inspector+row, no ticket;
  401/403/404/503 copy; no storage; login never PATCH; never GET /presets.
 Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
+ Writer API worktree feat/redis-006-patch-api `0a8d9b2`:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 1.693s; httpapi 17.019s
+  go test -count=1 ./... → ok; go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
  Parent review of API then FF onto master `0a8d9b2`:
   go test -count=1 ./internal/redisadmin ./internal/httpapi
    → ok redisadmin 1.609s; httpapi 16.375s
@@ -1872,14 +1880,25 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
   go vet ./... → no findings; go build -o NUL ./cmd/redgres → success
   go list -m github.com/redis/go-redis/v9 → v9.22.0
 Not run by parent: live Redis, COMPATIBILITY.md §6, gitleaks, govulncheck,
- CI, Playwright, npm production build, viewport/zoom, Node 24.19.0,
- writer API ./... timings (not independently re-run here).
+ CI, Playwright, npm production build, viewport/zoom, Node 24.19.0.
+ Writer API ./... / vet / build are writer-attributed, not parent-after-merge
+ re-runs of those exact commands.
 Known limitations: SETUSER-then-audit-fail leftover grants; GetUser/SETUSER
  race; MemoryClient plaintext > residual unchanged; REDIS-003/004/007 UI
  Medium residuals unchanged; no representative workloads.
-Reviewer/date: pending parent security + UI + evidence + verifier.
- Local commits: `0a8d9b2` (API), `418c473` (UI), `d410034` (merge UI).
- Not pushed. Keep REDIS-006 Partial.
+ Security Medium (not reject): Redis 7+ ACL selectors survive named-preset
+ PATCH because SETUSER omits clearselectors (root-only resetkeys/nocommands;
+ same as redis-ui). Later slice: clearselectors or refuse SETUSER when LIST
+ shows selector parentheses. Do not use reset.
+ UI Medium (inherited, not reject): focus does not return to Edit permissions
+ (same as create/rotate trap).
+Reviewer/date: Security review (2026-08-25) approve Partial; no Critical/High.
+ One Medium (selectors). UI review (2026-08-25) approve Partial UI; no
+ Critical/High. Explicitly NOT viewport/zoom sign-off. Evidence review
+ (2026-08-25) keep-Partial; no required corrections. Token-forbid evidence
+ is unit-only. Verifier pending this pin commit.
+ Local commits: `0a8d9b2` (API), `418c473` (UI), `d410034` (merge UI),
+ `421a522` (docs record). Not pushed. Keep REDIS-006 Partial.
 ```
 
 
