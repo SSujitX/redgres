@@ -187,6 +187,27 @@ func (s *Service) GetUser(ctx context.Context, username string) (User, error) {
 	return User{}, ErrNotFound
 }
 
+func (s *Service) SetEnabled(ctx context.Context, username string, enabled bool) (User, error) {
+	adminUser := ""
+	if s != nil {
+		adminUser = s.adminUser
+	}
+	if IsProtectedUsername(username, adminUser) {
+		return User{}, ErrProtectedUser
+	}
+	if _, err := s.GetUser(ctx, username); err != nil {
+		return User{}, err
+	}
+	flag := "off"
+	if enabled {
+		flag = "on"
+	}
+	if err := s.client.ACLSetUser(ctx, username, flag); err != nil {
+		return User{}, classifyRedisError(err)
+	}
+	return s.GetUser(ctx, username)
+}
+
 func (s *Service) loadUsers(ctx context.Context) ([]User, error) {
 	if s == nil || s.client == nil {
 		return nil, ErrNotConfigured

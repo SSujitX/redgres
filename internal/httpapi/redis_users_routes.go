@@ -84,6 +84,11 @@ type redisUserCreateResponse struct {
 	RequestID  string                `json:"request_id"`
 }
 
+type redisUserEnableResponse struct {
+	User      redisUserDetail `json:"user"`
+	RequestID string          `json:"request_id"`
+}
+
 func (s *Server) handleRedisUsers(w http.ResponseWriter, r *http.Request) {
 	if s.redis == nil {
 		empty := []redisUserSummary{}
@@ -178,6 +183,62 @@ func (s *Server) handleRedisUsersCreate(w http.ResponseWriter, r *http.Request) 
 		Credential: cred,
 		RequestID:  requestID(r),
 	})
+}
+
+func (s *Server) handleRedisUserEnable(w http.ResponseWriter, r *http.Request) {
+	s.setRedisUserEnabled(w, r, true)
+}
+
+func (s *Server) handleRedisUserDisable(w http.ResponseWriter, r *http.Request) {
+	s.setRedisUserEnabled(w, r, false)
+}
+
+func (s *Server) setRedisUserEnabled(w http.ResponseWriter, r *http.Request, enabled bool) {
+	username, err := parseRedisUsernameParam(chi.URLParam(r, "username"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid username")
+		return
+	}
+	action := "redis.user.disable"
+	if enabled {
+		action = "redis.user.enable"
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), redisUsersTimeout)
+	defer cancel()
+	sess := sessionFrom(r)
+	meta := map[string]any{"username": username}
+	if s.redis == nil {
+		_ = s.audit.Record(sess.Username, action, username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
+		return
+	}
+	user, err := s.redis.SetEnabled(ctx, username, enabled)
+	if err != nil {
+		_ = s.audit.Record(sess.Username, action, username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeRedisEnableError(w, r, err)
+		return
+	}
+	if err := s.audit.Record(sess.Username, action, username, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, redisUserEnableResponse{
+		User:      toRedisUserDetail(user),
+		RequestID: requestID(r),
+	})
+}
+
+func (s *Server) writeRedisEnableError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, redisadmin.ErrProtectedUser):
+		s.writeError(w, r, http.StatusForbidden, CodeProtectedResource, "This Redis user is protected")
+	case errors.Is(err, redisadmin.ErrNotFound):
+		s.writeError(w, r, http.StatusNotFound, CodeNotFound, "Not found")
+	case errors.Is(err, redisadmin.ErrInvalidUsername):
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid username")
+	default:
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
+	}
 }
 
 func (s *Server) writeRedisCreateError(w http.ResponseWriter, r *http.Request, err error) {
