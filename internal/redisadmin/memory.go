@@ -17,9 +17,13 @@ type MemoryClient struct {
 	DBSizeErr       error
 	Size            int64
 	ACLListErr      error
+	ACLListCalls    int
 	ACLLines        []string
 	ACLSetUserErr   error
 	ACLSetUserCalls []ACLSetUserCall
+	ACLDelUserErr   error
+	ACLDelUserN     *int64
+	ACLDelUserCalls []string
 }
 
 func (m *MemoryClient) Ping(context.Context) error {
@@ -44,6 +48,7 @@ func (m *MemoryClient) DBSize(context.Context) (int64, error) {
 }
 
 func (m *MemoryClient) ACLList(context.Context) ([]string, error) {
+	m.ACLListCalls++
 	if m.ACLListErr != nil {
 		return nil, m.ACLListErr
 	}
@@ -208,4 +213,29 @@ func permissionsUpdateGrants(rules []string) (string, []string, bool) {
 		return "", nil, false
 	}
 	return pattern, cmds, true
+}
+
+func (m *MemoryClient) ACLDelUser(_ context.Context, username string) (int64, error) {
+	m.ACLDelUserCalls = append(m.ACLDelUserCalls, username)
+	if m.ACLDelUserErr != nil {
+		return 0, m.ACLDelUserErr
+	}
+	if m.ACLDelUserN != nil {
+		return *m.ACLDelUserN, nil
+	}
+	kept := make([]string, 0, len(m.ACLLines))
+	found := false
+	for _, existing := range m.ACLLines {
+		fields := strings.Fields(existing)
+		if len(fields) >= 2 && fields[0] == "user" && fields[1] == username {
+			found = true
+			continue
+		}
+		kept = append(kept, existing)
+	}
+	if !found {
+		return 0, nil
+	}
+	m.ACLLines = kept
+	return 1, nil
 }

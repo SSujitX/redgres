@@ -51,6 +51,13 @@ func (c goRedisClient) ACLSetUser(ctx context.Context, username string, rules ..
 	return c.inner.ACLSetUser(ctx, username, rules...).Err()
 }
 
+func (c goRedisClient) ACLDelUser(ctx context.Context, username string) (int64, error) {
+	if c.inner == nil {
+		return 0, ErrUnavailable
+	}
+	return c.inner.ACLDelUser(ctx, username).Result()
+}
+
 func Open(_ context.Context, cfg config.Config) (*Service, func(), error) {
 	noop := func() {}
 	if !cfg.RedisConfigured() {
