@@ -2651,8 +2651,8 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
   npm --prefix web run test:run → Tests 213 passed (213)
  Not run: race, live PostgreSQL, COMPATIBILITY.md §6, Playwright, viewport/zoom
 Local commits: `e915912` (freeze), `fea4764` (API), `2a29cf6` (UI),
- `6f55c1d` (merge UI), `7bc2db6` (docs record). Security pin this commit.
- UI/evidence/verifier pending. Not pushed.
+ `6f55c1d` (merge UI), `7bc2db6` (docs record), `05260ce` (security pin).
+ UI/evidence pin this commit. Verifier pending. Not pushed.
 Keep PG-005 Partial. Keep PG-012 Partial. Do not mark Complete.
 ```
 
@@ -2672,6 +2672,27 @@ Reviewer/date: Security review (2026-08-25) on `7bc2db6` approve Partial;
 Keep PG-005 Partial. Keep PG-012 Partial. Gate 4, POST reveal, and
  REDGRES_LEGACY_VAULT_SECRET_FILE remain Complete blockers.
 Not pushed.
+```
+
+## PG-005/PG-012 vault existence UI and evidence pin (2026-08-25)
+
+```text
+Requirement: PG-005/PG-012/PG-002 Partial (vault existence GET; no decrypt/reveal)
+Decision/ADR: ADR-004; freeze `e915912`
+Reviewer/date: UI review (2026-08-25) on `7bc2db6` approve Partial UI;
+ no Critical/High/Medium. Frozen copy holds in source and jsdom. Viewports
+ 360×800 / 768×1024 / 1280×800 / 1600×1000 and 200% zoom not rendered (no
+ browser/Playwright). Explicitly NOT viewport/zoom sign-off. Optional
+ polish (non-blocking, frozen residuals): header “Rotation is not available”
+ vs vault Not available; owner-flag label length; Protected badge margin;
+ no postgres page-header rail.
+ Evidence review (2026-08-25) on `7bc2db6` keep-Partial / reject-Complete.
+ Existence SQL + UI copy only. Full PG-005 still needs masked metadata
+ URLs, POST reveal, Gate 4. Parent-executed: focused Go postgresadmin/
+ httpapi + npm test:run 213. Writer/parent focused timings are attested;
+ go test ./..., race, build, go list at 7bc2db6 remain verifier-required.
+ SOURCE_BASELINE vault-not-started is a known nit; not refreshed.
+Keep PG-005 Partial. Keep PG-012 Partial. Verifier pending. Not pushed.
 ```
 
 
