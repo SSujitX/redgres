@@ -14,6 +14,7 @@ const truncatedCopy = "Security overview truncated at 500 databases or connectio
 
 type OverviewData = {
   summary: PostgresSecuritySummary;
+  savedCredentialStatus?: string;
   databases: PostgresSecurityDatabase[];
   connections: PostgresSecurityConnection[];
   truncated: boolean;
@@ -97,6 +98,7 @@ function parseSummary(raw: unknown): PostgresSecuritySummary {
     public_connect_count: finiteNumber(record.public_connect_count),
     active_connection_count: finiteNumber(record.active_connection_count),
     connection_group_count: finiteNumber(record.connection_group_count),
+    missing_password_count: finiteNumber(record.missing_password_count),
   };
 }
 
@@ -137,6 +139,7 @@ export default function SecurityOverview() {
             kind: "ok",
             data: {
               summary: parseSummary(result.body.summary),
+              savedCredentialStatus: result.body.saved_credential?.status,
               databases: result.body.databases.flatMap((row) => {
                 const parsed = parseDatabase(row);
                 return parsed ? [parsed] : [];
@@ -171,8 +174,8 @@ export default function SecurityOverview() {
       <header className="page-header">
         <h1>Security overview</h1>
         <p>
-          All non-template databases, including protected names. Saved credentials are not loaded in this
-          slice. Rotation is not available.
+          All non-template databases, including protected names. Passwords are not revealed. Rotation is
+          not available.
         </p>
       </header>
       {alertCopy ? (
@@ -198,7 +201,15 @@ function OverviewBody({ data }: { data: OverviewData }) {
         <Fact label="PUBLIC CONNECT" value={metricText(data.summary.public_connect_count)} metric />
         <Fact label="Active connections" value={metricText(data.summary.active_connection_count)} metric />
         <Fact label="Connection groups" value={metricText(data.summary.connection_group_count)} metric />
-        <Fact label="Saved credential" value="Not available" />
+        {data.savedCredentialStatus === "ok" ? (
+          <Fact
+            label="Missing vault entries"
+            value={metricText(data.summary.missing_password_count)}
+            metric
+          />
+        ) : (
+          <Fact label="Saved credential" value="Not available" />
+        )}
       </dl>
       {data.truncated ? (
         <p className="form-warning" role="alert">

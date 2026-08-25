@@ -95,6 +95,7 @@ export type PostgresSecuritySummary = {
   public_connect_count?: number;
   active_connection_count?: number;
   connection_group_count?: number;
+  missing_password_count?: number;
 };
 
 export type PostgresSecurityDatabase = {
