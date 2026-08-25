@@ -2,6 +2,7 @@ package postgresadmin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -72,6 +73,9 @@ func TestServiceUnavailableWithoutCatalog(t *testing.T) {
 	}
 	if _, err := svc.SecurityOverview(context.Background()); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("security: %v", err)
+	}
+	if _, err := svc.Connection(context.Background(), "project_a"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("connection: %v", err)
 	}
 	var nilSvc *Service
 	if _, err := nilSvc.SecurityOverview(context.Background()); !errors.Is(err, ErrUnavailable) {
@@ -197,6 +201,9 @@ func TestServiceRejectsInvalidDetailsName(t *testing.T) {
 	}
 	if _, err := svc.Rows(context.Background(), "bad-name", "public", "items", "", 0, 50); !errors.Is(err, ErrInvalidIdentifier) {
 		t.Fatalf("rows db: %v", err)
+	}
+	if _, err := svc.Connection(context.Background(), "bad-name"); !errors.Is(err, ErrInvalidIdentifier) {
+		t.Fatalf("connection: %v", err)
 	}
 }
 
@@ -713,6 +720,91 @@ func TestMapCatalogErrorDoesNotPromoteVaultToUnavailable(t *testing.T) {
 	}
 	if errors.Is(mapCatalogError(ErrVaultUnavailable), ErrUnavailable) {
 		t.Fatal("must stay distinct from ErrUnavailable")
+	}
+}
+
+func TestServiceConnectionSavedCredentialPresent(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows:       []CatalogRow{projectRow("project_a", "project_a_role")},
+		SavedRoles: []string{"project_a_role", "other_role"},
+	}, NewPolicy(config.Config{}))
+	got, err := svc.Connection(context.Background(), "project_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Database != "project_a" || got.Owner != "project_a_role" {
+		t.Fatalf("connection = %#v", got)
+	}
+	if got.SavedCredential.Status != "present" || got.SavedCredential.Reason != "" {
+		t.Fatalf("credential = %#v", got.SavedCredential)
+	}
+	assertConnectionHasNoURLFields(t, got)
+}
+
+func TestServiceConnectionSavedCredentialMissing(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows: []CatalogRow{projectRow("project_a", "project_a_role")},
+	}, NewPolicy(config.Config{}))
+	got, err := svc.Connection(context.Background(), "project_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SavedCredential.Status != "missing" || got.SavedCredential.Reason != "" {
+		t.Fatalf("credential = %#v", got.SavedCredential)
+	}
+	assertConnectionHasNoURLFields(t, got)
+}
+
+func TestServiceConnectionVaultUnavailable(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows:     []CatalogRow{projectRow("project_a", "project_a_role")},
+		VaultErr: ErrVaultUnavailable,
+	}, NewPolicy(config.Config{}))
+	got, err := svc.Connection(context.Background(), "project_a")
+	if err != nil {
+		t.Fatalf("must not fail connection: %v", err)
+	}
+	if got.SavedCredential.Status != "not_available" || got.SavedCredential.Reason != "vault_unavailable" {
+		t.Fatalf("credential = %#v", got.SavedCredential)
+	}
+	assertConnectionHasNoURLFields(t, got)
+}
+
+func TestServiceConnectionCollapsesProtectedAndMissing(t *testing.T) {
+	svc := testService([]CatalogRow{projectRow("project_a", "project_a_role")})
+	for _, name := range []string{"postgres", "template0", "template1", "database_console_vault", "missing_db"} {
+		_, err := svc.Connection(context.Background(), name)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestServiceConnectionRejectsInvalidName(t *testing.T) {
+	svc := testService(nil)
+	if _, err := svc.Connection(context.Background(), "bad-name"); !errors.Is(err, ErrInvalidIdentifier) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func assertConnectionHasNoURLFields(t *testing.T, got Connection) {
+	t.Helper()
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{
+		"masked_direct_url", "masked_pooled_url", "direct_url", "pooled_url",
+		"url", "raw_url", "masked_url", "username", "has_saved_password",
+		"credential_status", "password",
+	} {
+		if _, ok := body[key]; ok {
+			t.Fatalf("connection must not include %s: %s", key, raw)
+		}
 	}
 }
 

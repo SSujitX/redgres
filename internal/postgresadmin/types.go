@@ -42,6 +42,7 @@ type Inventory interface {
 	Tables(ctx context.Context, name string) (TableListResult, error)
 	Rows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
 	SecurityOverview(ctx context.Context) (SecurityOverview, error)
+	Connection(ctx context.Context, name string) (Connection, error)
 	Ping(ctx context.Context) error
 	PingPooled(ctx context.Context) error
 }
@@ -77,6 +78,12 @@ type SecurityStatus struct {
 type SavedCredential struct {
 	Status string `json:"status"`
 	Reason string `json:"reason"`
+}
+
+type Connection struct {
+	Database        string          `json:"database"`
+	Owner           string          `json:"owner"`
+	SavedCredential SavedCredential `json:"saved_credential"`
 }
 
 type DatabaseDetails struct {

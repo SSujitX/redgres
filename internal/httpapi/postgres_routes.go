@@ -52,6 +52,44 @@ func (s *Server) handlePostgresDatabase(w http.ResponseWriter, r *http.Request) 
 	s.writeJSON(w, r, http.StatusOK, postgresDetailsBody{Database: details, RequestID: requestID(r)})
 }
 
+type postgresConnectionBody struct {
+	postgresadmin.Connection
+	MaskedDirectURL string `json:"masked_direct_url,omitempty"`
+	MaskedPooledURL string `json:"masked_pooled_url,omitempty"`
+	RequestID       string `json:"request_id"`
+}
+
+func (s *Server) handlePostgresConnection(w http.ResponseWriter, r *http.Request) {
+	name, err := decodePathIdentifier(chi.URLParam(r, "db"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid database name")
+		return
+	}
+	if s.postgres == nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	conn, err := s.postgres.Connection(r.Context(), name)
+	if err != nil {
+		s.writePostgresError(w, r, err)
+		return
+	}
+	body := postgresConnectionBody{Connection: conn, RequestID: requestID(r)}
+	if conn.SavedCredential.Status == "present" {
+		if s.cfg.PostgresPublicHost != "" && s.cfg.PostgresDirectPort != "" {
+			if u, urlErr := postgresadmin.MaskedProjectConnectionURL(s.cfg.PostgresPublicHost, s.cfg.PostgresDirectPort, conn.Owner, conn.Database); urlErr == nil {
+				body.MaskedDirectURL = u
+			}
+		}
+		if s.cfg.PostgresPublicHost != "" && s.cfg.PostgresPooledPort != "" {
+			if u, urlErr := postgresadmin.MaskedProjectConnectionURL(s.cfg.PostgresPublicHost, s.cfg.PostgresPooledPort, conn.Owner, conn.Database); urlErr == nil {
+				body.MaskedPooledURL = u
+			}
+		}
+	}
+	s.writeJSON(w, r, http.StatusOK, body)
+}
+
 type postgresTablesBody struct {
 	postgresadmin.TableListResult
 	RequestID string `json:"request_id"`
