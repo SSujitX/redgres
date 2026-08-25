@@ -1755,8 +1755,8 @@ Source: redis-ui CommandsForPreset / BuildACLRules / CreateUser /
  Custom deny-list + arbitrary commands were not copied. inspect* membership
  unchanged. Compatibility research (2026-08-25): all 115 inspect* names exist
  on Redis 8.2.2 and 8.8.0 official src/commands JSON and are ACL-grantable;
- eight deprecated-but-present commands stay in the frozen sets; 8.8-only
- XNACK/XDELEX/XACKDEL not added.
+ eight deprecated-but-present commands stay in the frozen sets;
+ XNACK (8.8), XDELEX (8.2), and XACKDEL (8.2) were not added.
 Implementation files: internal/redisadmin/{service.go,presets.go,errors.go,
  create_test.go,presets_catalog_test.go};
  internal/httpapi/{server.go,redis_users_routes.go,redis_users_routes_test.go,
@@ -1772,7 +1772,9 @@ Unit/HTTP: five named SETUSER +CMD sets equal inspect slices; omitted
 Frontend: Preset select defaults Cache read/write; Queue type only for
  queue-worker; POST {username, key_pattern, preset}; queue_kind only when
  queue-worker; never password/commands/custom; ticket unchanged; create
- hidden when degraded; no presets nav page.
+ hidden when degraded. Create does not fetch GET /presets. Nested
+ Permission presets nav item remains the Wave 0 placeholder (does not
+ call the catalog).
 Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  Writer API worktree feat/redis-004-presets-api `8846d7f`:
   go test -count=1 ./internal/redisadmin ./internal/httpapi
@@ -1797,9 +1799,16 @@ Not run by parent: live Redis, COMPATIBILITY.md §6, gitleaks, govulncheck,
 Known limitations: SETUSER-then-audit-fail leftover user; LIST/SETUSER
  race; no representative workload tests; no viewport sign-off; REDIS-003/007
  UI Medium residuals unchanged.
-Reviewer/date: pending parent security + UI + evidence + verifier.
- Local commits: `8846d7f` (API), `b7f905f` (UI), `7ca8c93` (merge UI).
- Not pushed. Keep REDIS-004 Partial.
+ UI Medium residuals this slice (not reject): new selects lack shared
+ --focus ring; / and Ctrl/Cmd+K still fire on a focused select.
+Reviewer/date: Security review (2026-08-25) approve Partial; no
+ Critical/High/Medium. Reject gates held. UI review (2026-08-25) approve
+ Partial UI; no Critical/High. Explicitly NOT viewport/zoom sign-off.
+ Evidence review (2026-08-25) keep-Partial; no required corrections.
+ Writer-only ./... / vet / build and UI npm build are not parent-after-merge
+ re-runs of those exact commands. Verifier pending this pin commit.
+ Local commits: `8846d7f` (API), `b7f905f` (UI), `7ca8c93` (merge UI),
+ `1d48e8f` (docs record). Not pushed. Keep REDIS-004 Partial.
 ```
 
 
