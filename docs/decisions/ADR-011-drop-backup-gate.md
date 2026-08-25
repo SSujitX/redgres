@@ -21,8 +21,8 @@ This slice defines schema **v1** types plus path-jail parse and a pure `Evaluate
 - `cluster.system_identifier` is a decimal string. The live value is supplied by the caller later from official PostgreSQL `pg_control_system()` ([17](https://www.postgresql.org/docs/17/functions-admin.html), [18](https://www.postgresql.org/docs/18/functions-admin.html)). This slice does not query PostgreSQL.
 - PostgreSQL target artifact for DROP of database `D`: `kind=postgres.database`, `name=D`, `sha256` 64 lowercase hex, `size_bytes` ≥ 0, `path` relative and jail-local.
 - `off_host.completed=true` and `copied_at` ≥ `completed_at` for **this** set. Off-host age is **not** a second 24h window.
-- Restore evidence: `restore.isolated=true`, `restore.outcome=succeeded`, `restore.backup_set_id` equals the set id, `restore.completed_at` ≤30d.
-- Fail closed if any required field is missing, extra JSON fields are present, or identity does not match.
+- Restore evidence: `restore.isolated=true`, `restore.outcome=succeeded`, `restore.backup_set_id` equals the set id, `restore.completed_at` non-zero and ≤30d at evaluation time.
+- Evaluation `Now` must be non-zero. Fail closed if `Now` is the zero time, restore `completed_at` is zero, any required field is missing, extra JSON fields are present, or identity does not match.
 
 Truncate and row-delete stay ungated.
 

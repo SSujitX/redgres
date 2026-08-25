@@ -112,6 +112,40 @@ func TestEvaluateDropGateAgeBoundaries(t *testing.T) {
 	})
 }
 
+func TestEvaluateDropGateFailsClosedOnZeroTimes(t *testing.T) {
+	base := mustParse(t, "valid-fresh.json")
+
+	t.Run("zero Now", func(t *testing.T) {
+		result := EvaluateDropGate(DropGateInput{
+			Database:         "appdb",
+			SystemIdentifier: "7439123456789012345",
+			Manifest:         base,
+		})
+		if result.Allowed {
+			t.Fatal("Allowed = true with zero Now")
+		}
+		if result.Reason != reasonInvalidManifest {
+			t.Fatalf("Reason = %q, want %q", result.Reason, reasonInvalidManifest)
+		}
+	})
+	t.Run("zero restore completed_at", func(t *testing.T) {
+		manifest := base
+		manifest.Restore.CompletedAt = time.Time{}
+		result := EvaluateDropGate(DropGateInput{
+			Database:         "appdb",
+			SystemIdentifier: "7439123456789012345",
+			Now:              evalNow,
+			Manifest:         manifest,
+		})
+		if result.Allowed {
+			t.Fatal("Allowed = true with zero restore completed_at")
+		}
+		if result.Reason != reasonRestore {
+			t.Fatalf("Reason = %q, want %q", result.Reason, reasonRestore)
+		}
+	})
+}
+
 func TestEvaluateDropGateRejectsTraversalWithoutLeakingPath(t *testing.T) {
 	manifest := mustParse(t, "valid-fresh.json")
 	manifest.Artifacts[0].Path = "../escape.dump"

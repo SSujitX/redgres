@@ -10,7 +10,7 @@ const (
 )
 
 func EvaluateDropGate(input DropGateInput) DropGateResult {
-	if validateManifestStructure(input.Manifest) != nil {
+	if input.Now.IsZero() || validateManifestStructure(input.Manifest) != nil {
 		return denied(reasonInvalidManifest)
 	}
 	if input.Now.Sub(input.Manifest.CompletedAt) > BackupMaxAge {
@@ -29,6 +29,7 @@ func EvaluateDropGate(input DropGateInput) DropGateResult {
 	if !restore.Isolated ||
 		restore.Outcome != RestoreOutcomeSucceeded ||
 		restore.BackupSetID != input.Manifest.BackupSetID ||
+		restore.CompletedAt.IsZero() ||
 		input.Now.Sub(restore.CompletedAt) > RestoreMaxAge {
 		return denied(reasonRestore)
 	}
