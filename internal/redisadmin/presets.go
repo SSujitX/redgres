@@ -1,6 +1,7 @@
 package redisadmin
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -21,6 +22,8 @@ const (
 	maxACLUsers    = 500
 	maxACLCommands = 256
 )
+
+var allowedCommandNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 var inspectConnectionSafe = []string{"ping", "echo", "hello", "quit"}
 
@@ -83,6 +86,59 @@ func NamedPresets() []NamedPreset {
 		{Preset: PresetQueueWorker, QueueKind: QueueStreams, Commands: cloneStrings(inspectQueueStreams)},
 		{Preset: PresetQueueWorker, QueueKind: QueueSortedSets, Commands: cloneStrings(inspectQueueSortedSets)},
 	}
+}
+
+func AllowedCommands() []string {
+	var all []string
+	for _, p := range NamedPresets() {
+		all = append(all, p.Commands...)
+	}
+	out := uniqueSorted(all)
+	if out == nil {
+		out = []string{}
+	}
+	return out
+}
+
+func resolveUpdateGrants(preset, queueKind string, commands []string) ([]string, error) {
+	if preset == "" {
+		return nil, ErrInvalidPreset
+	}
+	normalized := uniqueSorted(commands)
+	if preset == PresetCustom {
+		if queueKind != "" {
+			return nil, ErrInvalidQueueKind
+		}
+		return resolveCustomCommands(commands)
+	}
+	if len(normalized) > 0 {
+		return nil, ErrInvalidCommands
+	}
+	_, cmds, err := resolveNamedPreset(preset, queueKind)
+	return cmds, err
+}
+
+func resolveCustomCommands(commands []string) ([]string, error) {
+	if len(commands) > maxACLCommands {
+		return nil, ErrInvalidCommands
+	}
+	normalized := uniqueSorted(commands)
+	if len(normalized) < 1 || len(normalized) > maxACLCommands {
+		return nil, ErrInvalidCommands
+	}
+	allowed := map[string]struct{}{}
+	for _, cmd := range AllowedCommands() {
+		allowed[cmd] = struct{}{}
+	}
+	for _, cmd := range normalized {
+		if !allowedCommandNameRe.MatchString(cmd) {
+			return nil, ErrInvalidCommands
+		}
+		if _, ok := allowed[cmd]; !ok {
+			return nil, ErrInvalidCommands
+		}
+	}
+	return normalized, nil
 }
 
 func cloneStrings(in []string) []string {

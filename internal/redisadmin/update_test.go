@@ -27,7 +27,7 @@ func TestUpdatePermissionsNamedPresetsGrantMatchingInspectSets(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mem := &MemoryClient{ACLLines: []string{updateACLLine}}
 			svc := NewService(mem)
-			got, err := svc.UpdatePermissions(context.Background(), "project_a", "other_app", tc.preset, tc.queueKind)
+			got, err := svc.UpdatePermissions(context.Background(), "project_a", "other_app", tc.preset, tc.queueKind, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -55,7 +55,7 @@ func TestUpdatePermissionsNamedPresetsGrantMatchingInspectSets(t *testing.T) {
 func TestUpdatePermissionsPreservesEnabledAndHash(t *testing.T) {
 	mem := &MemoryClient{ACLLines: []string{updateACLLine}}
 	svc := NewService(mem)
-	got, err := svc.UpdatePermissions(context.Background(), "project_a", "project_b", PresetReadOnly, "")
+	got, err := svc.UpdatePermissions(context.Background(), "project_a", "project_b", PresetReadOnly, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestUpdatePermissionsUpdatesCustomLimitedAndDisabled(t *testing.T) {
 	if limitedBefore.Preset != PresetCustom || limitedBefore.RuleFidelity != RuleLimited {
 		t.Fatalf("limited inspect = %#v", limitedBefore)
 	}
-	limited, err := svc.UpdatePermissions(context.Background(), "limited", "limited", PresetCacheReadWrite, "")
+	limited, err := svc.UpdatePermissions(context.Background(), "limited", "limited", PresetCacheReadWrite, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestUpdatePermissionsUpdatesCustomLimitedAndDisabled(t *testing.T) {
 	if customBefore.Preset != PresetCustom {
 		t.Fatalf("custom preset = %q", customBefore.Preset)
 	}
-	custom, err := svc.UpdatePermissions(context.Background(), "custom", "custom", PresetReadOnly, "")
+	custom, err := svc.UpdatePermissions(context.Background(), "custom", "custom", PresetReadOnly, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestUpdatePermissionsUpdatesCustomLimitedAndDisabled(t *testing.T) {
 		t.Fatalf("custom after patch = %#v", custom)
 	}
 
-	disabled, err := svc.UpdatePermissions(context.Background(), "disabled", "project_b", PresetReadOnly, "")
+	disabled, err := svc.UpdatePermissions(context.Background(), "disabled", "project_b", PresetReadOnly, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestUpdatePermissionsRejectsProtectedWithoutSetUser(t *testing.T) {
 	}}
 	svc := NewServiceAdmin(mem, "ops_admin")
 	for _, name := range []string{"default", "admin", "redact_admin", "ops_admin", "OPS_ADMIN"} {
-		if _, err := svc.UpdatePermissions(context.Background(), name, "project_a", PresetReadOnly, ""); !errors.Is(err, ErrProtectedUser) {
+		if _, err := svc.UpdatePermissions(context.Background(), name, "project_a", PresetReadOnly, "", nil); !errors.Is(err, ErrProtectedUser) {
 			t.Fatalf("%s err = %v", name, err)
 		}
 	}
@@ -144,7 +144,7 @@ func TestUpdatePermissionsRejectsProtectedWithoutSetUser(t *testing.T) {
 func TestUpdatePermissionsMissingUserDoesNotSetUser(t *testing.T) {
 	mem := &MemoryClient{ACLLines: []string{"user project_a on ~project_a:* -@all +ping"}}
 	svc := NewService(mem)
-	if _, err := svc.UpdatePermissions(context.Background(), "missing", "project_a", PresetReadOnly, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.UpdatePermissions(context.Background(), "missing", "project_a", PresetReadOnly, "", nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v", err)
 	}
 	if len(mem.ACLSetUserCalls) != 0 {
@@ -155,7 +155,7 @@ func TestUpdatePermissionsMissingUserDoesNotSetUser(t *testing.T) {
 func TestUpdatePermissionsEmptyPresetDoesNotDefault(t *testing.T) {
 	mem := &MemoryClient{ACLLines: []string{updateACLLine}}
 	svc := NewService(mem)
-	if _, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", "", ""); !errors.Is(err, ErrInvalidPreset) {
+	if _, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", "", "", nil); !errors.Is(err, ErrInvalidPreset) {
 		t.Fatalf("err = %v", err)
 	}
 	if len(mem.ACLSetUserCalls) != 0 {
@@ -175,20 +175,23 @@ func TestUpdatePermissionsRejectsCustomUnknownAndQueueKindMismatch(t *testing.T)
 		name      string
 		preset    string
 		queueKind string
+		commands  []string
 		want      error
 	}{
-		{name: "custom", preset: PresetCustom, want: ErrInvalidPreset},
+		{name: "custom-empty", preset: PresetCustom, want: ErrInvalidCommands},
 		{name: "unknown", preset: "not-a-preset", want: ErrInvalidPreset},
 		{name: "queue-missing-kind", preset: PresetQueueWorker, want: ErrInvalidQueueKind},
 		{name: "queue-bad-kind", preset: PresetQueueWorker, queueKind: "jobs", want: ErrInvalidQueueKind},
 		{name: "cache-with-kind", preset: PresetCacheReadWrite, queueKind: QueueLists, want: ErrInvalidQueueKind},
 		{name: "readonly-with-kind", preset: PresetReadOnly, queueKind: QueueStreams, want: ErrInvalidQueueKind},
+		{name: "named-with-commands", preset: PresetReadOnly, commands: []string{"get"}, want: ErrInvalidCommands},
+		{name: "custom-with-kind", preset: PresetCustom, queueKind: QueueLists, commands: []string{"ping"}, want: ErrInvalidQueueKind},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			mem := &MemoryClient{ACLLines: []string{updateACLLine}}
 			svc := NewService(mem)
-			_, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", tc.preset, tc.queueKind)
+			_, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", tc.preset, tc.queueKind, tc.commands)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v want %v", err, tc.want)
 			}
@@ -202,11 +205,11 @@ func TestUpdatePermissionsRejectsCustomUnknownAndQueueKindMismatch(t *testing.T)
 func TestUpdatePermissionsIdempotentStillSetUser(t *testing.T) {
 	mem := &MemoryClient{ACLLines: []string{updateACLLine}}
 	svc := NewService(mem)
-	first, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", PresetReadOnly, "")
+	first, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", PresetReadOnly, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", PresetReadOnly, "")
+	second, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", PresetReadOnly, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +228,7 @@ func TestUpdatePermissionsMapsSetUserModifierErrorWithoutCanary(t *testing.T) {
 		ACLSetUserErr: errors.New("ERR Error in ACL SETUSER modifier '>canary-secret': Syntax error"),
 	}
 	svc := NewService(mem)
-	_, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", PresetReadOnly, "")
+	_, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", PresetReadOnly, "", nil)
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v", err)
 	}
@@ -236,7 +239,7 @@ func TestUpdatePermissionsMapsSetUserModifierErrorWithoutCanary(t *testing.T) {
 
 func TestUpdatePermissionsNilClientIsNotConfigured(t *testing.T) {
 	svc := NewService(nil)
-	if _, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", PresetReadOnly, ""); !errors.Is(err, ErrNotConfigured) {
+	if _, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", PresetReadOnly, "", nil); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("err = %v", err)
 	}
 }

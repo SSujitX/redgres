@@ -12,6 +12,7 @@ var (
 	ErrInvalidPrefix    = errors.New("invalid key prefix")
 	ErrInvalidPreset    = errors.New("invalid preset")
 	ErrInvalidQueueKind = errors.New("invalid queue kind")
+	ErrInvalidCommands  = errors.New("invalid commands")
 	ErrProtectedUser    = errors.New("protected resource")
 	ErrConflict         = errors.New("conflict")
 )

@@ -229,12 +229,13 @@ Database/role names in URL segments are decoded then validated. Transport valida
 | GET | `/api/v1/redis/users` | ACL user list (implemented; inspect-only) |
 | GET | `/api/v1/redis/users/{username}` | ACL user inspect (implemented; inspect-only) |
 | POST | `/api/v1/redis/users` | Create isolated named-preset user (`cache-read-write` default); one-time credential; `no-store` (implemented) |
-| PATCH | `/api/v1/redis/users/{username}` | Named-preset prefix and grants; password unchanged (implemented) |
+| PATCH | `/api/v1/redis/users/{username}` | Named-preset or custom allow-list prefix/grants; password unchanged (implemented) |
 | POST | `/api/v1/redis/users/{username}/enable` | Enable (implemented) |
 | POST | `/api/v1/redis/users/{username}/disable` | Disable (implemented) |
 | POST | `/api/v1/redis/users/{username}/credentials/rotate` | One-time credential; `no-store` (implemented) |
 | DELETE | `/api/v1/redis/users/{username}` | Exact confirmation + owner password |
 | GET | `/api/v1/redis/presets` | Versioned named presets/commands for UI/docs (implemented; no Redis) |
+| GET | `/api/v1/redis/commands` | Unique-sorted union of named-preset commands (implemented; no Redis) |
 
 There is no generic Redis command endpoint.
 
@@ -271,7 +272,7 @@ Success `200` when Redis is reachable:
 
 GET `/api/v1/status` is unchanged: Redis there remains Ping-only, with `reason` only `unreachable`, and no version/uptime/metrics.
 
-**GET `/api/v1/redis/users`** and **GET `/api/v1/redis/users/{username}`** require a session cookie and the `redis.read` capability, and do not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny these routes today; the session check is what enforces access. Paths are exact. The probe uses a 2s timeout. Responses are `Cache-Control: no-store`. These GETs are not mutations and do not write an audit event. `PUT`, `PATCH`, and `DELETE` on `/api/v1/redis/users` are `405` `method_not_allowed`. `POST`, `PUT`, and `DELETE` on `/api/v1/redis/users/{username}` are `405` `method_not_allowed`. `PATCH` on `/api/v1/redis/users/{username}` is the named-preset permissions update. Missing session is `401` `unauthorized` with no `state`, `users`, `user`, `reason`, or `credential` keys. The GET adapter issues Redis `ACL LIST` only (go-redis `ACLList`). It does not call `ACL GETUSER` or `ACL USERS`.
+**GET `/api/v1/redis/users`** and **GET `/api/v1/redis/users/{username}`** require a session cookie and the `redis.read` capability, and do not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny these routes today; the session check is what enforces access. Paths are exact. The probe uses a 2s timeout. Responses are `Cache-Control: no-store`. These GETs are not mutations and do not write an audit event. `PUT`, `PATCH`, and `DELETE` on `/api/v1/redis/users` are `405` `method_not_allowed`. `POST`, `PUT`, and `DELETE` on `/api/v1/redis/users/{username}` are `405` `method_not_allowed`. `PATCH` on `/api/v1/redis/users/{username}` is the named-preset or custom allow-list permissions update. Missing session is `401` `unauthorized` with no `state`, `users`, `user`, `reason`, or `credential` keys. The GET adapter issues Redis `ACL LIST` only (go-redis `ACLList`). It does not call `ACL GETUSER` or `ACL USERS`.
 
 The handlers always return `200` when they run against a configured or unconfigured adapter, even if Redis is down, except for missing users (`404`) and invalid usernames (`400`). Redis failure is `state` `unavailable`; it is not a `503`. `503` `dependency_unavailable` happens only when `requireSession` cannot read SQLite. Responses never include `err.Error()`, host, URL, `acl_rule`, password, passwords, hash, raw ACL line, or `nopass` as a credential.
 
@@ -366,9 +367,9 @@ Success `201` when `SETUSER` succeeded:
 
 The action is `redis.user.create`; target is the username; outcome is success or failure; metadata is `username`, `preset` (the actual named preset), and `key_pattern`, plus `queue_kind` only when the actual preset is `queue-worker`. Passwords, URLs, CSRF values, and `>` modifiers are never audited. If `SETUSER` succeeds but the audit insert fails, the handler returns `503` and does not return the credential. If `SETUSER` fails, a failure audit is written and the client receives typed `503` `dependency_unavailable` only — never Redis `ERR` text, `err.Error()`, or a `>password` modifier.
 
-**PATCH `/api/v1/redis/users/{username}`** requires a session cookie, the `redis.provision` capability, and CSRF (`requireMutation`). It is not `redis.destructive` and does not require owner reauthentication. Username path validation matches GET inspect (`parseRedisUsernameParam`: 1–64 `[A-Za-z0-9_-]`), not the create regex. Invalid usernames return `400` `validation_error` without querying Redis, without writing audit, and without echoing the raw parameter. The probe uses a 2s timeout. `DisallowUnknownFields` applies. The body may contain only `key_pattern` (required, `NormalizePrefix`), `preset` (required: `cache-read-write` | `read-only` | `queue-worker`), and `queue_kind` (required iff `preset` is `queue-worker`, forbidden otherwise). Omitted, empty, `custom`, or any other `preset` is `400` with `fields.preset`; empty `preset` does not default to `cache-read-write`. `commands`, `categories`, `username`, `enabled`, and `password` are unknown fields (`400`). `PUT` and `DELETE` on `/api/v1/redis/users/{username}` stay `405`. `PATCH` on the collection stays `405`.
+**PATCH `/api/v1/redis/users/{username}`** requires a session cookie, the `redis.provision` capability, and CSRF (`requireMutation`). It is not `redis.destructive` and does not require owner reauthentication. Username path validation matches GET inspect (`parseRedisUsernameParam`: 1–64 `[A-Za-z0-9_-]`), not the create regex. Invalid usernames return `400` `validation_error` without querying Redis, without writing audit, and without echoing the raw parameter. The probe uses a 2s timeout. `DisallowUnknownFields` applies. The body always requires `key_pattern` (`NormalizePrefix`) and `preset`. Named presets are `cache-read-write` | `read-only` | `queue-worker`; `queue_kind` is required iff `preset` is `queue-worker` and forbidden otherwise. Named bodies omit `commands` or send an empty array; a non-empty `commands` array on a named preset is `400` with `fields.commands`. Custom bodies are `{ "key_pattern", "preset": "custom", "commands": ["echo", "get", "ping"] }` with no `queue_kind`. Empty or omitted `commands` on `custom` is `400` with `fields.commands`. Every custom command is lowercased, trimmed, and unique-sorted; it must match `^[a-z][a-z0-9-]*$` and be in `AllowedCommands()` (the unique-sorted union of `NamedPresets()[].Commands`). `@…`, `+`, `-`, `~`, `>`, `|`, spaces, `reset`, `flushall`, `acl`, `config`, `eval`, and unknown names are `400` `fields.commands` before Redis. Command count after unique-sort is at least 1 and at most `maxACLCommands` (256). Omitted, empty, or any other `preset` is `400` with `fields.preset`; empty `preset` does not default to `cache-read-write`. `categories`, `username`, `enabled`, and `password` remain unknown fields (`400`). `PUT` and `DELETE` on `/api/v1/redis/users/{username}` stay `405`. `PATCH` on the collection stays `405`.
 
-The service is `UpdatePermissions(ctx, username, keyPattern, preset, queueKind string)`. Empty `preset` does not default. Protected names return `403` `protected_resource` without SETUSER. A missing user returns `404` `not_found` with message `Not found` without SETUSER. The adapter loads the user via `ACL LIST` (`GetUser`), then issues one `ACLSetUser` with `resetkeys`, one `~prefix:*`, `resetchannels`, `nocommands`, `-@all`, and `+CMD` (uppercase) for exactly the matching named-preset inspect command set. It does not send `reset`, `resetpass`, `>…`, `on`, or `off`, and does not call `ACL GETUSER`, `ACL USERS`, `ACLGenPass`, generic `Do`, or `CLIENT KILL`. There is no `+@all`. It does not grant ACL/CONFIG/FLUSH/SCRIPT/EVAL. Enabled state and password hashes remain unchanged. `custom` / `limited` / disabled users may be PATCHed to a named preset. The same body still calls SETUSER and still returns `200`.
+The service is `UpdatePermissions(ctx, username, keyPattern, preset, queueKind string, commands []string)`. Empty `preset` does not default. Named presets require empty `commands` (`ErrInvalidCommands` otherwise). `preset` `custom` requires empty `queueKind` and resolves grants only through `AllowedCommands()` (`ErrInvalidCommands` / `ErrInvalidQueueKind` / `ErrInvalidPreset`). Protected names return `403` `protected_resource` without SETUSER. A missing user returns `404` `not_found` with message `Not found` without SETUSER. The adapter loads the user via `ACL LIST` (`GetUser`), then issues one `ACLSetUser` with `resetkeys`, one `~prefix:*`, `resetchannels`, `nocommands`, `-@all`, and `+CMD` (uppercase) for the resolved command set. It does not send `reset`, `resetpass`, `>…`, `on`, or `off`, and does not call `ACL GETUSER`, `ACL USERS`, `ACLGenPass`, generic `Do`, or `CLIENT KILL`. There is no `+@all`. It does not grant ACL/CONFIG/FLUSH/SCRIPT/EVAL. Enabled state and password hashes remain unchanged. `custom` / `limited` / disabled users may be PATCHed to a named preset or to a custom allow-list subset. If a custom command set equals a named inspect set, inspect `preset` may be that named preset; the handler does not force `preset: custom`. The same body still calls SETUSER and still returns `200`.
 
 Success `200` when SETUSER and the success audit both succeed:
 
@@ -385,12 +386,12 @@ Success `200` when SETUSER and the success audit both succeed:
 |---|---|---|
 | 401 | `unauthorized` | Missing session. No `user`. |
 | 403 | `csrf_invalid` | Origin or CSRF failure. |
-| 400 | `validation_error` | Invalid username path (no Redis, no audit, raw param not echoed), unknown field, invalid JSON, or `fields.key_pattern` / `fields.preset` / `fields.queue_kind`. |
+| 400 | `validation_error` | Invalid username path (no Redis, no audit, raw param not echoed), unknown field, invalid JSON, or `fields.key_pattern` / `fields.preset` / `fields.queue_kind` / `fields.commands`. |
 | 403 | `protected_resource` | Reserved or configured administrator. No SETUSER. Failure audit. |
 | 404 | `not_found` | Username absent from `ACL LIST`. Message `Not found`. No SETUSER. Failure audit. |
 | 503 | `dependency_unavailable` | Nil adapter, `ErrNotConfigured`, Redis failure, or audit insert fail after SETUSER. No `reason` key. Never Redis `ERR` / `err.Error()` / `>password`. |
 
-The action is `redis.user.update`; target is the username; metadata is `username`, `preset`, and `key_pattern`, plus `queue_kind` only when the actual preset is `queue-worker`. Passwords, URLs, CSRF values, and `>` modifiers are never audited. If SETUSER succeeds but the audit insert fails, the handler returns `503` and does not return `user`.
+The action is `redis.user.update`; target is the username; metadata is `username`, `preset`, and `key_pattern`, plus `queue_kind` only when the actual preset is `queue-worker`. Passwords, URLs, CSRF values, `>` modifiers, and the command list are never audited. If SETUSER succeeds but the audit insert fails, the handler returns `503` and does not return `user`.
 
 **POST `/api/v1/redis/users/{username}/enable`** and **POST `/api/v1/redis/users/{username}/disable`** require a session cookie, the `redis.provision` capability, and CSRF (`requireMutation`). They are not `redis.destructive`. Username path validation matches GET inspect (`parseRedisUsernameParam`). There is no JSON body. `GET`, `PUT`, `PATCH`, and `DELETE` on these two paths are `405` `method_not_allowed`. `POST /api/v1/redis/users/{username}` (no suffix) stays `405`.
 
@@ -452,6 +453,19 @@ Success `200`:
     { "preset": "queue-worker", "queue_kind": "streams", "commands": ["..."] },
     { "preset": "queue-worker", "queue_kind": "sorted-sets", "commands": ["..."] }
   ],
+  "request_id": "<32 lowercase hex>"
+}
+```
+
+**GET `/api/v1/redis/commands`** requires a session cookie and the `redis.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant, so the session check enforces access today. There is no Redis call and no audit event. The handler returns `200` even when the Redis adapter is nil or not configured. Other methods are `405` `method_not_allowed`. Missing session is `401` `unauthorized` with no `commands` or `state` keys. This GET is not a credential-bearing route.
+
+`commands` is the unique-sorted lowercase union of `NamedPresets()[].Commands` and is byte-equal to `AllowedCommands()`. The array is never `null`. There is no `state`, `reason`, or `preset` key.
+
+Success `200`:
+
+```json
+{
+  "commands": ["append", "bitcount", "bitpos"],
   "request_id": "<32 lowercase hex>"
 }
 ```

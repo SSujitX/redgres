@@ -64,14 +64,20 @@ type redisCreateRequest struct {
 }
 
 type redisPatchRequest struct {
-	KeyPattern string `json:"key_pattern"`
-	Preset     string `json:"preset"`
-	QueueKind  string `json:"queue_kind"`
+	KeyPattern string   `json:"key_pattern"`
+	Preset     string   `json:"preset"`
+	QueueKind  string   `json:"queue_kind"`
+	Commands   []string `json:"commands"`
 }
 
 type redisPresetsBody struct {
 	Presets   []redisadmin.NamedPreset `json:"presets"`
 	RequestID string                   `json:"request_id"`
+}
+
+type redisCommandsBody struct {
+	Commands  []string `json:"commands"`
+	RequestID string   `json:"request_id"`
 }
 
 type redisCreateResource struct {
@@ -159,6 +165,17 @@ func (s *Server) handleRedisPresets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleRedisCommands(w http.ResponseWriter, r *http.Request) {
+	commands := redisadmin.AllowedCommands()
+	if commands == nil {
+		commands = []string{}
+	}
+	s.writeJSON(w, r, http.StatusOK, redisCommandsBody{
+		Commands:  commands,
+		RequestID: requestID(r),
+	})
+}
+
 func (s *Server) handleRedisUsersCreate(w http.ResponseWriter, r *http.Request) {
 	var body redisCreateRequest
 	if err := decodeJSON(r, &body); err != nil {
@@ -233,7 +250,7 @@ func (s *Server) handleRedisUserPatch(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
 		return
 	}
-	user, err := s.redis.UpdatePermissions(ctx, username, body.KeyPattern, body.Preset, body.QueueKind)
+	user, err := s.redis.UpdatePermissions(ctx, username, body.KeyPattern, body.Preset, body.QueueKind, body.Commands)
 	if err != nil {
 		_ = s.audit.Record(sess.Username, "redis.user.update", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
 		s.writeRedisUpdateError(w, r, err)
@@ -367,6 +384,8 @@ func (s *Server) writeRedisUpdateError(w http.ResponseWriter, r *http.Request, e
 		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid preset", map[string]string{"preset": "invalid"})
 	case errors.Is(err, redisadmin.ErrInvalidQueueKind):
 		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid queue kind", map[string]string{"queue_kind": "invalid"})
+	case errors.Is(err, redisadmin.ErrInvalidCommands):
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid commands", map[string]string{"commands": "invalid"})
 	case errors.Is(err, redisadmin.ErrProtectedUser):
 		s.writeError(w, r, http.StatusForbidden, CodeProtectedResource, "This Redis user is protected")
 	case errors.Is(err, redisadmin.ErrNotFound):
@@ -384,7 +403,7 @@ func redisUpdateAuditMeta(username, keyPattern, preset, queueKind string) map[st
 		meta["key_pattern"] = keyPattern
 	}
 	switch preset {
-	case redisadmin.PresetCacheReadWrite, redisadmin.PresetReadOnly:
+	case redisadmin.PresetCacheReadWrite, redisadmin.PresetReadOnly, redisadmin.PresetCustom:
 		if queueKind == "" {
 			meta["preset"] = preset
 		}

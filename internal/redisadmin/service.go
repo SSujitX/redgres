@@ -197,7 +197,11 @@ func (s *Service) GetUser(ctx context.Context, username string) (User, error) {
 	return User{}, ErrNotFound
 }
 
-func (s *Service) UpdatePermissions(ctx context.Context, username, keyPattern, preset, queueKind string) (User, error) {
+func (s *Service) UpdatePermissions(ctx context.Context, username, keyPattern, preset, queueKind string, commands []string) (User, error) {
+	cmds, err := resolveUpdateGrants(preset, queueKind, commands)
+	if err != nil {
+		return User{}, err
+	}
 	adminUser := ""
 	if s != nil {
 		adminUser = s.adminUser
@@ -212,14 +216,7 @@ func (s *Service) UpdatePermissions(ctx context.Context, username, keyPattern, p
 	if err != nil {
 		return User{}, err
 	}
-	if preset == "" {
-		return User{}, ErrInvalidPreset
-	}
-	_, commands, err := resolveNamedPreset(preset, queueKind)
-	if err != nil {
-		return User{}, err
-	}
-	rules := buildUpdateACLRules(pattern, commands)
+	rules := buildUpdateACLRules(pattern, cmds)
 	if err := s.client.ACLSetUser(ctx, username, rules...); err != nil {
 		return User{}, classifyRedisError(err)
 	}

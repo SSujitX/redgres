@@ -2000,11 +2000,11 @@ func TestRedisUserPatchUnknownFieldsAndValidation(t *testing.T) {
 		field string
 	}{
 		{name: "unknown_preset", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"not-a-preset"}`, field: "preset"},
-		{name: "custom_preset", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"custom"}`, field: "preset"},
+		{name: "custom_preset_empty_commands", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"custom"}`, field: "commands"},
 		{name: "empty_preset", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":""}`, field: "preset"},
 		{name: "omitted_preset", path: redisPatchPath, body: `{"key_pattern":"project_a"}`, field: "preset"},
 		{name: "unknown_password", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"read-only","password":"canary-secret"}`},
-		{name: "unknown_commands", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"read-only","commands":["get"]}`},
+		{name: "named_with_commands", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"read-only","commands":["get"]}`, field: "commands"},
 		{name: "unknown_categories", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"read-only","categories":["@string"]}`},
 		{name: "unknown_enabled", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"read-only","enabled":true}`},
 		{name: "unknown_username", path: redisPatchPath, body: `{"username":"other","key_pattern":"project_a","preset":"read-only"}`},
@@ -2042,7 +2042,7 @@ func TestRedisUserPatchUnknownFieldsAndValidation(t *testing.T) {
 	if len(mem.ACLSetUserCalls) != 0 {
 		t.Fatalf("SETUSER on validation reject: %#v", mem.ACLSetUserCalls)
 	}
-	if after := countAuditEvents(t, srv); after != before+8 {
+	if after := countAuditEvents(t, srv); after != before+9 {
 		// path validation and unknown-field/decode errors must not audit; service field errors do.
 		t.Fatalf("audit events = %d -> %d", before, after)
 	}
@@ -2226,6 +2226,12 @@ func TestRedisUserPatchDoesNotBreakSiblingRoutes(t *testing.T) {
 	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/redis/presets", cookie, csrf, ""))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("presets status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/redis/commands", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commands status = %d body = %s", rec.Code, rec.Body.Bytes())
 	}
 
 	rec = httptest.NewRecorder()
