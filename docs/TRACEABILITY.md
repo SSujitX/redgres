@@ -2754,13 +2754,14 @@ HTTP tests: 401/404/400/503; omit rules; no-store; GET without CSRF;
  no canaries; POST /connection 405; POST /connection/reveal unregistered 404
 UI tests: inspector Direct/Pooled URLs + copy; clear on selection/logout;
  401/503; isDetailsUrl excludes /connection; no reason leak; no Reveal
-Integration tests: none — live PostgreSQL not run
+Integration tests: none — live PostgreSQL 17/18 not run
 Security tests: postgres.read; no decrypt; no internal/secrets on path;
  ciphertext SQL unchanged; 401 omits keys
 Deployment/migration impact: none. go.mod unchanged (pgx v5.10.0,
  go-redis v9.22.0). New optional REDGRES_POSTGRES_PUBLIC_HOST /
  REDGRES_POSTGRES_DIRECT_PORT. No REDGRES_LEGACY_VAULT_SECRET_FILE.
-Known limitations: POST reveal, Gate 4, Playwright viewports outstanding;
+Known limitations: POST reveal, Gate 4 copied production ciphertext,
+ live PostgreSQL 17/18, Playwright viewports outstanding;
  POST /connection/reveal is 404 (unregistered) not 405
 Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
  v25.3.0 (not web/.nvmrc 24.19.0):
@@ -2773,7 +2774,8 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
   go build -o NUL ./cmd/redgres → success
  Writer UI feat/pg-004-masked-connection-ui `80c958d`:
   npm --prefix web run test:run → Tests 222 passed (222)
- Parent after merge `60825fd` (docs record this commit):
+ Parent command set executed after merge `60825fd` (docs-only record
+ `22f12f4` does not change behavior):
   gofmt -l internal/postgresadmin internal/httpapi/postgres_routes.go
    internal/httpapi/server.go internal/config → empty
   go test -count=1 ./internal/postgresadmin ./internal/httpapi ./internal/config
@@ -2786,7 +2788,7 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
   go list -m github.com/redis/go-redis/v9 → v9.22.0
   npm --prefix web run test:run → Tests 222 passed (222), 31.82s
 Local commits: `99986a1` (freeze), `20addbf` (API), `80c958d` (UI),
- `7ed29df` (merge API), `60825fd` (merge UI), this docs record.
+ `7ed29df` (merge API), `60825fd` (merge UI), `22f12f4` (docs record).
  Not pushed.
 Keep PG-004 Partial. Keep PG-005 Partial. Do not mark Complete.
 ```
@@ -2808,6 +2810,27 @@ Reviewer/date: Security review (2026-08-25) on `22f12f4` approve Partial;
 Keep PG-004 Partial. Keep PG-005 Partial. POST reveal and Gate 4 remain
  Complete blockers.
 Not pushed.
+```
+
+## PG-004/PG-005 masked connection UI and evidence pin (2026-08-25)
+
+```text
+Requirement: PG-004/PG-005 Partial (GET masked connection metadata; no reveal)
+Decision/ADR: ADR-004; freeze `99986a1`
+Reviewer/date: UI review (2026-08-25) on `22f12f4` approve Partial UI;
+ no Critical/High/Medium. Frozen copy holds in source and jsdom. Copy is
+ click-only text-button; no toast; no Reveal/Rotate/Create; clear on
+ selection/logout; isDetailsUrl excludes /connection; Saved credential
+ stays on details GET. Explicitly NOT viewport/zoom sign-off. Missing
+ evidence (non-blocking): no delayed “Loading connection.” test;
+ Direct-only/Pooled-only rows untested; connection abort race untested.
+ Evidence review (2026-08-25) on `22f12f4` keep-Partial / reject-Complete.
+ Freeze GET connection criteria map to implementation and claimed tests.
+ Required corrections applied in this commit: TRACEABILITY names `22f12f4`
+ as docs-only record; parent commands after `60825fd`; Known limitations
+ include live PostgreSQL 17/18. Reviewers did not re-run tests. Parent
+ broader set at `60825fd` is recorded in `22f12f4`.
+Keep PG-004 Partial. Keep PG-005 Partial. Verifier pending. Not pushed.
 ```
 
 
