@@ -71,6 +71,15 @@ type redisPatchRequest struct {
 	Commands   []string `json:"commands"`
 }
 
+type redisDeleteRequest struct {
+	UsernameConfirmation string `json:"username_confirmation"`
+	OwnerPassword        string `json:"owner_password"`
+}
+
+type redisUserDeleteResponse struct {
+	RequestID string `json:"request_id"`
+}
+
 type redisPresetsBody struct {
 	Presets   []redisadmin.NamedPreset `json:"presets"`
 	RequestID string                   `json:"request_id"`
@@ -319,6 +328,56 @@ func (s *Server) handleRedisUserRotate(w http.ResponseWriter, r *http.Request) {
 		Credential: cred,
 		RequestID:  requestID(r),
 	})
+}
+
+func (s *Server) handleRedisUserDelete(w http.ResponseWriter, r *http.Request) {
+	username, err := parseRedisUsernameParam(chi.URLParam(r, "username"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid username")
+		return
+	}
+	var body redisDeleteRequest
+	if err := decodeJSON(r, &body); err != nil {
+		s.writeDecodeError(w, r, err)
+		return
+	}
+	if body.UsernameConfirmation != username {
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Type the exact Redis username to confirm deletion", map[string]string{"username_confirmation": "invalid"})
+		return
+	}
+	sess := sessionFrom(r)
+	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword); err != nil {
+		switch {
+		case errors.Is(err, auth.ErrReauthRequired):
+			_ = s.audit.Record(sess.Username, "redis.user.delete", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), map[string]any{"username": username})
+			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
+			return
+		case errors.Is(err, auth.ErrUnauthorized):
+			s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, authRequiredMessage)
+			return
+		default:
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), redisUsersTimeout)
+	defer cancel()
+	meta := map[string]any{"username": username}
+	if s.redis == nil {
+		_ = s.audit.Record(sess.Username, "redis.user.delete", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
+		return
+	}
+	if err := s.redis.DeleteUser(ctx, username); err != nil {
+		_ = s.audit.Record(sess.Username, "redis.user.delete", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeRedisEnableError(w, r, err)
+		return
+	}
+	if err := s.audit.Record(sess.Username, "redis.user.delete", username, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, redisUserDeleteResponse{RequestID: requestID(r)})
 }
 
 func (s *Server) handleRedisUserEnable(w http.ResponseWriter, r *http.Request) {

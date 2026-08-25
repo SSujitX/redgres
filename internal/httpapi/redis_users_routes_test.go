@@ -330,7 +330,6 @@ func TestRedisUsersRejectsMutatingMethods(t *testing.T) {
 		{http.MethodDelete, "/api/v1/redis/users"},
 		{http.MethodPost, "/api/v1/redis/users/project_a"},
 		{http.MethodPut, "/api/v1/redis/users/project_a"},
-		{http.MethodDelete, "/api/v1/redis/users/project_a"},
 	}
 	for _, tc := range cases {
 		rec := httptest.NewRecorder()
@@ -2400,5 +2399,462 @@ func assertAuditUpdateSafe(t *testing.T, srv *Server, outcome, username, preset,
 		}
 	} else if !strings.Contains(metadata, `"queue_kind":"`+queueKind+`"`) {
 		t.Fatalf("audit missing queue_kind: %s", metadata)
+	}
+}
+
+const (
+	redisDeletePath        = "/api/v1/redis/users/project_a"
+	redisDeleteCanaryPass  = "wrong-canary-password"
+	redisDeleteConfirmBody = `{"username_confirmation":"project_a","owner_password":"` + ownerPassword + `"}`
+)
+
+func redisDeleteJSON(username, password string) string {
+	return `{"username_confirmation":"` + username + `","owner_password":"` + password + `"}`
+}
+
+func TestRedisUserDeleteRequiresSession(t *testing.T) {
+	srv := testServerWithRedis(t, redisadmin.NewService(&redisadmin.MemoryClient{
+		ACLLines: []string{enableUserACLLine},
+	}))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, redisDeletePath, strings.NewReader(redisDeleteConfirmBody)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"state", "users", "user", "reason", "credential", "ok"} {
+		if _, ok := raw[key]; ok {
+			t.Fatalf("401 leaked %s: %s", key, rec.Body.Bytes())
+		}
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeUnauthorized {
+		t.Fatalf("code = %q", body.Error.Code)
+	}
+}
+
+func TestRedisUserDeleteRequiresCSRF(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, _ := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, "", redisDeleteConfirmBody))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeCSRFInvalid {
+		t.Fatalf("code = %q", body.Error.Code)
+	}
+	if len(mem.ACLDelUserCalls) != 0 {
+		t.Fatalf("DELUSER before CSRF: %#v", mem.ACLDelUserCalls)
+	}
+}
+
+func TestRedisUserDeleteConfirmationMismatchNoAuditNoRedis(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	before := countAuditEvents(t, srv)
+	for _, body := range []string{
+		redisDeleteJSON("project_b", ownerPassword),
+		redisDeleteJSON("", ownerPassword),
+		`{"username_confirmation":"Project_a","owner_password":"` + ownerPassword + `"}`,
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+		}
+		var errBody errorBody
+		if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+			t.Fatal(err)
+		}
+		if errBody.Error.Code != CodeValidationError || errBody.Error.Message != "Type the exact Redis username to confirm deletion" {
+			t.Fatalf("error = %#v", errBody.Error)
+		}
+		if errBody.Error.Fields["username_confirmation"] != "invalid" {
+			t.Fatalf("fields = %#v", errBody.Error.Fields)
+		}
+	}
+	if len(mem.ACLDelUserCalls) != 0 || mem.ACLListCalls != 0 {
+		t.Fatalf("Redis on confirmation fail: del=%#v list=%d", mem.ACLDelUserCalls, mem.ACLListCalls)
+	}
+	if after := countAuditEvents(t, srv); after != before {
+		t.Fatalf("confirmation wrote audit: %d -> %d", before, after)
+	}
+}
+
+func TestRedisUserDeleteUnknownFieldNoRedis(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	before := countAuditEvents(t, srv)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, `{"username_confirmation":"project_a","owner_password":"`+ownerPassword+`","reason":"reauth"}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeValidationError || body.Error.Message != "Unknown field" {
+		t.Fatalf("error = %#v", body.Error)
+	}
+	if len(mem.ACLDelUserCalls) != 0 {
+		t.Fatalf("DELUSER on unknown field: %#v", mem.ACLDelUserCalls)
+	}
+	if after := countAuditEvents(t, srv); after != before {
+		t.Fatalf("unknown field wrote audit: %d -> %d", before, after)
+	}
+}
+
+func TestRedisUserDeleteReauthRequiredAuditsUsernameOnly(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	attemptsBefore := countLoginAttempts(t, srv)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, redisDeleteJSON("project_a", redisDeleteCanaryPass)))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	if rec.Code == http.StatusTooManyRequests {
+		t.Fatal("reauth returned 429")
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeReauthRequired || body.Error.Message != "Owner password is incorrect" {
+		t.Fatalf("error = %#v", body.Error)
+	}
+	raw := rec.Body.String()
+	if strings.Contains(raw, redisDeleteCanaryPass) || strings.Contains(raw, `"ok"`) {
+		t.Fatalf("403 leaked secret or ok: %s", raw)
+	}
+	if len(mem.ACLDelUserCalls) != 0 || mem.ACLListCalls != 0 {
+		t.Fatalf("Redis before successful reauth: del=%#v list=%d", mem.ACLDelUserCalls, mem.ACLListCalls)
+	}
+	assertAuditDeleteSafe(t, srv, "failure", "project_a")
+	var metadata string
+	if err := srv.db.QueryRow(`SELECT metadata FROM audit_events WHERE action = 'redis.user.delete' ORDER BY id DESC LIMIT 1`).Scan(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(metadata, redisDeleteCanaryPass) || strings.Contains(metadata, `"reason"`) || strings.Contains(metadata, "reauth") {
+		t.Fatalf("audit metadata = %s", metadata)
+	}
+	if after := countLoginAttempts(t, srv); after != attemptsBefore {
+		t.Fatalf("login_attempts changed %d -> %d", attemptsBefore, after)
+	}
+	for i := 0; i < 6; i++ {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, redisDeleteJSON("project_a", redisDeleteCanaryPass)))
+		if rec.Code == http.StatusTooManyRequests {
+			t.Fatalf("reauth 429 on attempt %d", i)
+		}
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("repeat reauth status = %d", rec.Code)
+		}
+	}
+	if after := countLoginAttempts(t, srv); after != attemptsBefore {
+		t.Fatalf("repeated reauth incremented login_attempts: %d -> %d", attemptsBefore, after)
+	}
+}
+
+func TestRedisUserDeleteProtectedNoDelUser(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{
+		"user default on nopass ~* &* +@all",
+		"user admin on ~* -@all +ping",
+		"user ops_admin on ~* -@all +ping",
+	}}
+	srv := testServerWithRedis(t, redisadmin.NewServiceAdmin(mem, "ops_admin"))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	for _, name := range []string{"admin", "ops_admin"} {
+		listBefore := mem.ACLListCalls
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodDelete, "/api/v1/redis/users/"+name, cookie, csrf, redisDeleteJSON(name, ownerPassword)))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s status = %d body = %s", name, rec.Code, rec.Body.Bytes())
+		}
+		var body errorBody
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error.Code != CodeProtectedResource || body.Error.Message != "This Redis user is protected" {
+			t.Fatalf("%s error = %#v", name, body.Error)
+		}
+		assertAuditDeleteSafe(t, srv, "failure", name)
+		if mem.ACLListCalls != listBefore {
+			t.Fatalf("%s ACL LIST on protected", name)
+		}
+	}
+	if len(mem.ACLDelUserCalls) != 0 {
+		t.Fatalf("DELUSER on protected: %#v", mem.ACLDelUserCalls)
+	}
+}
+
+func TestRedisUserDeleteNotFound(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodDelete, "/api/v1/redis/users/missing", cookie, csrf, redisDeleteJSON("missing", ownerPassword)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeNotFound || body.Error.Message != "Not found" {
+		t.Fatalf("error = %#v", body.Error)
+	}
+	if len(mem.ACLDelUserCalls) != 0 {
+		t.Fatalf("DELUSER on missing: %#v", mem.ACLDelUserCalls)
+	}
+	assertAuditDeleteSafe(t, srv, "failure", "missing")
+}
+
+func TestRedisUserDeleteUnavailable(t *testing.T) {
+	t.Run("nil_adapter", func(t *testing.T) {
+		srv, _ := testServer(t, nil)
+		seedOwner(t, srv)
+		h := srv.Handler()
+		cookie, csrf := login(t, h)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, redisDeleteConfirmBody))
+		assertDeleteUnavailable(t, rec)
+		assertAuditDeleteSafe(t, srv, "failure", "project_a")
+	})
+	t.Run("redis_fail", func(t *testing.T) {
+		mem := &redisadmin.MemoryClient{ACLListErr: errors.New("dial tcp 10.0.0.1:6379 canary-secret")}
+		srv := testServerWithRedis(t, redisadmin.NewService(mem))
+		seedOwner(t, srv)
+		h := srv.Handler()
+		cookie, csrf := login(t, h)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, redisDeleteConfirmBody))
+		assertDeleteUnavailable(t, rec)
+		assertNoRedisUsersCanary(t, rec.Body.String())
+		if strings.Contains(rec.Body.String(), "10.0.0.1") {
+			t.Fatalf("503 leaked host: %s", rec.Body.Bytes())
+		}
+		if len(mem.ACLDelUserCalls) != 0 {
+			t.Fatalf("DELUSER after list fail: %#v", mem.ACLDelUserCalls)
+		}
+		assertAuditDeleteSafe(t, srv, "failure", "project_a")
+	})
+	t.Run("deluser_canary", func(t *testing.T) {
+		mem := &redisadmin.MemoryClient{
+			ACLLines:      []string{enableUserACLLine},
+			ACLDelUserErr: errors.New("ERR ACL DELUSER canary-secret"),
+		}
+		srv := testServerWithRedis(t, redisadmin.NewService(mem))
+		seedOwner(t, srv)
+		h := srv.Handler()
+		cookie, csrf := login(t, h)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, redisDeleteConfirmBody))
+		assertDeleteUnavailable(t, rec)
+		assertNoRedisUsersCanary(t, rec.Body.String())
+		if strings.Contains(rec.Body.String(), "DELUSER") {
+			t.Fatalf("503 echoed Redis text: %s", rec.Body.Bytes())
+		}
+		assertAuditDeleteSafe(t, srv, "failure", "project_a")
+	})
+}
+
+func TestRedisUserDelete200RequestIDOnly(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine, "user other_app on ~other:* -@all +ping"}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	before := countAuditEvents(t, srv)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, redisDeleteConfirmBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q", rec.Header().Get("Cache-Control"))
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) != 1 {
+		t.Fatalf("success keys = %#v", raw)
+	}
+	id, _ := raw["request_id"].(string)
+	if !requestIDOK(id) {
+		t.Fatalf("request_id = %q", id)
+	}
+	for _, key := range []string{"ok", "user", "state", "credential", "reason"} {
+		if _, ok := raw[key]; ok {
+			t.Fatalf("200 leaked %s: %s", key, rec.Body.Bytes())
+		}
+	}
+	if strings.Contains(rec.Body.String(), ownerPassword) {
+		t.Fatalf("200 leaked owner password: %s", rec.Body.Bytes())
+	}
+	if len(mem.ACLDelUserCalls) != 1 || mem.ACLDelUserCalls[0] != "project_a" {
+		t.Fatalf("DELUSER calls = %#v", mem.ACLDelUserCalls)
+	}
+	if after := countAuditEvents(t, srv); after != before+1 {
+		t.Fatalf("audit events changed from %d to %d", before, after)
+	}
+	assertAuditDeleteSafe(t, srv, "success", "project_a")
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, redisDeletePath, cookie, csrf, ""))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET after delete status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+}
+
+func TestRedisUserDeleteInvalidUsernameNoEchoNoAudit(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	before := countAuditEvents(t, srv)
+	cases := []string{
+		"/api/v1/redis/users/bad.name",
+		"/api/v1/redis/users/" + strings.Repeat("a", 65),
+		"/api/v1/redis/users/%20",
+	}
+	for _, path := range cases {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodDelete, path, cookie, csrf, redisDeleteConfirmBody))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s status = %d body = %s", path, rec.Code, rec.Body.Bytes())
+		}
+		var body errorBody
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error.Code != CodeValidationError {
+			t.Fatalf("%s code = %q", path, body.Error.Code)
+		}
+		raw := rec.Body.String()
+		if strings.Contains(raw, "bad.name") || strings.Contains(raw, strings.Repeat("a", 65)) || strings.Contains(raw, "%20") {
+			t.Fatalf("400 echoed param: %s", raw)
+		}
+	}
+	if len(mem.ACLDelUserCalls) != 0 {
+		t.Fatalf("DELUSER on invalid username: %#v", mem.ACLDelUserCalls)
+	}
+	if after := countAuditEvents(t, srv); after != before {
+		t.Fatalf("400 wrote audit: %d -> %d", before, after)
+	}
+}
+
+func TestRedisUserDeleteAuditFailClosed(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	dead, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "dead-audit-delete.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = dead.Close() })
+	_ = dead.Close()
+	srv.audit = audit.Store{DB: dead}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, redisDeleteConfirmBody))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["ok"]; ok {
+		t.Fatalf("audit failure returned ok: %s", rec.Body.Bytes())
+	}
+	if _, ok := raw["user"]; ok {
+		t.Fatalf("audit failure returned user: %s", rec.Body.Bytes())
+	}
+	if len(mem.ACLDelUserCalls) != 1 {
+		t.Fatalf("expected DELUSER before audit fail, calls = %#v", mem.ACLDelUserCalls)
+	}
+}
+
+func countLoginAttempts(t *testing.T, srv *Server) int {
+	t.Helper()
+	var n int
+	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM login_attempts`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func assertDeleteUnavailable(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"ok", "user", "state", "credential", "reason"} {
+		if _, ok := raw[key]; ok {
+			t.Fatalf("503 leaked %s: %s", key, rec.Body.Bytes())
+		}
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeDependencyUnavailable || body.Error.Message != redisUnavailableMessage {
+		t.Fatalf("error = %#v", body.Error)
+	}
+}
+
+func assertAuditDeleteSafe(t *testing.T, srv *Server, outcome, username string) {
+	t.Helper()
+	var metadata, gotAction, gotOutcome, target string
+	if err := srv.db.QueryRow(`SELECT action, target, outcome, metadata FROM audit_events WHERE action = 'redis.user.delete' ORDER BY id DESC LIMIT 1`).Scan(&gotAction, &target, &gotOutcome, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if gotAction != "redis.user.delete" || gotOutcome != outcome {
+		t.Fatalf("audit action/outcome = %s/%s want redis.user.delete/%s", gotAction, gotOutcome, outcome)
+	}
+	if target != username {
+		t.Fatalf("audit target = %q want %q", target, username)
+	}
+	if strings.Contains(metadata, redisDeleteCanaryPass) || strings.Contains(metadata, ownerPassword) || strings.Contains(metadata, "canary-secret") || strings.Contains(metadata, `"reason"`) || strings.Contains(metadata, "reauth") || strings.Contains(metadata, "password") {
+		t.Fatalf("audit leaked secret or reason: %s", metadata)
+	}
+	if metadata != `{"username":"`+username+`"}` {
+		t.Fatalf("audit metadata = %s want username only", metadata)
 	}
 }

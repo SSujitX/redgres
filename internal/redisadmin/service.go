@@ -26,6 +26,7 @@ type Client interface {
 	DBSize(ctx context.Context) (int64, error)
 	ACLList(ctx context.Context) ([]string, error)
 	ACLSetUser(ctx context.Context, username string, rules ...string) error
+	ACLDelUser(ctx context.Context, username string) (int64, error)
 }
 
 type Service struct {
@@ -296,6 +297,27 @@ func (s *Service) RotateUser(ctx context.Context, username string) (RotateResult
 		return RotateResult{}, err
 	}
 	return RotateResult{User: user, Password: password}, nil
+}
+
+func (s *Service) DeleteUser(ctx context.Context, username string) error {
+	adminUser := ""
+	if s != nil {
+		adminUser = s.adminUser
+	}
+	if IsProtectedUsername(username, adminUser) {
+		return ErrProtectedUser
+	}
+	if _, err := s.GetUser(ctx, username); err != nil {
+		return err
+	}
+	n, err := s.client.ACLDelUser(ctx, username)
+	if err != nil {
+		return classifyRedisError(err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Service) loadUsers(ctx context.Context) ([]User, error) {
