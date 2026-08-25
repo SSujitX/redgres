@@ -11,6 +11,10 @@ The Redis console already uses SQLite successfully for one-owner auth, sessions,
 
 Use SQLite via `modernc.org/sqlite` for owner hashes, hashed sessions/CSRF, login attempts, audit events, and operation state. Use WAL, foreign keys, migrations, constrained connections, and online backups.
 
+Authentication attempt state is bounded to 1,000 recent rows. Login uses a normalized username + client-IP stream plus an IP-wide spray query; AUTH-006 reauthentication uses a distinct logical stream in the same table so destructive-action failures cannot lock out login and login spray cannot bypass or satisfy reauth. Attempt-store failures fail closed.
+
+Owner replacement is one SQLite transaction: update the single owner, revoke that owner's sessions, and insert the `owner.replace` audit event. If any step or commit fails, none of those changes take effect.
+
 ## Migration mechanism
 
 Use hand-rolled, embedded, ordered `.sql` files. Do not add a third-party migration library: the control plane has a linear schema history, and fail-closed checksum/downgrade behavior is simpler to own than to configure through another driver surface.
@@ -39,5 +43,7 @@ Do not migrate these to TEXT unless a later numbered file is required after the 
 - Simple single-binary deployment and no circular dependency on managed PostgreSQL.
 - Single-writer/single-instance limitation is explicit.
 - SQLite is not used for project credentials.
+- Bounded shared attempt storage avoids a new migration while preserving separate login and reauth throttle semantics.
+- Owner replacement cannot leave a new password with old sessions or omit its audit event because those writes commit atomically.
 - Multi-instance HA would require a future storage/coordination ADR and migration.
 - Copying the main DB alone during WAL activity is not a valid backup.

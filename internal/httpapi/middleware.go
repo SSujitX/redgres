@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 )
 
 const (
@@ -40,8 +41,35 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", permissionsPolicy)
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		if credentialBearingRequest(r) {
+			w.Header().Set("Cache-Control", "no-store, max-age=0")
+			w.Header().Set("Pragma", "no-cache")
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func credentialBearingRequest(r *http.Request) bool {
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	if r.Method == http.MethodGet {
+		return path == "/api/v1/session"
+	}
+	if r.Method != http.MethodPost {
+		return false
+	}
+	switch path {
+	case "/api/v1/auth/login", "/api/v1/redis/users", "/api/v1/postgres/databases":
+		return true
+	}
+	if strings.HasPrefix(path, "/api/v1/redis/users/") {
+		return strings.HasSuffix(path, "/credentials/rotate")
+	}
+	if strings.HasPrefix(path, "/api/v1/postgres/databases/") {
+		return strings.HasSuffix(path, "/connection/reveal") ||
+			strings.HasSuffix(path, "/credentials/rotate") ||
+			strings.HasSuffix(path, "/duplicate")
+	}
+	return false
 }
 
 func (s *Server) limitBody(next http.Handler) http.Handler {

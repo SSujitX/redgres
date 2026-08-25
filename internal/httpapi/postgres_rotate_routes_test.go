@@ -99,8 +99,11 @@ func TestPostgresRotateSuccessEnvelope(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("Cache-Control") != "no-store" {
+	if rec.Header().Get("Cache-Control") != "no-store, max-age=0" {
 		t.Fatalf("cache = %q", rec.Header().Get("Cache-Control"))
+	}
+	if rec.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("pragma = %q", rec.Header().Get("Pragma"))
 	}
 	if !strings.Contains(rec.Body.String(), `"one_time":false`) {
 		t.Fatalf("one_time must be JSON false: %s", rec.Body.String())

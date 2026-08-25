@@ -40,13 +40,17 @@ func (s *Server) writeJSON(w http.ResponseWriter, r *http.Request, status int, p
 			Error:     apiError{Code: CodeDependencyUnavailable, Message: "PostgreSQL is unavailable"},
 			RequestID: requestID(r),
 		})
-		w.Header().Set("Cache-Control", "no-store")
+		if w.Header().Get("Cache-Control") == "" {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write(append(fallback, '\n'))
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
+	if w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(append(body, '\n'))

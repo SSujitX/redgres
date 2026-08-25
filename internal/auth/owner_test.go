@@ -72,6 +72,44 @@ func TestCreateOwnerReplaceUpdatesHashAndDeletesSessions(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("sessions remaining = %d", n)
 	}
+	var action, actor, target, outcome, metadata string
+	if err := db.QueryRow(
+		`SELECT action, actor, target, outcome, metadata FROM audit_events ORDER BY id DESC LIMIT 1`,
+	).Scan(&action, &actor, &target, &outcome, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if action != "owner.replace" || actor != "admin" || target != "operator" || outcome != "success" {
+		t.Fatalf("replacement audit = %q %q %q %q", action, actor, target, outcome)
+	}
+	if strings.Contains(metadata, testPassword) {
+		t.Fatalf("replacement audit leaked password: %s", metadata)
+	}
+}
+
+func TestOwnerReplacementRollsBackOwnerAndSessionsWhenAuditFails(t *testing.T) {
+	db := testDB(t)
+	owner := mustOwner(t, db)
+	issued, err := CreateSession(db, owner.ID, hour, 2*hour, nowUTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE audit_events`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := CreateOrReplaceOwner(db, "operator", testPassword+"2", true); err == nil {
+		t.Fatal("expected replacement audit failure")
+	}
+	got, err := GetOwner(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Username != owner.Username || got.PasswordHash != owner.PasswordHash {
+		t.Fatalf("owner changed despite rollback: %+v", got)
+	}
+	if _, err := LookupSession(db, issued.RawToken, nowUTC()); err != nil {
+		t.Fatalf("session revoked despite rollback: %v", err)
+	}
 }
 
 func TestPasswordTooLongRejected(t *testing.T) {

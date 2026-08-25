@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -346,14 +347,17 @@ func (s *Server) handleRedisUserDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := sessionFrom(r)
-	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword); err != nil {
+	clientIP := auth.ClientIP(r.RemoteAddr)
+	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword, clientIP, time.Now().UTC()); err != nil {
 		switch {
-		case errors.Is(err, auth.ErrReauthRequired):
-			_ = s.audit.Record(sess.Username, "redis.user.delete", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), map[string]any{"username": username})
-			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
+		case errors.Is(err, auth.ErrRateLimited):
+			w.Header().Set("Retry-After", strconv.Itoa(int(auth.RateLimitRemaining(err).Seconds())+1))
+			_ = s.audit.Record(sess.Username, "redis.user.delete", username, "failure", requestID(r), clientIP, map[string]any{"username": username})
+			s.writeError(w, r, http.StatusTooManyRequests, CodeRateLimited, reauthLimitedMessage)
 			return
-		case errors.Is(err, auth.ErrUnauthorized):
-			s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, authRequiredMessage)
+		case errors.Is(err, auth.ErrReauthRequired):
+			_ = s.audit.Record(sess.Username, "redis.user.delete", username, "failure", requestID(r), clientIP, map[string]any{"username": username})
+			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
 			return
 		default:
 			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)

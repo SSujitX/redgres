@@ -14,12 +14,35 @@ import (
 )
 
 const (
-	lockoutThreshold = 5
-	lockoutWindow    = 15 * time.Minute
-	maxLockout       = 15 * time.Minute
+	lockoutThreshold  = 5
+	sprayThreshold    = 20
+	lockoutWindow     = 15 * time.Minute
+	maxLockout        = 15 * time.Minute
+	maxStoredAttempts = 1000
+	reauthIPPrefix    = "\x00reauth:"
 )
 
 var ErrRateLimited = errors.New("too many login attempts")
+
+type RateLimitError struct {
+	Remaining time.Duration
+}
+
+func (e RateLimitError) Error() string {
+	return ErrRateLimited.Error()
+}
+
+func (e RateLimitError) Unwrap() error {
+	return ErrRateLimited
+}
+
+func RateLimitRemaining(err error) time.Duration {
+	var limited RateLimitError
+	if errors.As(err, &limited) {
+		return limited.Remaining
+	}
+	return 0
+}
 
 type AttemptStore struct {
 	DB *sql.DB
@@ -54,11 +77,29 @@ func ClientIP(remoteAddr string) string {
 }
 
 func (s AttemptStore) Record(username, ip string, succeeded bool, now time.Time) error {
-	_, err := s.DB.Exec(
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	cutoff := now.Add(-lockoutWindow).UTC().Format(time.RFC3339Nano)
+	if _, err := tx.Exec(`DELETE FROM login_attempts WHERE attempted_at < ?`, cutoff); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
 		`INSERT INTO login_attempts (username, client_ip, succeeded, attempted_at) VALUES (?, ?, ?, ?)`,
 		NormalizeUsername(username), ip, boolToInt(succeeded), now.UTC().Format(time.RFC3339Nano),
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM login_attempts
+		 WHERE id NOT IN (SELECT id FROM login_attempts ORDER BY id DESC LIMIT ?)`,
+		maxStoredAttempts,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s AttemptStore) ClearFailures(username, ip string) error {
@@ -118,6 +159,45 @@ func (s AttemptStore) LockoutRemaining(username, ip string, now time.Time) (time
 		return until.Sub(now), nil
 	}
 	return 0, nil
+}
+
+func (s AttemptStore) IPLockoutRemaining(ip string, now time.Time) (time.Duration, error) {
+	since := now.Add(-lockoutWindow).UTC().Format(time.RFC3339Nano)
+	var failures int
+	var last string
+	err := s.DB.QueryRow(
+		`SELECT COUNT(*), COALESCE(MAX(attempted_at), '')
+		 FROM login_attempts
+		 WHERE client_ip = ? AND succeeded = 0 AND attempted_at >= ?`,
+		ip, since,
+	).Scan(&failures, &last)
+	if err != nil {
+		return 0, err
+	}
+	if failures < sprayThreshold || last == "" {
+		return 0, nil
+	}
+	lastFailure, err := time.Parse(time.RFC3339Nano, last)
+	if err != nil {
+		return 0, err
+	}
+	until := lastFailure.Add(maxLockout)
+	if now.Before(until) {
+		return until.Sub(now), nil
+	}
+	return 0, nil
+}
+
+func (s AttemptStore) RecordReauth(username, ip string, succeeded bool, now time.Time) error {
+	return s.Record(username, reauthIPPrefix+ip, succeeded, now)
+}
+
+func (s AttemptStore) ClearReauthFailures(username, ip string) error {
+	return s.ClearFailures(username, reauthIPPrefix+ip)
+}
+
+func (s AttemptStore) ReauthLockoutRemaining(username, ip string, now time.Time) (time.Duration, error) {
+	return s.LockoutRemaining(username, reauthIPPrefix+ip, now)
 }
 
 func CSRFValid(storedHash []byte, raw string) bool {

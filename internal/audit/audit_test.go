@@ -2,6 +2,7 @@ package audit
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,7 +11,7 @@ import (
 	"github.com/SSujitX/redgres/migrations"
 )
 
-func TestAuditLoginOmitsSecrets(t *testing.T) {
+func TestAuditRejectsNestedSecrets(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "redgres.db")
 	db, err := database.Open(path)
 	if err != nil {
@@ -22,14 +23,61 @@ func TestAuditLoginOmitsSecrets(t *testing.T) {
 	}
 
 	store := Store{DB: db}
+	err = store.Record("admin", "owner.login", "admin", "success", "aabbccddeeff00112233445566778899", "127.0.0.1", map[string]any{
+		"username": "admin",
+		"context": map[string]any{
+			"password": "canary-password-value",
+		},
+	})
+	if !errors.Is(err, ErrUnsafeMetadata) {
+		t.Fatalf("got %v, want ErrUnsafeMetadata", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_events`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("unsafe audit event inserted: %d", count)
+	}
+}
+
+func TestAuditRejectsActionSpecificUnknownKeyAndURLValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redgres.db")
+	db, err := database.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	store := Store{DB: db}
+	for name, metadata := range map[string]map[string]any{
+		"unknown_key": {"username": "admin", "session": "safe-looking"},
+		"url_value":   {"username": "postgresql://owner:canary@127.0.0.1/db"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := store.Record("admin", "owner.login", "admin", "success", "aabbccddeeff00112233445566778899", "127.0.0.1", metadata)
+			if !errors.Is(err, ErrUnsafeMetadata) {
+				t.Fatalf("got %v, want ErrUnsafeMetadata", err)
+			}
+		})
+	}
+}
+
+func TestAuditStoresOnlyAllowedMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redgres.db")
+	db, err := database.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	store := Store{DB: db}
 	if err := store.Record("admin", "owner.login", "admin", "success", "aabbccddeeff00112233445566778899", "127.0.0.1", map[string]any{
-		"username":      "admin",
-		"password":      "canary-password-value",
-		"csrf_token":    "canary-csrf",
-		"cookie":        "redgres_session=canary",
-		"session":       "should-stay-unless-key-matches",
-		"admin_url":     "postgresql://owner:canary@127.0.0.1/db",
-		"authorization": "Bearer canary",
+		"username": "admin",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +99,7 @@ func TestAuditLoginOmitsSecrets(t *testing.T) {
 	if meta["username"] != "admin" {
 		t.Fatalf("username = %#v", meta["username"])
 	}
-	if _, ok := meta["password"]; ok {
-		t.Fatal("password key present")
+	if len(meta) != 1 {
+		t.Fatalf("metadata = %#v", meta)
 	}
 }

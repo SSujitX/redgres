@@ -15,12 +15,13 @@ const (
 	sessionCookieName = "redgres_session"
 	csrfHeader        = "X-CSRF-Token"
 
-	loginGenericMessage = "Invalid username or password."
-	authRequiredMessage = "Authentication required"
-	originFailedMessage = "Origin check failed"
-	csrfInvalidMessage  = "CSRF token is invalid"
-	storageUnavailable  = "Control-plane storage is unavailable"
-	rateLimitedMessage  = "Too many login attempts. Try again later."
+	loginGenericMessage  = "Invalid username or password."
+	authRequiredMessage  = "Authentication required"
+	originFailedMessage  = "Origin check failed"
+	csrfInvalidMessage   = "CSRF token is invalid"
+	storageUnavailable   = "Control-plane storage is unavailable"
+	rateLimitedMessage   = "Too many login attempts. Try again later."
+	reauthLimitedMessage = "Too many reauthentication attempts. Try again later."
 )
 
 type ctxSessionKey struct{}
@@ -114,8 +115,27 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	store := auth.AttemptStore{DB: s.db}
 	now := time.Now().UTC()
 
+	ipRemaining, err := store.IPLockoutRemaining(ip, now)
+	if err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	if ipRemaining > 0 {
+		auditUsername := username
+		if auth.ValidateUsername(username) != nil {
+			auditUsername = "invalid_username"
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(int(ipRemaining.Seconds())+1))
+		_ = s.audit.Record(auditUsername, "owner.login", auditUsername, "rate_limited", requestID(r), ip, map[string]any{"username": auditUsername})
+		s.writeError(w, r, http.StatusTooManyRequests, CodeRateLimited, rateLimitedMessage)
+		return
+	}
 	if err := auth.ValidateUsername(username); err != nil {
 		auth.VerifyUnknown(body.Password)
+		if err := store.Record("invalid_username", ip, false, now); err != nil {
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+			return
+		}
 		_ = s.audit.Record("invalid_username", "owner.login", "invalid_username", "failure", requestID(r), ip, map[string]any{"username": "invalid_username"})
 		s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, loginGenericMessage)
 		return
@@ -140,13 +160,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		auth.VerifyUnknown(body.Password)
-		_ = store.Record(username, ip, false, now)
+		if err := store.Record(username, ip, false, now); err != nil {
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+			return
+		}
 		_ = s.audit.Record(username, "owner.login", username, "failure", requestID(r), ip, map[string]any{"username": username})
 		s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, loginGenericMessage)
 		return
 	}
 	if err := auth.Verify(owner.PasswordHash, body.Password); err != nil {
-		_ = store.Record(username, ip, false, now)
+		if err := store.Record(username, ip, false, now); err != nil {
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+			return
+		}
 		_ = s.audit.Record(owner.Username, "owner.login", username, "failure", requestID(r), ip, map[string]any{"username": username})
 		s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, loginGenericMessage)
 		return

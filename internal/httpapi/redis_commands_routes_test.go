@@ -266,8 +266,11 @@ func TestRedisUsersCreateCustom201(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
 	}
-	if rec.Header().Get("Cache-Control") != "no-store" {
+	if rec.Header().Get("Cache-Control") != "no-store, max-age=0" {
 		t.Fatalf("Cache-Control = %q", rec.Header().Get("Cache-Control"))
+	}
+	if rec.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("Pragma = %q", rec.Header().Get("Pragma"))
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {

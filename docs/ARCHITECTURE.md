@@ -106,7 +106,7 @@ SQLite contains:
 
 - owner users and Argon2id PHC strings stored as UTF-8 bytes in `owners.password_hash`;
 - hashed session and CSRF tokens plus expirations;
-- login attempts;
+- at most 1,000 recent authentication attempts, with separate login and AUTH-006 reauth streams plus IP-wide login spray evaluation;
 - redacted audit events;
 - operation records for long-running actions;
 - schema migration metadata;
@@ -115,6 +115,8 @@ SQLite contains:
 SQLite must not contain PostgreSQL project passwords, Redis project passwords, complete credential URLs, Cloudflare tokens, private keys, or Redis administrator URLs.
 
 Use WAL mode, foreign keys, busy timeout, bounded connection count, schema migrations, and the SQLite backup API for consistent backups.
+
+Failed login/reauth responses depend on durable attempt persistence and fail with control-state `503` when it is unavailable. Owner replacement updates the owner, revokes owner sessions, and writes `owner.replace` audit in one SQLite transaction.
 
 ## 7. PostgreSQL adapter
 

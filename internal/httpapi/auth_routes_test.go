@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -71,8 +72,11 @@ func TestLoginSetsCookieFlags(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("Cache-Control") != "no-store" {
+	if rec.Header().Get("Cache-Control") != "no-store, max-age=0" {
 		t.Fatalf("cache = %q", rec.Header().Get("Cache-Control"))
+	}
+	if rec.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("pragma = %q", rec.Header().Get("Pragma"))
 	}
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -185,6 +189,16 @@ func TestLoginRejectsBadOriginUnknownFieldAndBootstrap(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(
+		`{"username":"admin","password":"`+ownerPassword+`"} {"username":"admin","password":"`+ownerPassword+`"}`,
+	))
+	req.Header.Set("Origin", "http://127.0.0.1:8790")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("trailing JSON value %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/bootstrap", strings.NewReader(`{}`)))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("bootstrap %d", rec.Code)
@@ -216,8 +230,11 @@ func TestSessionAndLogout(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("session %d %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("Cache-Control") != "no-store" {
+	if rec.Header().Get("Cache-Control") != "no-store, max-age=0" {
 		t.Fatal("session cache")
+	}
+	if rec.Header().Get("Pragma") != "no-cache" {
+		t.Fatal("session pragma")
 	}
 	var sess map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
@@ -322,6 +339,54 @@ func TestLoginStorageErrorDoesNotIncrementLockout(t *testing.T) {
 	}
 }
 
+func TestFailedLoginAttemptPersistenceFailureFailsClosed(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	if _, err := srv.db.Exec(`DROP TABLE login_attempts`); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, loginRequest("wrong-password-x"))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeDependencyUnavailable {
+		t.Fatalf("code = %q", body.Error.Code)
+	}
+}
+
+func TestLoginRateLimitsIPWideUsernameSpray(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	for i := 0; i < 20; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(
+			`{"username":"unknown`+strconv.Itoa(i)+`","password":"wrong-password-x"}`,
+		))
+		req.Header.Set("Origin", "http://127.0.0.1:8790")
+		req.RemoteAddr = "10.0.0.8:1234"
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("spray %d status = %d %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	rec := httptest.NewRecorder()
+	req := loginRequest(ownerPassword)
+	req.RemoteAddr = "10.0.0.8:9999"
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("spray lockout status = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("missing Retry-After")
+	}
+}
+
 func TestLoginInvalidUsernameIsGenericAndNotAuditedRaw(t *testing.T) {
 	srv, _ := testServer(t, nil)
 	seedOwner(t, srv)
@@ -351,8 +416,8 @@ func TestLoginInvalidUsernameIsGenericAndNotAuditedRaw(t *testing.T) {
 	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM login_attempts`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Fatalf("invalid username incremented lockout: %d", n)
+	if n != 1 {
+		t.Fatalf("invalid username spray attempt not persisted: %d", n)
 	}
 }
 
@@ -374,8 +439,11 @@ func TestSessionToolLinksDefaultEmptyObject(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("session %d %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("Cache-Control") != "no-store" {
+	if rec.Header().Get("Cache-Control") != "no-store, max-age=0" {
 		t.Fatal("session cache")
+	}
+	if rec.Header().Get("Pragma") != "no-cache" {
+		t.Fatal("session pragma")
 	}
 	var sess map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {

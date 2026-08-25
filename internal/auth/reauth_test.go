@@ -4,12 +4,13 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReauthenticateSuccess(t *testing.T) {
 	db := testDB(t)
 	mustOwner(t, db)
-	if err := Reauthenticate(db, "admin", testPassword); err != nil {
+	if err := Reauthenticate(db, "admin", testPassword, "127.0.0.1", nowUTC()); err != nil {
 		t.Fatalf("success: %v", err)
 	}
 }
@@ -17,7 +18,7 @@ func TestReauthenticateSuccess(t *testing.T) {
 func TestReauthenticateMismatchIsDistinct(t *testing.T) {
 	db := testDB(t)
 	mustOwner(t, db)
-	err := Reauthenticate(db, "admin", "wrong-password-xx")
+	err := Reauthenticate(db, "admin", "wrong-password-xx", "127.0.0.1", nowUTC())
 	if !errors.Is(err, ErrReauthRequired) {
 		t.Fatalf("got %v, want ErrReauthRequired", err)
 	}
@@ -41,18 +42,15 @@ func TestReauthenticateMissingOwnerUsesVerifyUnknown(t *testing.T) {
 	}
 	t.Cleanup(func() { verifyUnknown = orig })
 
-	err := Reauthenticate(db, "nobody", "missing-owner-pw")
+	err := Reauthenticate(db, "nobody", "missing-owner-pw", "127.0.0.1", nowUTC())
 	if !called {
 		t.Fatal("VerifyUnknown not called")
 	}
 	if gotPassword != "missing-owner-pw" {
 		t.Fatalf("VerifyUnknown password = %q", gotPassword)
 	}
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("got %v, want ErrUnauthorized", err)
-	}
-	if errors.Is(err, ErrReauthRequired) {
-		t.Fatal("missing owner mapped to reauth mismatch")
+	if !errors.Is(err, ErrReauthRequired) {
+		t.Fatalf("got %v, want ErrReauthRequired", err)
 	}
 }
 
@@ -60,11 +58,43 @@ func TestReauthenticateLookupFailure(t *testing.T) {
 	db := testDB(t)
 	mustOwner(t, db)
 	_ = db.Close()
-	err := Reauthenticate(db, "admin", testPassword)
+	err := Reauthenticate(db, "admin", testPassword, "127.0.0.1", nowUTC())
 	if err == nil {
 		t.Fatal("expected lookup error")
 	}
-	if errors.Is(err, ErrReauthRequired) || errors.Is(err, ErrUnauthorized) {
+	if errors.Is(err, ErrReauthRequired) || errors.Is(err, ErrRateLimited) {
 		t.Fatalf("lookup failure mapped to %v", err)
+	}
+}
+
+func TestReauthenticateHasSeparatePersistentRateLimit(t *testing.T) {
+	db := testDB(t)
+	mustOwner(t, db)
+	now := nowUTC()
+	for i := 0; i < lockoutThreshold; i++ {
+		err := Reauthenticate(db, "admin", "wrong-password-xx", "127.0.0.1", now.Add(time.Duration(i)*time.Second))
+		if !errors.Is(err, ErrReauthRequired) {
+			t.Fatalf("failure %d = %v", i, err)
+		}
+	}
+	err := Reauthenticate(db, "admin", testPassword, "127.0.0.1", now.Add(time.Duration(lockoutThreshold-1)*time.Second+200*time.Millisecond))
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("got %v, want ErrRateLimited", err)
+	}
+
+	if err := Reauthenticate(db, "admin", testPassword, "127.0.0.2", now.Add(time.Duration(lockoutThreshold-1)*time.Second+200*time.Millisecond)); err != nil {
+		t.Fatalf("login throttling leaked into other reauth client: %v", err)
+	}
+}
+
+func TestReauthenticateFailsClosedWhenAttemptPersistenceFails(t *testing.T) {
+	db := testDB(t)
+	mustOwner(t, db)
+	if _, err := db.Exec(`DROP TABLE login_attempts`); err != nil {
+		t.Fatal(err)
+	}
+	err := Reauthenticate(db, "admin", "wrong-password-xx", "127.0.0.1", nowUTC())
+	if err == nil || errors.Is(err, ErrReauthRequired) || errors.Is(err, ErrRateLimited) {
+		t.Fatalf("persistence failure mapped to %v", err)
 	}
 }

@@ -8,10 +8,19 @@ import (
 	"strings"
 )
 
+var errTrailingJSON = errors.New("request body must contain exactly one JSON value")
+
 func decodeJSON(r *http.Request, dest any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dest); err != nil {
+		return err
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errTrailingJSON
+		}
 		return err
 	}
 	return nil

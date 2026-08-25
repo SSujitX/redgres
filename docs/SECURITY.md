@@ -24,7 +24,7 @@ Cloudflare, the VPS provider, OS root, and backup administrator are privileged t
 | Credential theft from response/cache/history | POST-only reveal/issue, `no-store`, no-referrer, no URL secrets, frontend memory clearing, Access + app auth |
 | Session theft/fixation | 256-bit random opaque tokens, hash-at-rest, regenerate on login, idle+absolute expiry, Secure/HttpOnly/SameSite Strict, logout deletion |
 | CSRF | Same-origin Origin/Referer validation plus per-session CSRF token for all mutations |
-| Brute force | Argon2id, generic login errors, persistent username+IP throttling (5 failures / 15m, exponential then 15m cap), Cloudflare Access/rate controls |
+| Brute force | Argon2id, generic login errors, fail-closed persistent username+IP throttling (5 failures / 15m, exponential then 15m cap), 20-failure/15m IP-wide spray lockout, separate persistent reauth throttling, bounded attempt retention, Cloudflare Access/rate controls |
 | SQL injection/identifier confusion | Parameterized values, `pgx.Identifier`/quoted identifiers, strict normalized identifiers, no arbitrary SQL endpoint |
 | Redis privilege escalation | Dedicated ACL admin, protected users, one prefix, `-@all`, explicit command allow-list, no generic command API |
 | Destructive operator mistake | Disabled-by-default features, protected targets, typed confirmation, fresh reauth, exact impact, audit, pre-action backup policy |
@@ -79,7 +79,10 @@ The owner receives all capabilities. HTTP handlers ask the authorization service
 - v1 password policy (NIST SP 800-63B-4 / OWASP, no MFA): at least 15 Unicode code points; reject empty/all-whitespace and passwords equal to the normalized username; reject bodies longer than 1024 bytes; no composition rules. There is no `REDGRES_MIN_PASSWORD_LENGTH` setting.
 - Session and CSRF tokens are 256-bit hex; SQLite stores SHA-256 only. Login deletes prior sessions for that owner.
 - Lockout is per normalized username + `RemoteAddr` host. Forwarded-for / `CF-Connecting-IP` headers are not trusted.
+- Login failure is not reported as `401` unless its attempt insert and bounded retention complete. Any attempt-store read/write failure is `503`. Twenty failures across usernames from one client IP in 15 minutes lock that IP for 15 minutes; invalid usernames count under a fixed placeholder and are never persisted raw. Attempt history is capped at 1,000 recent rows.
+- AUTH-006 password checks use a separate persistent username + client-IP stream in the same control-state table. Five recent reauth failures use the login exponential/capped lockout parameters, then return `429` + `Retry-After`. Reauth rows do not contribute to login/IP-spray counts. Missing-owner and wrong-password paths perform password-cost work, persist the same failure class, and return the same `403 reauth_required`; attempt persistence failure is `503`.
 - Login success and logout fail closed if the audit insert fails.
+- `create-owner --replace` updates the owner hash/name, revokes all owner sessions, and records the secret-safe `owner.replace` audit event in one SQLite transaction. Audit failure rolls back the owner and session changes.
 - Redis user create fail-closes if the audit insert fails after `ACL SETUSER` succeeds; the one-time credential is not returned. Named-preset create (`cache-read-write`, `read-only`, `queue-worker`) and custom create (`preset: custom` plus `commands` ⊆ `AllowedCommands()`) use the same fail-closed path. Named-preset and custom allow-list PATCH fail-closes the same way after prefix/grant `ACL SETUSER` and does not return `user`; it uses `redis.provision`, not `redis.destructive`. Custom create and custom PATCH expand only through `AllowedCommands()` (the unique-sorted union of named-preset command sets). A deny-list is insufficient; unknown names, categories, `@all`, `acl`, `config`, `eval`, `flushall`, and ACL modifiers fail closed before Redis. Audit metadata is `username`, `preset` (actual/inferred), and `key_pattern` (plus `queue_kind` only when the actual preset is `queue-worker`) and never the command list. Enable/disable fail-closes the same way after `on`/`off` and do not return `user`. Rotate fail-closes the same way after `resetpass`/`>password` and does not return `credential`, `password`, or `user`. Redis ACL delete (REDIS-008 Partial) uses `redis.destructive` plus CSRF and in-handler AUTH-006 (`LookupOwnerByUsername` + `Verify` on the DELETE body `owner_password`). There is no `POST /api/v1/auth/reauth` and no short-lived reauth grant. Wrong password is `403` `reauth_required` with failure audit metadata `username` only and no Redis call. Delete fail-closes if the audit insert fails after `ACL DELUSER` succeeds (user already gone). Protected names never call `ACL DELUSER`. Request `owner_password` is never logged, audited, cached, or returned. No `REDGRES_FEATURE_REDIS_USER_DELETE` flag.
 - GET `/api/v1/redis/presets` is a session + `redis.read` catalog of named command sets. GET `/api/v1/redis/commands` is a session + `redis.read` catalog of `AllowedCommands()`. Neither is a credential-bearing route: they do not return passwords, URLs, or tickets, do not call Redis, and do not write audit.
 
@@ -129,6 +132,8 @@ Never make browser confirmation the sole guard.
 - `style-src 'self'` (no `unsafe-inline`) blocks React `style={{…}}` attributes. Use stylesheets/classes, or propose a reviewed CSP change.
 - No wildcard CORS. Same-origin deployment normally needs no CORS middleware.
 - Request bodies, timeouts, headers, and concurrent long operations are bounded.
+- JSON request bodies must contain exactly one value; unknown fields and trailing JSON values are rejected.
+- Every API response is `Cache-Control: no-store`. Credential-bearing route success and error paths additionally use `max-age=0` and `Pragma: no-cache`.
 - Health endpoint reveals no versions, hostnames, secrets, or internal errors to unauthenticated callers.
 
 ## 8. Service hardening
@@ -149,6 +154,8 @@ CI must scan repository history/diff for secrets and run canary tests that place
 - request IDs/metrics;
 - SQLite state;
 - frontend storage/snapshots.
+
+Audit writes are action-specific and fail closed: each known action has an explicit metadata-key allow-list, and recursive secret-like keys, credential URLs, nested/unsupported values, oversized metadata, unknown actions, or unknown keys are rejected before SQLite insert. Read APIs still never select raw metadata.
 
 Security review is mandatory for auth, crypto, URL generation, destructive operations, Redis command sets, proxy/IP handling, install scripts, and backups.
 

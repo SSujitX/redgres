@@ -572,14 +572,17 @@ func (s *Server) handlePostgresRowsDelete(w http.ResponseWriter, r *http.Request
 	}
 	sess := sessionFrom(r)
 	meta := postgresRowsDeleteMeta(database, schema, table)
-	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword); err != nil {
+	clientIP := auth.ClientIP(r.RemoteAddr)
+	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword, clientIP, time.Now().UTC()); err != nil {
 		switch {
-		case errors.Is(err, auth.ErrReauthRequired):
-			_ = s.audit.Record(sess.Username, "postgres.rows.delete", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
-			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
+		case errors.Is(err, auth.ErrRateLimited):
+			w.Header().Set("Retry-After", strconv.Itoa(int(auth.RateLimitRemaining(err).Seconds())+1))
+			_ = s.audit.Record(sess.Username, "postgres.rows.delete", database, "failure", requestID(r), clientIP, meta)
+			s.writeError(w, r, http.StatusTooManyRequests, CodeRateLimited, reauthLimitedMessage)
 			return
-		case errors.Is(err, auth.ErrUnauthorized):
-			s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, authRequiredMessage)
+		case errors.Is(err, auth.ErrReauthRequired):
+			_ = s.audit.Record(sess.Username, "postgres.rows.delete", database, "failure", requestID(r), clientIP, meta)
+			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
 			return
 		default:
 			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
@@ -641,14 +644,17 @@ func (s *Server) handlePostgresDatabaseTruncate(w http.ResponseWriter, r *http.R
 	}
 	sess := sessionFrom(r)
 	meta := map[string]any{"database": database}
-	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword); err != nil {
+	clientIP := auth.ClientIP(r.RemoteAddr)
+	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword, clientIP, time.Now().UTC()); err != nil {
 		switch {
-		case errors.Is(err, auth.ErrReauthRequired):
-			_ = s.audit.Record(sess.Username, "postgres.database.truncate", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
-			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
+		case errors.Is(err, auth.ErrRateLimited):
+			w.Header().Set("Retry-After", strconv.Itoa(int(auth.RateLimitRemaining(err).Seconds())+1))
+			_ = s.audit.Record(sess.Username, "postgres.database.truncate", database, "failure", requestID(r), clientIP, meta)
+			s.writeError(w, r, http.StatusTooManyRequests, CodeRateLimited, reauthLimitedMessage)
 			return
-		case errors.Is(err, auth.ErrUnauthorized):
-			s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, authRequiredMessage)
+		case errors.Is(err, auth.ErrReauthRequired):
+			_ = s.audit.Record(sess.Username, "postgres.database.truncate", database, "failure", requestID(r), clientIP, meta)
+			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
 			return
 		default:
 			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
@@ -717,14 +723,17 @@ func (s *Server) handlePostgresDatabaseDrop(w http.ResponseWriter, r *http.Reque
 	}
 	sess := sessionFrom(r)
 	meta := map[string]any{"database": database}
-	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword); err != nil {
+	clientIP := auth.ClientIP(r.RemoteAddr)
+	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword, clientIP, time.Now().UTC()); err != nil {
 		switch {
-		case errors.Is(err, auth.ErrReauthRequired):
-			_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
-			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
+		case errors.Is(err, auth.ErrRateLimited):
+			w.Header().Set("Retry-After", strconv.Itoa(int(auth.RateLimitRemaining(err).Seconds())+1))
+			_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), clientIP, meta)
+			s.writeError(w, r, http.StatusTooManyRequests, CodeRateLimited, reauthLimitedMessage)
 			return
-		case errors.Is(err, auth.ErrUnauthorized):
-			s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, authRequiredMessage)
+		case errors.Is(err, auth.ErrReauthRequired):
+			_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), clientIP, meta)
+			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
 			return
 		default:
 			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)

@@ -9,9 +9,9 @@ Status: target contract. Final schemas should be machine-described (OpenAPI or e
 - Session cookie: opaque HttpOnly cookie; browser sends `X-CSRF-Token` on mutations.
 - Every response includes `request_id`.
 - `X-Request-ID` is a server-generated 128-bit value (32 lowercase hex characters) echoed as `request_id`. An inbound `X-Request-ID` is not trusted or copied (log-injection defense; intentional divergence from the Redis source).
-- All `/api/v1/*` responses set `Cache-Control: no-store`.
+- All `/api/v1/*` responses set `Cache-Control: no-store`. Credential-bearing routes (including login/session CSRF responses and every project credential issue/reveal/rotate route) strengthen this to `Cache-Control: no-store, max-age=0` plus `Pragma: no-cache` on success and error paths.
 - Body limit: 64 KiB by default; lower endpoint limits are allowed.
-- Unknown JSON fields are rejected.
+- Request bodies must contain exactly one JSON value; unknown fields and trailing JSON values are rejected.
 - List endpoints use cursor pagination where records can grow; row browsing uses bounded offset/keyset semantics documented per endpoint.
 - Credentials never appear in GET responses.
 
@@ -53,7 +53,7 @@ Session cookie name: `redgres_session` (opaque 64-hex token, `Path=/`, `HttpOnly
 {"owner":{"username":"admin"},"csrf_token":"<64 hex>","request_id":"<32 hex>"}
 ```
 
-Generic failure is `401` `unauthorized` with message `Invalid username or password.` Lockout is `429` `rate_limited` plus `Retry-After`. Bad origin is `403` `csrf_invalid`.
+Generic failure is `401` `unauthorized` with message `Invalid username or password.` Five recent failures for one normalized username + client IP use the existing exponential lockout (15-minute cap). Twenty recent failed username attempts from one client IP within 15 minutes trigger IP-wide spray lockout for 15 minutes, including syntactically invalid usernames without storing the raw invalid value. Lockout is `429` `rate_limited` plus `Retry-After`. Login-attempt read/write/retention failure is `503` `dependency_unavailable`; a failed password is never returned as `401` unless its attempt was persisted. Successful login clears only that username + IP failure stream, not failures for other usernames at the same IP. At most 1,000 recent login/reauth attempt rows are retained. Bad origin is `403` `csrf_invalid`.
 
 **POST `/api/v1/auth/logout`** requires session + origin + CSRF. Success `200`: `{"ok":true,"request_id":"…"}` and clears the cookie (`MaxAge=-1`).
 
@@ -82,7 +82,7 @@ Generic failure is `401` `unauthorized` with message `Invalid username or passwo
 }
 ```
 
-This GET is the only href source. Login JSON is unchanged and has no `tool_links`. GET `/session` still rotates CSRF and is not a mutation (no audit). `Cache-Control: no-store` is unchanged. The payload never includes passwords, session tokens, or CSRF in `tool_links`.
+This GET is the only href source. Login JSON is unchanged and has no `tool_links`. GET `/session` still rotates CSRF and is not a mutation (no audit). Login and GET `/session` use `Cache-Control: no-store, max-age=0` plus `Pragma: no-cache`. The payload never includes passwords, session tokens, or CSRF in `tool_links`.
 
 **GET `/api/v1/status`** requires a session cookie and the `platform.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
 
@@ -192,7 +192,7 @@ Success `200`:
 
 Events are newest first. `events` is always an array; an empty page is `[]`, never `null`. `next_cursor` is present only when `has_more` is true, so `has_more` and a non-empty `next_cursor` always agree.
 
-The audit `metadata` column is **never returned and never selected**. Write-time redaction (`internal/audit.redactMetadata`) is a substring heuristic, so historical rows may hold whatever it allowed; excluding the column from the query keeps that content out of any response by construction rather than by filtering. A later slice may project an explicit allow-list of metadata keys; it must never return the raw column.
+The audit `metadata` column is **never returned and never selected**. At write time, every known action has an explicit metadata-key allow-list; nested secret-like keys, credential URLs, unsupported/nested values, oversized input, unknown actions, and action-specific unknown keys are rejected before insert. Excluding the column from the query remains defense in depth for historical rows. A later slice may project an explicit read allow-list; it must never return the raw column.
 
 `cursor` is opaque and must be treated as such by clients: it is base64url (unpadded) of a versioned `a1:<id>` payload. Paging orders by `id`, the SQLite rowid alias, because it is unique and assigned during the insert. `created_at` is not an ordering key: it is `TEXT` in RFC3339Nano form whose fractional second drops trailing zeros, so SQLite's string comparison is not chronological (`…05Z` sorts above `…05.5Z` while being earlier), and it is sampled before the insert. `id` is exposed as a stable per-event identifier for client keying only, not for ordering or arithmetic; ordering position is carried solely by `next_cursor`.
 
@@ -279,7 +279,7 @@ Body only:
 4. JSON decode. Invalid JSON / unknown field → `400`, no audit, no PostgreSQL.
 5. `table_confirmation` **exact** match to path `{table}`. Mismatch or empty → `400` `validation_error` with `fields.table_confirmation`, copy **Type the exact table name to confirm deletion**, no audit, no PostgreSQL. Do not also require the database name.
 6. `primary_key_values` length 1–500; every element a JSON string, number, or bool. Empty, `>500`, `null` elements, objects, arrays → `400` `validation_error` with `fields.primary_key_values`, copy **Select between 1 and 500 primary key values.**, no audit, no PostgreSQL.
-7. AUTH-006: `auth.Reauthenticate` (`LookupOwnerByUsername` + `Verify` on `owner_password`). Wrong password → `403` `reauth_required`, **Owner password is incorrect**, failure audit `postgres.rows.delete` with metadata `database` + `schema` + `table` only, **no SQL**. Missing owner → `VerifyUnknown` then `401` `unauthorized`, no audit, no SQL. Other SQLite lookup errors → `503` `dependency_unavailable`. **Do not** increment AUTH-005 `login_attempts`. **Do not** return `429`. Never log, audit, or return `owner_password`.
+7. AUTH-006: `auth.Reauthenticate` checks its separate persistent username + client-IP reauth failure stream before `LookupOwnerByUsername` + `Verify` on `owner_password`. Wrong password and missing owner both perform password-cost work, persist a reauth failure, and return the same `403` `reauth_required`, **Owner password is incorrect**, with failure audit `postgres.rows.delete` metadata `database` + `schema` + `table` only and **no SQL**. Five recent failures use the same exponential lockout parameters as login but do not contribute to login or IP-spray counts; the next attempt returns `429` `rate_limited`, **Too many reauthentication attempts. Try again later.**, plus `Retry-After`. SQLite lookup or attempt-persistence failure → `503` `dependency_unavailable`. Never log, audit, or return `owner_password`.
 8. `Service.DeleteRows`: manageability like GET rows (protected, template, `datallowconn=false`, missing DB, missing/non-`BASE TABLE` → `404` `not_found`, same operator copy; failure audit allowed; **no DML**). Confirm BASE TABLE. Discover PK with the GET primary-key SQL. Width ≠ 1 (none or composite) → `400` `validation_error` with `fields.primary_key`, copy **This table does not have a single-column primary key.**, no `DELETE`. Quoted `DELETE FROM {schema}.{table} WHERE {pk} IN ($1…$n)` (`pgx.Identifier{schema,table}.Sanitize()`; PK column `QuoteCatalogIdentifier`; values parameterized only). Return `RowsAffected`.
 9. Success audit then **200**. Audit-fail after DML → `503` `dependency_unavailable` (rows stay deleted; same fail-closed family as Redis DELETE).
 
@@ -325,7 +325,7 @@ Body **only**:
 3. Path `decodePathIdentifier` `{db}`. Invalid → `400`, no catalog.
 4. JSON decode.
 5. `database_confirmation` **exact** match to path `{db}`. Mismatch or empty → `400` `validation_error` with `fields.database_confirmation`, copy **Type the exact database name to confirm truncate**, no audit, no PostgreSQL.
-6. AUTH-006: `auth.Reauthenticate` (`LookupOwnerByUsername` + `Verify` on `owner_password`). Wrong password → `403` `reauth_required`, **Owner password is incorrect**, failure audit `postgres.database.truncate` with metadata **`database` only**, **no SQL**. Missing owner → `VerifyUnknown` then `401` `unauthorized`, no audit, no SQL. Other SQLite lookup errors → `503` `dependency_unavailable`. **Do not** increment AUTH-005 `login_attempts`. **Do not** return `429`. Never log, audit, or return `owner_password`.
+6. AUTH-006: `auth.Reauthenticate` uses the separate persistent reauth throttle defined by the row-delete contract above. Wrong password and missing owner return the same `403` `reauth_required`, persist a reauth failure, and write failure audit `postgres.database.truncate` with metadata **`database` only** and **no SQL**. Five recent failures cause subsequent attempts to return `429` `rate_limited` plus `Retry-After`; SQLite lookup or attempt-persistence failure returns `503` `dependency_unavailable`. Never log, audit, or return `owner_password`.
 7. TryLock. Then `Service.Truncate`.
 8. Success audit then **200**. Audit-fail after `TRUNCATE` → `503` `dependency_unavailable` (tables stay truncated; same fail-closed family as Redis DELETE / PG-008).
 
@@ -404,7 +404,7 @@ Body **only**:
 3. Path `decodePathIdentifier` `{db}`. Invalid → `400`, no catalog.
 4. JSON decode.
 5. `database_confirmation` **exact** match to path `{db}`. Mismatch or empty → `400` `validation_error` with `fields.database_confirmation`, copy **Type the exact database name to confirm drop**, no audit, no PostgreSQL.
-6. AUTH-006: `auth.Reauthenticate` (`LookupOwnerByUsername` + `Verify` on `owner_password`). Wrong password → `403` `reauth_required`, **Owner password is incorrect**, failure audit `postgres.database.drop` with metadata **`database` only**, **no SQL**. Missing owner → `VerifyUnknown` then `401` `unauthorized`, no audit, no SQL. Other SQLite lookup errors → `503` `dependency_unavailable`. **Do not** increment AUTH-005 `login_attempts`. **Do not** return `429`. Never log, audit, or return `owner_password`.
+6. AUTH-006: `auth.Reauthenticate` uses the separate persistent reauth throttle defined by the row-delete contract above. Wrong password and missing owner return the same `403` `reauth_required`, persist a reauth failure, and write failure audit `postgres.database.drop` with metadata **`database` only** and **no SQL**. Five recent failures cause subsequent attempts to return `429` `rate_limited` plus `Retry-After`; SQLite lookup or attempt-persistence failure returns `503` `dependency_unavailable`. Never log, audit, or return `owner_password`.
 7. TryLock. Then `Service.Drop`.
 8. Success audit then **200**. Audit-fail after `DROP DATABASE` → `503` `dependency_unavailable` (database stays dropped; same fail-closed family as truncate / Redis DELETE).
 
@@ -1130,7 +1130,7 @@ Body:
 2. Path username parse.
 3. JSON decode.
 4. `username_confirmation` **exact** match to the parsed path username. Mismatch or empty → `400` `validation_error` with `fields.username_confirmation`, message `Type the exact Redis username to confirm deletion`, no Redis, **no audit**.
-5. AUTH-006: `LookupOwnerByUsername(sess.Username)` + `Verify`. Wrong password → `403` `reauth_required`, message `Owner password is incorrect`, failure audit action `redis.user.delete` with metadata `username` only (never `reason: reauth`, never the password), **no Redis**. Missing owner (`sql.ErrNoRows`) → `VerifyUnknown` then `401` `unauthorized`, no Redis, no audit. Other SQLite lookup errors → `503` `dependency_unavailable`. **Do not** increment AUTH-005 login-attempt rows. **Do not** return `429` from this handler.
+5. AUTH-006: the separate persistent username + client-IP reauth throttle runs before `LookupOwnerByUsername(sess.Username)` + `Verify`. Wrong password and missing owner both perform password-cost work, persist a reauth failure, and return the same `403` `reauth_required`, message `Owner password is incorrect`, with failure audit action `redis.user.delete` metadata `username` only (never `reason: reauth`, never the password) and **no Redis**. Five recent failures cause subsequent attempts to return `429` `rate_limited` plus `Retry-After`; SQLite lookup or attempt-persistence failure returns `503` `dependency_unavailable`. Reauth rows are separate from login and IP-spray counts.
 6. `Service.DeleteUser`: protected (`default`, `admin`, `redact_admin`, configured admin `EqualFold`) → `403` `protected_resource`, message `This Redis user is protected`, failure audit, **no** `ACL DELUSER`. Then `GetUser` (`ACL LIST`); missing → `404` `not_found`, message `Not found`, failure audit, no DELUSER. Then one `ACLDelUser` (go-redis `ACLDelUser(ctx, username) *IntCmd` → `(int64, error)`). `n == 0` → `404` `Not found`, failure audit. Redis/adapter errors → `503` `dependency_unavailable` (same operator copy as other Redis mutations), never `err.Error()`, never `owner_password`.
 7. Success audit (`redis.user.delete`, metadata `username` only) then `200`. Audit insert fail after DELUSER → `503` `dependency_unavailable` (user already gone; same fail-closed pattern as create/rotate).
 

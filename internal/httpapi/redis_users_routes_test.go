@@ -516,8 +516,11 @@ func TestRedisUsersCreate201NoStore(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
 	}
-	if rec.Header().Get("Cache-Control") != "no-store" {
+	if rec.Header().Get("Cache-Control") != "no-store, max-age=0" {
 		t.Fatalf("Cache-Control = %q", rec.Header().Get("Cache-Control"))
+	}
+	if rec.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("Pragma = %q", rec.Header().Get("Pragma"))
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
@@ -1384,8 +1387,11 @@ func TestRedisUserRotateRequiresSession(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
 	}
-	if rec.Header().Get("Cache-Control") != "no-store" {
+	if rec.Header().Get("Cache-Control") != "no-store, max-age=0" {
 		t.Fatalf("Cache-Control = %q", rec.Header().Get("Cache-Control"))
+	}
+	if rec.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("Pragma = %q", rec.Header().Get("Pragma"))
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
@@ -1439,8 +1445,11 @@ func TestRedisUserRotate200EnvelopeIgnoresBody(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
 	}
-	if rec.Header().Get("Cache-Control") != "no-store" {
+	if rec.Header().Get("Cache-Control") != "no-store, max-age=0" {
 		t.Fatalf("Cache-Control = %q", rec.Header().Get("Cache-Control"))
+	}
+	if rec.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("Pragma = %q", rec.Header().Get("Pragma"))
 	}
 	password := assertRotateSuccessBody(t, rec, false)
 	assertNoRedisUsersCanary(t, rec.Body.String())
@@ -2525,7 +2534,7 @@ func TestRedisUserDeleteUnknownFieldNoRedis(t *testing.T) {
 	}
 }
 
-func TestRedisUserDeleteReauthRequiredAuditsUsernameOnly(t *testing.T) {
+func TestRedisUserDeleteReauthRequiredAuditsAndRateLimitsSeparately(t *testing.T) {
 	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
 	srv := testServerWithRedis(t, redisadmin.NewService(mem))
 	seedOwner(t, srv)
@@ -2536,9 +2545,6 @@ func TestRedisUserDeleteReauthRequiredAuditsUsernameOnly(t *testing.T) {
 	h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, redisDeleteJSON("project_a", redisDeleteCanaryPass)))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
-	}
-	if rec.Code == http.StatusTooManyRequests {
-		t.Fatal("reauth returned 429")
 	}
 	var body errorBody
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -2562,21 +2568,59 @@ func TestRedisUserDeleteReauthRequiredAuditsUsernameOnly(t *testing.T) {
 	if strings.Contains(metadata, redisDeleteCanaryPass) || strings.Contains(metadata, `"reason"`) || strings.Contains(metadata, "reauth") {
 		t.Fatalf("audit metadata = %s", metadata)
 	}
-	if after := countLoginAttempts(t, srv); after != attemptsBefore {
-		t.Fatalf("login_attempts changed %d -> %d", attemptsBefore, after)
+	if after := countLoginAttempts(t, srv); after != attemptsBefore+1 {
+		t.Fatalf("reauth attempt was not persisted: %d -> %d", attemptsBefore, after)
 	}
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 4; i++ {
 		rec = httptest.NewRecorder()
 		h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, redisDeleteJSON("project_a", redisDeleteCanaryPass)))
-		if rec.Code == http.StatusTooManyRequests {
-			t.Fatalf("reauth 429 on attempt %d", i)
-		}
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("repeat reauth status = %d", rec.Code)
 		}
 	}
-	if after := countLoginAttempts(t, srv); after != attemptsBefore {
-		t.Fatalf("repeated reauth incremented login_attempts: %d -> %d", attemptsBefore, after)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, redisDeleteJSON("project_a", redisDeleteCanaryPass)))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("reauth throttle status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("reauth throttle missing Retry-After")
+	}
+	var limited errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &limited); err != nil {
+		t.Fatal(err)
+	}
+	if limited.Error.Code != CodeRateLimited || limited.Error.Message != reauthLimitedMessage {
+		t.Fatalf("reauth throttle error = %#v", limited.Error)
+	}
+	if after := countLoginAttempts(t, srv); after != attemptsBefore+5 {
+		t.Fatalf("reauth attempts = %d, want %d", after, attemptsBefore+5)
+	}
+}
+
+func TestRedisUserDeleteReauthPersistenceFailureFailsClosed(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	if _, err := srv.db.Exec(`DROP TABLE login_attempts`); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodDelete, redisDeletePath, cookie, csrf, redisDeleteJSON("project_a", redisDeleteCanaryPass)))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeDependencyUnavailable {
+		t.Fatalf("error = %#v", body.Error)
+	}
+	if len(mem.ACLDelUserCalls) != 0 || mem.ACLListCalls != 0 {
+		t.Fatalf("Redis called after reauth persistence failure: del=%#v list=%d", mem.ACLDelUserCalls, mem.ACLListCalls)
 	}
 }
 

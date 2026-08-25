@@ -222,8 +222,8 @@ func TestPostgresTruncateReauthRequiredMetadataDatabaseOnly(t *testing.T) {
 	if strings.Contains(metadata, postgresTruncateCanary) || strings.Contains(metadata, ownerPassword) || strings.Contains(metadata, "password") {
 		t.Fatalf("audit leaked secret: %s", metadata)
 	}
-	if after := countLoginAttempts(t, srv); after != attemptsBefore {
-		t.Fatalf("login_attempts changed %d -> %d", attemptsBefore, after)
+	if after := countLoginAttempts(t, srv); after != attemptsBefore+1 {
+		t.Fatalf("reauth attempt was not persisted: %d -> %d", attemptsBefore, after)
 	}
 }
 

@@ -216,8 +216,11 @@ func TestPostgresRevealSuccessReturnsPasswordAndURLs(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("Cache-Control") != "no-store" {
+	if rec.Header().Get("Cache-Control") != "no-store, max-age=0" {
 		t.Fatalf("cache = %q", rec.Header().Get("Cache-Control"))
+	}
+	if rec.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("pragma = %q", rec.Header().Get("Pragma"))
 	}
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
