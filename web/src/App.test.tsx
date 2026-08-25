@@ -56,6 +56,37 @@ function isRedisUserDetailUrl(url: string, username: string): boolean {
   return url === `/api/v1/redis/users/${encodeURIComponent(username)}`;
 }
 
+function isRedisUserEnable(url: string, username: string, init?: RequestInit): boolean {
+  return (
+    url === `/api/v1/redis/users/${encodeURIComponent(username)}/enable` &&
+    String(init?.method ?? "").toUpperCase() === "POST"
+  );
+}
+
+function isRedisUserDisable(url: string, username: string, init?: RequestInit): boolean {
+  return (
+    url === `/api/v1/redis/users/${encodeURIComponent(username)}/disable` &&
+    String(init?.method ?? "").toUpperCase() === "POST"
+  );
+}
+
+function redisAclToggleOk(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    user: {
+      username: "project_a",
+      enabled: true,
+      key_pattern: "project_a:*",
+      preset: "cache-read-write",
+      protected: false,
+      rule_fidelity: "exact",
+      commands: ["echo", "get", "ping"],
+      categories: [],
+      ...extra,
+    },
+    request_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  });
+}
+
 function redisAclCreate201(extra: Record<string, unknown> = {}) {
   return jsonResponse(201, {
     resource: { type: "redis_user", name: "project_a" },
@@ -3646,5 +3677,445 @@ describe("App session and login", () => {
     expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/redis/users"))).toBe(true);
+  });
+
+  it("shows Disable on a non-protected inspector when the ACL list is ok", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-toggle-ok".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(await within(details).findByRole("button", { name: "Disable" })).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
+    expect(details.className).not.toContain("danger");
+    expect(within(details).getByRole("button", { name: "Disable" }).className).not.toMatch(/danger/);
+  });
+
+  it("shows Enable on a disabled non-protected inspector", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-toggle-off".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem({ enabled: false })]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ enabled: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(await within(details).findByRole("button", { name: "Enable" })).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+  });
+
+  it("hides Enable and Disable for a protected ACL user", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-toggle-prot".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem({ protected: true, enabled: false })]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ protected: true, enabled: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(await within(details).findByText("Protected")).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+  });
+
+  it("hides Enable and Disable while ACL user details are loading", async () => {
+    let releaseDetail: () => void = () => {};
+    const blockedDetail = new Promise<void>((resolve) => {
+      releaseDetail = resolve;
+    });
+    stubFetch(async (url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-toggle-load".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        await blockedDetail;
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(within(details).getByText("Loading details.")).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+    releaseDetail();
+    expect(await within(details).findByRole("button", { name: "Disable" })).toBeInTheDocument();
+  });
+
+  it.each(["not_configured", "unavailable"] as const)(
+    "hides Enable and Disable when the ACL list is %s",
+    async (state) => {
+      stubFetch((url) => {
+        if (url.includes("/api/v1/session")) {
+          return jsonResponse(200, { owner: { username: "admin" }, csrf_token: `acl-toggle-${state}`.padEnd(64, "0") });
+        }
+        if (isRedisUsersListUrl(url)) {
+          return jsonResponse(200, {
+            state,
+            ...(state === "unavailable" ? { reason: "unreachable" } : { users: [] }),
+            request_id: "77777777777777777777777777777777",
+          });
+        }
+        return unknownApi(url);
+      });
+      render(<App />);
+      expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+      goToAclUsers();
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("does not show Enable or Disable on the login route", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+    expect(
+      fetch.mock.calls.every(
+        (call) => !isRedisUserEnable(String(call[0]), "project_a", call[1]) && !isRedisUserDisable(String(call[0]), "project_a", call[1]),
+      ),
+    ).toBe(true);
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/enable") && !String(call[0]).includes("/disable"))).toBe(
+      true,
+    );
+  });
+
+  it("POSTs disable with CSRF, an empty body, and no password", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-disable".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserDisable(url, "project_a", init)) {
+        return redisAclToggleOk({ enabled: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Disable" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isRedisUserDisable(String(call[0]), "project_a", call[1]))).toBe(true);
+    });
+    const disableCall = fetch.mock.calls.find((call) => isRedisUserDisable(String(call[0]), "project_a", call[1]));
+    expect(disableCall?.[0]).toBe("/api/v1/redis/users/project_a/disable");
+    expect(disableCall?.[0]).toBe(`/api/v1/redis/users/${encodeURIComponent("project_a")}/disable`);
+    expect(new Headers(disableCall?.[1]?.headers).get("X-CSRF-Token")).toBe("acl-disable".padEnd(64, "0"));
+    expect(disableCall?.[1]?.body == null || disableCall?.[1]?.body === "").toBe(true);
+    expect(String(disableCall?.[1]?.body ?? "")).not.toContain("password");
+  });
+
+  it("POSTs enable with CSRF, an empty body, and no password", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-enable".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem({ enabled: false })]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ enabled: false });
+      }
+      if (isRedisUserEnable(url, "project_a", init)) {
+        return redisAclToggleOk({ enabled: true });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Enable" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isRedisUserEnable(String(call[0]), "project_a", call[1]))).toBe(true);
+    });
+    const enableCall = fetch.mock.calls.find((call) => isRedisUserEnable(String(call[0]), "project_a", call[1]));
+    expect(enableCall?.[0]).toBe(`/api/v1/redis/users/${encodeURIComponent("project_a")}/enable`);
+    expect(new Headers(enableCall?.[1]?.headers).get("X-CSRF-Token")).toBe("acl-enable".padEnd(64, "0"));
+    expect(enableCall?.[1]?.body == null || enableCall?.[1]?.body === "").toBe(true);
+    expect(String(enableCall?.[1]?.body ?? "")).not.toContain("password");
+  });
+
+  it("applies a 200 disable payload to inspector status and the matching ledger row without a ticket", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-toggle-200".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([
+          redisAclListItem(),
+          redisAclListItem({ username: "project_b", key_pattern: "project_b:*" }),
+        ]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserDisable(url, "project_a", init)) {
+        return redisAclToggleOk({ enabled: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Disable" }));
+    await waitFor(() => {
+      expect(within(details).getByText("Disabled")).toBeInTheDocument();
+    });
+    expect(within(details).queryByText("Enabled")).not.toBeInTheDocument();
+    expect(within(details).getByText("echo")).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+    expect(within(details).getByRole("button", { name: "Enable" })).toBeInTheDocument();
+    const row = screen.getByRole("button", { name: /project_a/ });
+    expect(row).toHaveTextContent("Disabled");
+    expect(row).not.toHaveTextContent("Enabled");
+    expect(screen.getByRole("button", { name: /project_b/ })).toHaveTextContent("Enabled");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("canary-one-time-password-32chars!!")).not.toBeInTheDocument();
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("shows session-expired copy on enable 401 without a ticket", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-toggle-401".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem({ enabled: false })]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ enabled: false });
+      }
+      if (isRedisUserEnable(url, "project_a", init)) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Enable" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("shows not-found copy on disable 404", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-toggle-404".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserDisable(url, "project_a", init)) {
+        return jsonResponse(404, { error: { code: "not_found", message: "Not found" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Disable" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not found");
+    expect(screen.queryByText("No commands.")).not.toBeInTheDocument();
+  });
+
+  it("shows Redis unavailable copy on disable 503", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-toggle-503".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserDisable(url, "project_a", init)) {
+        return jsonResponse(503, { error: { code: "dependency_unavailable", message: "Redis is unavailable." } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Disable" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Redis is unavailable.");
+  });
+
+  it("disables the inspector action while enable or disable is in flight", async () => {
+    let releaseDisable: () => void = () => {};
+    const blockedDisable = new Promise<void>((resolve) => {
+      releaseDisable = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-toggle-wait".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserDisable(url, "project_a", init)) {
+        await blockedDisable;
+        return redisAclToggleOk({ enabled: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    const action = await within(details).findByRole("button", { name: "Disable" });
+    fireEvent.click(action);
+    await waitFor(() => {
+      expect(action).toBeDisabled();
+    });
+    releaseDisable();
+    expect(await within(details).findByRole("button", { name: "Enable" })).toBeEnabled();
+  });
+
+  it("does not persist enable or disable action state across logout or section change", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    let releaseDisable: () => void = () => {};
+    const blockedDisable = new Promise<void>((resolve) => {
+      releaseDisable = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-toggle-clear".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserDisable(url, "project_a", init)) {
+        await blockedDisable;
+        return jsonResponse(503, { error: { code: "dependency_unavailable", message: "Redis is unavailable." } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Disable" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Disable" })).toBeDisabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(screen.queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Redis is unavailable.")).not.toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const again = await screen.findByRole("button", { name: "Disable" });
+    expect(again).toBeEnabled();
+    expect(screen.queryByText("Redis is unavailable.")).not.toBeInTheDocument();
+    fireEvent.click(again);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Disable" })).toBeDisabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Redis is unavailable.")).not.toBeInTheDocument();
+    expect(setItem).not.toHaveBeenCalled();
+    releaseDisable();
+    setItem.mockRestore();
+  });
+
+  it("never POSTs enable or disable from the login route", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      if (url.includes("/api/v1/auth/login")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-toggle".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/enable"))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/disable"))).toBe(true);
+    expect(screen.queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
   });
 });

@@ -86,4 +86,31 @@ export async function createRedisUser(username: string, keyPattern: string, csrf
   });
 }
 
+export type RedisToggleUserPayload = {
+  user?: RedisAclUserDetail;
+  request_id?: string;
+};
+
+export async function enableRedisUser(username: string, csrf: string, init: RequestInit = {}) {
+  return apiRequest<RedisToggleUserPayload & ApiErrorBody>(
+    `/api/v1/redis/users/${encodeURIComponent(username)}/enable`,
+    {
+      ...init,
+      method: "POST",
+      csrf,
+    },
+  );
+}
+
+export async function disableRedisUser(username: string, csrf: string, init: RequestInit = {}) {
+  return apiRequest<RedisToggleUserPayload & ApiErrorBody>(
+    `/api/v1/redis/users/${encodeURIComponent(username)}/disable`,
+    {
+      ...init,
+      method: "POST",
+      csrf,
+    },
+  );
+}
+
 export { errorMessage };

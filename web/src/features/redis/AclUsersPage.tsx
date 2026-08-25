@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   createRedisUser,
+  disableRedisUser,
+  enableRedisUser,
   errorMessage,
   fetchRedisUser,
   fetchRedisUsers,
@@ -149,8 +151,11 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
   const [createError, setCreateError] = useState("");
   const [ticket, setTicket] = useState<ShownCredential | null>(null);
   const [pendingInspect, setPendingInspect] = useState<string | null>(null);
+  const [toggling, setToggling] = useState(false);
+  const [actionError, setActionError] = useState("");
   const selectionAbort = useRef<AbortController | null>(null);
   const listAbort = useRef<AbortController | null>(null);
+  const toggleAbort = useRef<AbortController | null>(null);
   const inspectorRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -210,6 +215,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     return () => {
       listAbort.current?.abort();
       selectionAbort.current?.abort();
+      toggleAbort.current?.abort();
     };
   }, []);
 
@@ -221,11 +227,14 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
   function openDetails(username: string) {
     clearTicket();
     selectionAbort.current?.abort();
+    toggleAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
     setSelected(username);
     setDetail(null);
     setDetailError("");
+    setActionError("");
+    setToggling(false);
     setLoadingDetail(true);
     void loadDetail(username, controller);
   }
@@ -239,9 +248,12 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
 
   function clearSelection() {
     selectionAbort.current?.abort();
+    toggleAbort.current?.abort();
     setSelected(null);
     setDetail(null);
     setDetailError("");
+    setActionError("");
+    setToggling(false);
     setLoadingDetail(false);
   }
 
@@ -329,6 +341,66 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
       setCreateError(redisUnavailable);
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleToggleEnabled() {
+    if (!detail || detail.protected || list.kind !== "ok" || toggling) {
+      return;
+    }
+    const username = detail.username;
+    const enable = !detail.enabled;
+    setToggling(true);
+    setActionError("");
+    toggleAbort.current?.abort();
+    const controller = new AbortController();
+    toggleAbort.current = controller;
+    try {
+      const result = enable
+        ? await enableRedisUser(username, csrf, { signal: controller.signal })
+        : await disableRedisUser(username, csrf, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 401) {
+        clearTicket();
+        setCreateOpen(false);
+        setList({ kind: "session_expired" });
+        return;
+      }
+      if (result.status === 404) {
+        setDetail(null);
+        setDetailError(errorMessage(result.body, notFound));
+        return;
+      }
+      if (result.status === 200) {
+        const parsed = parseDetailUser(result.body.user);
+        if (parsed && parsed.username === username) {
+          setDetail(parsed);
+          setList((current) => {
+            if (current.kind !== "ok") {
+              return current;
+            }
+            return {
+              ...current,
+              users: current.users.map((item) =>
+                item.username === parsed.username ? { ...item, enabled: parsed.enabled } : item,
+              ),
+            };
+          });
+          return;
+        }
+      }
+      setActionError(errorMessage(result.body, redisUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setActionError(redisUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setToggling(false);
+      }
     }
   }
 
@@ -455,7 +527,24 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
               {detailError}
             </p>
           ) : null}
+          {actionError ? (
+            <p className="form-warning" role="alert">
+              {actionError}
+            </p>
+          ) : null}
           {detail ? <InspectorFacts user={detail} /> : null}
+          {detail && !loadingDetail && list.kind === "ok" && !detail.protected ? (
+            <div className="form-actions">
+              <button
+                type="button"
+                className="text-button"
+                disabled={toggling}
+                onClick={() => void handleToggleEnabled()}
+              >
+                {detail.enabled ? "Disable" : "Enable"}
+              </button>
+            </div>
+          ) : null}
         </section>
       ) : null}
     </article>
