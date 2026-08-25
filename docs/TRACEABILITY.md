@@ -3903,11 +3903,53 @@ Known limitations: handler timeout 30s; large TEMPLATE clones remain a
 Local commits: `376f11e` (freeze), `382e801` (API), `158da45` (UI),
  `0dff8d1` (merge API), this docs record.
  Not pushed.
-Reviewer/date: pending parent/security/verifier. Keep Partial.
+Reviewer/date: UI Approve Partial on `26a2a62` (this pin); security /
+ evidence / verifier still pending. Keep Partial.
 Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial.
  Keep PG-005 Partial. Keep PG-006 Partial. Keep PG-012 Partial.
  Keep REDIS-008 Partial. Keep AUTH-006 Partial. Do not mark Complete.
 ```
+
+## PG-010 POST duplicate UI pin (2026-08-25)
+
+```text
+Requirement: PG-010 Partial (Databases inspector Duplicate + Duplicate
+ database dialog + 201 vault-repeatable ticket + terminate disclosure).
+ Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial. Keep
+ PG-006 Partial.
+Decision/ADR: ADR-004; freeze `376f11e`. AUTH-006 does not apply.
+Reviewer/date: UI review (2026-08-25) on `26a2a62` Approve Partial; no
+ Critical/High/Medium. Freeze holds: Duplicate text-button not --danger,
+ inspector only not header/nav; show when details loaded + owner non-empty
+ + owner_can_login true + owner_is_superuser false (missing flags hide);
+ hidden while details loading; disabled while duplicate/create/reveal/rotate
+ in flight or ticket open; dialog role=dialog title Duplicate database same
+ focus trap as Create; fields New database name / Project user; suggest
+ app_${database}; no password; form-warning unique owner + N connections
+ terminated (N includes 0); Submit until valid identifiers and database !==
+ source; POST CSRF + encodeURIComponent(source) + {database, owner}; HTTP
+ 201 existing PostgreSQL ticket This PostgreSQL password is still saved.;
+ select new db after dismiss; 401 session-expired clear secrets; 400/403/409
+ stay on dialog; 404 / generic 503 inspector families; isolation-rollback
+ 503 stays on dialog; no setItem; Security overview / search / login never
+ POST duplicate; Redis tickets stay shown now.
+ Explicitly NOT viewport/zoom/Playwright sign-off. This reviewer did not
+ re-run npm tests; parent recorded 309 passed at `0dff8d1`.
+ Lows (non-blocking, not corrected here): missing connection_count coerced
+ to 0 in the warning (DetailsFacts paints —); open Duplicate dialog does
+ not set mutationBusy (same as Create vs Rotate); source name in warning is
+ displayText only (freeze requires displayText).
+ Missing (non-blocking): Duplicate-specific Tab wrap; dedicated
+ create/reveal/rotate-in-flight disable tests; Redis “shown now” after
+ Duplicate exists; encodeURIComponent reserved-character CSRF test.
+Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
+ Partial. Keep PG-006 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
+ Keep AUTH-006 Partial. Playwright 360×800 / 768×1024 / 1280×800 /
+ 1600×1000 + 200% zoom, live PostgreSQL 17/18, Gate 4 remain Complete
+ blockers.
+Not pushed.
+```
+
 
 
 
