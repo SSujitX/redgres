@@ -4890,3 +4890,69 @@ Keep PG-011 Partial. Keep AUTH-006 Partial (Redis DELETE plus
  PG-008/009/010 Partial. Do not mark Complete.
 Not pushed.
 ```
+
+## PG-011 drop UI review Approve Partial (2026-08-26)
+
+```text
+Requirement: PG-011 Partial UI + AUTH-006 Partial (this DELETE UI only).
+ Keep PG-008 Partial. Keep PG-009 Partial. Keep PG-010 Partial.
+ Do not mark Complete. Playwright is Complete-only and was not run.
+Decision/ADR: freeze b4674fb (`b4674fb0d74a52a96dde5e27f15550f661de65b9`).
+ AUTH-006 is in-handler owner_password on
+ DELETE /api/v1/postgres/databases/{db}. No POST /api/v1/auth/reauth.
+ Product choice BF-1: UI discloses Recovery requires a valid external
+ backup / Cannot be undone; no checkbox-as-authorization.
+Review: redgres-ui-reviewer Approve Partial on
+ ee295fe (`ee295feade67f6c32bd0ef7dcb69b13482007434`) master.
+ UI SHA 604a956 (`604a956c7171b8ad021054f64eb28210d4ab00e8` cherry-pick of
+ `452a3951eb6c695981be439e80131a96fad2bfb2`).
+ Go SHA 85372a6 (`85372a6df90099102864b304eba8d09daa622c3a` cherry-pick of
+ `8fb1d72db4329c5de5df560c834dbdf4aa249fc1`).
+ Diff range b4674fb..ee295fe.
+ Confirmed freeze defects: none. Required UI changes: none.
+ Optional polish (not Partial blockers; Truncate/Redis Delete family):
+ useFocusTrap without restoreFocusRef; consequence copy not
+ aria-describedby; Delete selected not disabled during drop in flight
+ (handler refuses).
+Files reviewed: web/src/api/postgres.ts;
+ web/src/features/postgres/DropDatabaseDialog.tsx;
+ web/src/features/postgres/DatabasesPage.tsx; web/src/App.test.tsx.
+Unexecuted: Playwright viewports 360x800, 768x1024, 1280x800,
+ 1600x1000, 200% zoom; this reviewer did not re-run jsdom; live
+ PostgreSQL 17/18; COMPATIBILITY.md §6; Node 24.19.0.
+Keep PG-011 Partial. Keep AUTH-006 Partial (Redis DELETE plus PG-008
+ DELETE plus PG-009 POST plus this DELETE). Keep PG-008/009/010
+ Partial. Do not mark Complete.
+Not pushed.
+```
+
+## PG-011 drop security review Approve Partial (2026-08-26)
+
+```text
+Requirement: PG-011 Partial + AUTH-006 Partial (flagged DELETE
+ /api/v1/postgres/databases/{db} plus inspector Drop dialog).
+ Keep PG-008 Partial. Keep PG-009 Partial. Keep PG-010 Partial.
+ Keep AUTH-006 Partial (Redis DELETE plus PG-008 row DELETE plus
+ PG-009 truncate POST plus this DELETE). Do not mark Complete.
+Decision/ADR: freeze b4674fb (`b4674fb0d74a52a96dde5e27f15550f661de65b9`).
+ AUTH-006 in-handler LookupOwnerByUsername + Verify on body
+ owner_password. No POST /api/v1/auth/reauth. Gate 4 N/A (vault
+ DELETE is existence-row only; no decrypt). Product choice BF-1:
+ HTTP does not check backups; OPS-004 remains Complete.
+Review: redgres-security-reviewer Approve Partial on
+ ee295fe (`ee295feade67f6c32bd0ef7dcb69b13482007434`) master.
+ Go SHA 85372a6 (`85372a6df90099102864b304eba8d09daa622c3a`). UI SHA 604a956 (`604a956c7171b8ad021054f64eb28210d4ab00e8`). Diff range b4674fb..ee295fe.
+ Confirmed defects: none (Critical/High/Medium). Required changes:
+ none for this Partial.
+ Low/non-blocking: flag-off 403 leaves owner_password in the dialog
+ (reauth_required clears it; memory only); canary coverage is HTTP +
+ audit, not slog (reviewer did not execute journald canary).
+ Sibling session-only / no CSRF / swallowed DROP ROLE / HTTP 500
+ str(e) / checkbox-as-authorization NOT copied.
+ Unexecuted: live PostgreSQL 17/18, Playwright, gitleaks,
+ govulncheck, go test / go test -race / npm (read-only; tests
+ inspected not rerun).
+Keep PG-011 Partial. Keep AUTH-006 Partial. Keep PG-008/009/010
+ Partial. Do not mark Complete.
+Not pushed.
+```
