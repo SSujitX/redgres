@@ -4585,7 +4585,7 @@ Decision/ADR: freeze 74bf746 (`74bf7461f82471311c1d7571352bfa7c36735cac`).
  Compatibility pin a4b2436 (SQL unchanged). AUTH-006 in-handler
  LookupOwnerByUsername + Verify on body owner_password. No POST
  /api/v1/auth/reauth. Gate 4 N/A (no vault decrypt).
-Review: redgres-security-reviewer Approve Partial on
+ Review: redgres-security-reviewer Approve Partial on
  c80ebbf (`c80ebbf98f275d3ca25d2ba542aa279a5ce3aa6d`) master.
  Go SHA 8f473e1 (`8f473e1da8f63dd9f1e2f3097d21e3c98b525824`).
  UI SHA 15e2468 (`15e246828354fa1acc444af507b024a86b4426bb`).
@@ -4611,5 +4611,62 @@ Review: redgres-security-reviewer Approve Partial on
  Keep PG-009 Partial. Keep AUTH-006 Partial. Keep PG-008 Partial.
  Keep PG-010 Partial. Do not mark Complete.
  Not pushed.
+```
+
+## PG-009 truncate evidence PASS Partial (2026-08-26)
+
+```text
+Requirement: PG-009 Partial + AUTH-006 Partial (flagged POST
+ /api/v1/postgres/databases/{db}/truncate plus inspector danger
+ Truncate dialog, title Truncate project data). Keep PG-009 Partial.
+ Keep AUTH-006 Partial (Redis DELETE /api/v1/redis/users/{username}
+ plus PG-008 row DELETE plus this POST). Keep PG-008 Partial.
+ Keep PG-010 Partial. Keep PG-007 row-browse. Reject Complete.
+ Do not start PG-011. Gate 4 N/A. Playwright is Complete-only.
+Decision/ADR: freeze 74bf746 (74bf7461f82471311c1d7571352bfa7c36735cac)
+ plus compatibility pin a4b2436 (SQL unchanged). AUTH-006 in-handler
+ LookupOwnerByUsername + Verify on body owner_password. No POST
+ /api/v1/auth/reauth. Feature flag REDGRES_FEATURE_POSTGRES_TRUNCATE
+ via envBool (unset=false). Do not use envBoolDefaultFalse.
+Evidence review (2026-08-26) on product HEAD 8a20c99
+ (8a20c9989982f06d1cd9d1a804317b42ff5c3929) master. Diff range
+ 74bf746..8a20c99. Go SHA 8f473e1 (cherry-pick of 9a2ce50).
+ UI SHA 15e2468 (cherry-pick of 20bf56b). Combined code+impl
+ TRACEABILITY c80ebbf. UI review pin 5845ce3 Approve Partial
+ (reviewed c80ebbf). Security review pin 8a20c99 Approve Partial
+ (reviewed c80ebbf). This reviewer did not re-run go test ./...
+ or npm test (verifier-owned). Sandbox blocked git status/diff;
+ HEAD log confirms the claimed SHA chain.
+Freeze criteria mapped to implementation and recorded tests:
+ POST registered next to duplicate before GET {db}
+ (internal/httpapi/server.go); handlePostgresDatabaseTruncate
+ flag-off 403 before decode; one TRUNCATE TABLE … RESTART IDENTITY
+ (internal/postgresadmin/truncate.go formatTruncateSQL; no CASCADE,
+ no ONLY, no per-table loop); listTablesSQL LIMIT 501; AUTH-006
+ in-handler; inspector TruncateProjectDataDialog title Truncate
+ project data. HTTP tests
+ internal/httpapi/postgres_truncate_routes_test.go; domain
+ internal/postgresadmin/truncate_test.go; config
+ internal/config/truncate_test.go; jsdom web/src/App.test.tsx.
+ Recorded parent commands (TRACEABILITY API/UI pins, not re-run):
+ gofmt empty; go test ./internal/config ./internal/postgresadmin
+ ./internal/httpapi ok (config 2.620s; postgresadmin 1.685s;
+ httpapi 42.632s); go test ./... ok (httpapi 47.802s;
+ cmd/redgres 3.408s); go vet; go build; npm test:run 338 passed
+ (338) Node v25.3.0 not nvmrc 24.19.0; npm run build success.
+ Security Lows (non-blocking): connectTarget 5s connectCtx vs
+ handler 30s; no dedicated HTTP statement-failure 503 test.
+ Sibling CASCADE/swallowed-exception not copied.
+ Status rows AUTH-006 / PG-001..012 Partial; PG-011 not started.
+ Historical “writers in flight” / PG-008 “Inspector UI not landed”
+ left in historical pins only.
+ No secret/runtime artifacts in inspected files. Dist not committed.
+Unexecuted Complete blockers: live PostgreSQL 17/18,
+ COMPATIBILITY.md §6, Playwright viewports, go test -race, CI,
+ Node 24.19.0, Gate 4 (N/A), POST /api/v1/auth/reauth, DROP flag,
+ gitleaks, govulncheck.
+Keep PG-009 Partial. Keep AUTH-006 Partial. Keep PG-008 Partial.
+ Keep PG-010 Partial. Keep PG-007 row-browse. Do not mark Complete.
+Not pushed.
 ```
 
