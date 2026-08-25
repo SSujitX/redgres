@@ -240,10 +240,11 @@ func (s *Service) SecurityOverview(ctx context.Context) (SecurityOverview, error
 		if row.PublicCanConnect {
 			publicConnect++
 		}
+		protected := !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate)
 		databases = append(databases, SecurityDatabase{
 			Name:              row.Name,
 			Owner:             row.Owner,
-			Protected:         !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate),
+			Protected:         protected,
 			PublicCanConnect:  row.PublicCanConnect,
 			OwnerIsSuperuser:  row.OwnerIsSuperuser,
 			OwnerCanLogin:     row.OwnerCanLogin,
@@ -251,6 +252,7 @@ func (s *Service) SecurityOverview(ctx context.Context) (SecurityOverview, error
 			OwnerCreaterole:   row.OwnerCreaterole,
 			OwnerReplication:  row.OwnerReplication,
 			ActiveConnections: row.ConnectionCount,
+			RotationEligible:  rotationEligible(row.Owner, protected, row.OwnerCanLogin, row.OwnerIsSuperuser),
 		})
 	}
 	sort.Slice(databases, func(i, j int) bool { return databases[i].Name < databases[j].Name })

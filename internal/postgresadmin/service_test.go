@@ -468,8 +468,85 @@ func TestServiceSecurityOverviewOmitsTemplatesIncludesProtected(t *testing.T) {
 	if project.Owner != "project_a_role" || !project.PublicCanConnect || !project.OwnerCanLogin || project.ActiveConnections != 2 {
 		t.Fatalf("project row = %#v", project)
 	}
+	if !project.RotationEligible {
+		t.Fatalf("project_a must be rotation_eligible: %#v", project)
+	}
+	for _, row := range got.Databases {
+		if row.Protected && row.RotationEligible {
+			t.Fatalf("protected %s must not be rotation_eligible: %#v", row.Name, row)
+		}
+	}
 	if len(got.Connections) != 2 || got.Connections[0].Database != "postgres" || got.Connections[1].Count != 2 {
 		t.Fatalf("connections = %#v", got.Connections)
+	}
+}
+
+func TestServiceSecurityOverviewRotationEligible(t *testing.T) {
+	svc := NewService(securityOverviewCatalog(), NewPolicy(config.Config{
+		PostgresDatabase: "postgres",
+		PostgresUser:     "redgres_console",
+	}))
+	got, err := svc.SecurityOverview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"project_a":              true,
+		"postgres":               false,
+		"zeta_last":              false,
+		"owned_by_admin":         false,
+		"no_connect":             false,
+		"database_console_vault": false,
+	}
+	gotElig := map[string]bool{}
+	for _, row := range got.Databases {
+		gotElig[row.Name] = row.RotationEligible
+	}
+	for name, eligible := range want {
+		if gotElig[name] != eligible {
+			t.Errorf("%s rotation_eligible = %v, want %v", name, gotElig[name], eligible)
+		}
+	}
+	raw, err := json.Marshal(got.Databases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encoded []map[string]any
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) != len(got.Databases) {
+		t.Fatalf("json databases = %#v", encoded)
+	}
+	for _, row := range encoded {
+		if _, ok := row["rotation_eligible"].(bool); !ok {
+			t.Fatalf("rotation_eligible omitted or not bool: %#v", row)
+		}
+		if _, ok := row["can_rotate"]; ok {
+			t.Fatalf("must not emit can_rotate: %#v", row)
+		}
+	}
+}
+
+func TestServiceSecurityOverviewEmptyOwnerIsNotRotationEligible(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows: []CatalogRow{{
+			Name: "orphan", Owner: "", AllowConn: true, OwnerCanLogin: true,
+		}},
+	}, NewPolicy(config.Config{}))
+	got, err := svc.SecurityOverview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Databases) != 1 {
+		t.Fatalf("databases = %#v", got.Databases)
+	}
+	row := got.Databases[0]
+	if row.Protected {
+		t.Fatalf("empty-owner fixture must remain manageable: %#v", row)
+	}
+	if row.RotationEligible {
+		t.Fatalf("empty owner must not be rotation_eligible: %#v", row)
 	}
 }
 
@@ -711,6 +788,16 @@ func TestServiceSecurityOverviewVaultUnavailableOmitsCount(t *testing.T) {
 	}
 	if len(got.Databases) == 0 || len(got.Connections) == 0 {
 		t.Fatalf("must keep databases/connections: %#v", got)
+	}
+	byName := map[string]SecurityDatabase{}
+	for _, row := range got.Databases {
+		byName[row.Name] = row
+	}
+	if !byName["project_a"].RotationEligible {
+		t.Fatalf("vault unavailable must still emit project_a rotation_eligible true: %#v", byName["project_a"])
+	}
+	if byName["postgres"].RotationEligible {
+		t.Fatalf("vault unavailable must still emit postgres rotation_eligible false: %#v", byName["postgres"])
 	}
 }
 

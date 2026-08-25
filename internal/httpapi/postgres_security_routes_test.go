@@ -123,6 +123,22 @@ func TestPostgresSecurityReturnsClusterOverview(t *testing.T) {
 	if _, ok := first["size"]; ok || first["can_rotate"] != nil || first["has_saved_password"] != nil {
 		t.Fatalf("forbidden database keys = %#v", first)
 	}
+	elig := map[string]any{}
+	for _, item := range dbs {
+		row, _ := item.(map[string]any)
+		v, ok := row["rotation_eligible"].(bool)
+		if !ok {
+			t.Fatalf("rotation_eligible missing or not bool: %#v", row)
+		}
+		name, _ := row["name"].(string)
+		elig[name] = v
+		if row["can_rotate"] != nil || row["has_saved_password"] != nil {
+			t.Fatalf("forbidden database keys = %#v", row)
+		}
+	}
+	if elig["project_a"] != true || elig["postgres"] != false || elig["database_console_vault"] != false {
+		t.Fatalf("rotation_eligible = %#v", elig)
+	}
 	conns, _ := body["connections"].([]any)
 	if conns == nil || len(conns) != 2 {
 		t.Fatalf("connections = %#v", body["connections"])
@@ -228,6 +244,15 @@ func TestPostgresSecurityVaultUnavailableIs200(t *testing.T) {
 	conns, _ := body["connections"].([]any)
 	if len(dbs) != 2 || len(conns) != 1 {
 		t.Fatalf("must keep databases/connections: dbs=%#v conns=%#v", body["databases"], body["connections"])
+	}
+	for _, item := range dbs {
+		row, _ := item.(map[string]any)
+		if _, ok := row["rotation_eligible"].(bool); !ok {
+			t.Fatalf("vault unavailable must still emit rotation_eligible bool: %#v", row)
+		}
+		if row["can_rotate"] != nil {
+			t.Fatalf("must not emit can_rotate: %#v", row)
+		}
 	}
 	for _, leak := range []string{"canary", "secret", "postgresql://", "vault_not_implemented", "encrypted_password"} {
 		if strings.Contains(rec.Body.String(), leak) {
