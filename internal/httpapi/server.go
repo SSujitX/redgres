@@ -11,6 +11,7 @@ import (
 
 	"github.com/SSujitX/redgres/internal/audit"
 	"github.com/SSujitX/redgres/internal/config"
+	"github.com/SSujitX/redgres/internal/operations"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
 	"github.com/SSujitX/redgres/internal/redisadmin"
 
@@ -32,13 +33,14 @@ type redisHealth interface {
 }
 
 type Server struct {
-	cfg      config.Config
-	db       *sql.DB
-	assets   fs.FS
-	log      *slog.Logger
-	audit    audit.Store
-	postgres postgresadmin.Inventory
-	redis    redisHealth
+	cfg        config.Config
+	db         *sql.DB
+	assets     fs.FS
+	log        *slog.Logger
+	audit      audit.Store
+	operations operations.Store
+	postgres   postgresadmin.Inventory
+	redis      redisHealth
 }
 
 func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger, postgres postgresadmin.Inventory, redis redisHealth) *Server {
@@ -48,7 +50,11 @@ func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger, postg
 	if assets == nil {
 		assets = nopFS{}
 	}
-	return &Server{cfg: cfg, db: db, assets: assets, log: logger, audit: audit.Store{DB: db}, postgres: postgres, redis: redis}
+	var ops operations.Store
+	if db != nil {
+		ops = operations.NewStore(db)
+	}
+	return &Server{cfg: cfg, db: db, assets: assets, log: logger, audit: audit.Store{DB: db}, operations: ops, postgres: postgres, redis: redis}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -72,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/api/v1/healthz", s.handleHealthz)
 	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/status", s.handleStatus)
 	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/search", s.handleSearch)
+	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/operations/{id}", s.handleGetOperation)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/status", s.handleRedisStatus)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/presets", s.handleRedisPresets)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/commands", s.handleRedisCommands)

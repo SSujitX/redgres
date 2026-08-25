@@ -119,7 +119,7 @@ This GET is not a mutation and does not write an audit event.
 
 **GET `/api/v1/operations/{id}` (ADR-010 freeze).** Session cookie and `platform.read`. No CSRF. Do not invent `operations.read`. Collection GET does not exist. Cancel does not exist. `POST`, `PUT`, `PATCH`, and `DELETE` on this path are `405` `method_not_allowed`. `{id}` is 32 lowercase hex (same construction as `request_id`). Invalid id → `400` `validation_error`. Missing row → `404` `not_found`. SQLite down → `503` `dependency_unavailable`. Missing session → `401` `unauthorized`. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access. Response is `Cache-Control: no-store`. This GET is not a mutation and does not write an audit event.
 
-This freeze commits the HTTP contract and SQLite schema. The route is registered in the same durable-foundations slice after `operations.Store` exists. Unauthenticated GET must not exist.
+This slice registers `GET /api/v1/operations/{id}` after `operations.Store` exists. Unauthenticated GET must not exist.
 
 Success `200`:
 

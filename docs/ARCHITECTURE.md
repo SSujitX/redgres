@@ -53,7 +53,7 @@ HTTP transport
   ├── redis presets endpoint ► redisadmin.NamedPresets (static catalog; no Redis)
   ├── redis commands endpoint ► redisadmin.AllowedCommands (static allow-list; no Redis)
   ├── search endpoint ────► platform.ResourceGroups ► postgresadmin.Search names + redisadmin.Search names
-  ├── operations GET ─────► operations.Store (ADR-010; route after Store wiring)
+  ├── operations GET ─────► operations.Store (ADR-010; session + `platform.read`)
   ├── postgres endpoints ─► postgres use cases ► PostgreSQL adapter (pgxpool)
   │                              └──────────────► vault adapter (PostgreSQL/Fernet)
   └── redis endpoints ────► redis use cases ───► Redis ACL adapter (go-redis)

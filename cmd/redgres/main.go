@@ -13,6 +13,7 @@ import (
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/database"
 	"github.com/SSujitX/redgres/internal/httpapi"
+	"github.com/SSujitX/redgres/internal/operations"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
 	"github.com/SSujitX/redgres/internal/redisadmin"
 	"github.com/SSujitX/redgres/internal/web"
@@ -54,6 +55,9 @@ func run(args []string) error {
 	}
 	defer db.Close()
 	if err := database.Migrate(db, migrations.FS); err != nil {
+		return err
+	}
+	if err := operations.NewStore(db).Reconcile(context.Background(), nil, time.Now().UTC()); err != nil {
 		return err
 	}
 	assets, closeAssets, err := web.Open(cfg.DevAssetDir)
