@@ -16,6 +16,8 @@ FROM pg_database d
 WHERE d.datname = $1
 `
 
+// Clone transfer excludes only direct extension members (pg_depend.deptype = 'e').
+// These queries do not infer subsidiary/internal dependency closure.
 const cloneNamespaceSQL = `
 SELECT n.nspname, pg_catalog.pg_get_userbyid(n.nspowner), COALESCE(r.rolsuper, false)
 FROM pg_catalog.pg_namespace n

@@ -83,14 +83,27 @@ func TestDuplicatePackageNeverExpandsPrivilegesOrUsesRoleSwitching(t *testing.T)
 	if !strings.Contains(cloneNamespaceSQL, "nspname !~") || !strings.Contains(cloneRelationSQL, "nspname !~") {
 		t.Fatal("transfer SQL must use nspname !~")
 	}
-	for name, query := range map[string]string{
-		"namespace": cloneNamespaceSQL,
-		"relation":  cloneRelationSQL,
-		"type":      cloneTypeSQL,
-		"routine":   cloneProcSQL,
+	for name, tc := range map[string]struct {
+		query     string
+		className string
+		objectRef string
+	}{
+		"namespace": {query: cloneNamespaceSQL, className: "pg_catalog.pg_namespace", objectRef: "n.oid"},
+		"relation":  {query: cloneRelationSQL, className: "pg_catalog.pg_class", objectRef: "c.oid"},
+		"type":      {query: cloneTypeSQL, className: "pg_catalog.pg_type", objectRef: "t.oid"},
+		"routine":   {query: cloneProcSQL, className: "pg_catalog.pg_proc", objectRef: "p.oid"},
 	} {
-		if !strings.Contains(query, "d.deptype = 'e'") {
-			t.Fatalf("%s transfer must skip extension-owned objects", name)
+		for _, predicate := range []string{
+			"d.classid = '" + tc.className + "'::pg_catalog.regclass",
+			"d.objid = " + tc.objectRef,
+			"d.deptype = 'e'",
+		} {
+			if !strings.Contains(tc.query, predicate) {
+				t.Fatalf("%s transfer missing direct extension-membership predicate %q", name, predicate)
+			}
+		}
+		if strings.Contains(strings.ToUpper(tc.query), "WITH RECURSIVE") {
+			t.Fatalf("%s transfer unexpectedly claims extension dependency closure", name)
 		}
 	}
 	if !strings.Contains(cloneProcSQL, "NOT p.prosecdef") {
