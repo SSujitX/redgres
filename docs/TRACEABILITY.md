@@ -8,7 +8,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; PG-008 Partial: GET `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` + flagged `DELETE …/rows` API (`postgres.destructive` + CSRF + AUTH-006) + inspector single-column PK checkboxes and danger Delete selected dialog (no live PG, no Playwright); PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; POST rotate is PG-006); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no Gate 4); PG-006 Partial: POST `/api/v1/postgres/databases/{db}/credentials/rotate` (`postgres.credentials` + CSRF) + ALTER ROLE + vault upsert + inspector Rotate (no live PG, no Gate 4, no AUTH-006); PG-010 Partial: POST `/api/v1/postgres/databases/{db}/duplicate` (`postgres.provision` + CSRF) TEMPLATE clone + unique owner + vault INSERT + clone-only compensation + inspector Duplicate (no live PG, no 202, no AUTH-006); PG-009 Partial: flagged `POST /api/v1/postgres/databases/{db}/truncate` (`postgres.destructive` + CSRF + AUTH-006, one `TRUNCATE … RESTART IDENTITY`) + inspector danger Truncate dialog (no live PG, no Playwright); PG-011 Partial: flagged `DELETE /api/v1/postgres/databases/{db}` (`postgres.destructive` + CSRF + AUTH-006, terminate excluding current backend then `DROP DATABASE`, optional `DROP ROLE` + vault DELETE; **BF-1** no backup HTTP gate) + inspector danger Drop dialog (no live PG, no Playwright) | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
-| OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | OPS-001/006 Partial: fail-closed dispatcher + `--dry-run` stage print. OPS-002 Partial: PATH host `--version` inventory on `--dry-run` only (`deploy/lib/inventory.sh`; Git Bash `deploy/tests/run.sh` 42 passed). OPS-003..005/007 Planned. No packages/host mutation. | Partial |
+| OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | OPS-001/006 Partial: fail-closed dispatcher + `--dry-run` stage print. OPS-002 Partial: PATH host `--version` inventory on `--dry-run` only (`deploy/lib/inventory.sh`). OPS-003 Partial: fail-closed `verify --non-interactive --dry-run --config PATH` skip matrix (`result=partial`; never sources config; Git Bash `deploy/tests/run.sh` 49 passed). OPS-004/005/007 Planned. No packages/host mutation. | Partial |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
 ## Per-feature completion template
@@ -5273,4 +5273,43 @@ Known limitations: PATH-only; binary ≠ running cluster; no
 Do not mark Complete.
 Local commits: cherry-pick `868b3a0` of writer `a04b2e8`;
  pushed through `ddd0581`.
+```
+
+## OPS-003 verify skip matrix (2026-08-26)
+
+```text
+Requirement: OPS-003 Partial (fail-closed verify --non-interactive
+ --dry-run --config PATH skip matrix). Keep OPS-001/002/006
+ dispatcher + PATH --version inventory. Keep OPS-004/005/007
+ Planned. Reject Complete. Not COMPATIBILITY.md §6. Not DNS.
+ Not Cloudflare Tunnel/Access/routes. Not public TLS. Not live
+ GET /api/v1/healthz or GET /api/v1/status. Not live sockets.
+ Not cluster SHOW/INFO. Not backup (no named backup keys;
+ OPS-004). Not production.
+Decision/ADR: ADR-002; INSTALLER_SPEC stage 12 This Partial;
+ SECURITY.md §7 health reveals no versions/hostnames/secrets;
+ CONFIGURATION.md REDGRES_ADDRESS 127.0.0.1:8790; API.md
+ healthz/status; DEPLOYMENT.md §3 bindings; BACKUP_RECOVERY.md
+ §6 skipped (no /var/backups fail-closed).
+Source characterization: none (no live probes this Partial).
+Implementation files: deploy/install.sh; deploy/lib/verify.sh;
+ deploy/tests/run.sh; deploy/README.md;
+ docs/INSTALLER_SPEC.md (stage 12 This Partial only);
+ docs/REPOSITORY_STRUCTURE.md (lib/verify.sh);
+ AGENTS.md current-truth; docs/TESTING.md installer note.
+Unit tests: parent re-ran Git Bash deploy/tests/run.sh on
+ integrated master `e256ced` → 49 passed, 0 failed (PATH
+ stubs; mutation STUB_NAMES unchanged including curl;
+ --config canary not sourced/printed; verify with no flags → 1;
+ verify without --dry-run → 2 and no inventory header;
+ missing/non-file/directory --config → 1; --mode on verify → 1;
+ backup still 2; install dry-run still inventories). Writer
+ claimed the same on `853eb73`. No Docker/live services.
+Integration tests: none — skip matrix only; curl not invoked;
+ do not assert live 200 healthz.
+Security tests: canary env/config not printed; --config not
+ sourced; no secret dump; no curl/wget/cloudflared/certbot.
+Limitations: DNS/Cloudflare/public TLS remain skipped.
+ result=partial is required so exit 0 is not Complete.
+Do not mark Complete.
 ```
