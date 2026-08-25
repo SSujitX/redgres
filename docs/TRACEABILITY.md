@@ -2910,7 +2910,8 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
  Writer UI feat/pg-012-rotation-eligibility-ui `07130ea`:
   npm --prefix web run test:run → Tests 224 passed (224), 33.43s
   npm --prefix web run build → success (ignored internal/web/dist/app/)
- Parent after merge `387b8d8` (docs record this commit):
+ Parent command set executed after merge `387b8d8` (docs-only record
+ `bd7b067` does not change behavior):
   gofmt -l internal/postgresadmin
    internal/httpapi/postgres_security_routes_test.go → empty
   go test -count=1 ./internal/postgresadmin ./internal/httpapi
@@ -2923,7 +2924,7 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
   go list -m github.com/redis/go-redis/v9 → v9.22.0
   npm --prefix web run test:run → Tests 224 passed (224), 37.64s
 Local commits: `674bd5c` (freeze), `686bbd9` (API), `07130ea` (UI),
- `744f8df` (merge API), `387b8d8` (merge UI), this docs record.
+ `744f8df` (merge API), `387b8d8` (merge UI), `bd7b067` (docs record).
  Not pushed.
 Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  Do not mark Complete.
