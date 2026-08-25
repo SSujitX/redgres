@@ -35,7 +35,7 @@ Path: `D:\code\github\database-app`
 - GET connection metadata is masked; explicit POST reveal decrypts the saved password.
 - Rotates eligible project-owner passwords and updates vault data.
 - Shows database/security information, tables, paginated rows, and primary keys.
-- Supports feature-flagged row delete, truncate, drop, and duplicate operations. Redgres duplicate is **not** behind `ENABLE_DESTRUCTIVE_ACTIONS` (PRD PG-010 is M4 provision; flags are M5 drop/truncate/row delete).
+- Supports feature-flagged row delete, truncate, drop, and duplicate operations. Redgres duplicate is **not** behind `ENABLE_DESTRUCTIVE_ACTIONS` (PRD PG-010 is M4 provision; flags are M5 drop/truncate/row delete). Redgres row delete uses `REDGRES_FEATURE_POSTGRES_ROW_DELETE` only (default off). It does not copy sibling FastAPI no-CSRF, client `primary_key_column`, `schema.table::regclass` + `LIMIT 1`, HTTP 500 `str(e)`, or `{deleted, message}`. Server discovers a single-column PK from parameterized `information_schema` and fail-closes on composite/missing PK. AUTH-006 is in-handler `owner_password` (REDIS-008 pattern).
 - Database duplication uses TEMPLATE cloning and per-object ownership transfer, avoiding `REASSIGN OWNED` against potentially shared source owners. Redgres keeps that isolation and does not copy the sibling client password, FastAPI 500/`str(e)`, or 202 operations envelope.
 - Connection URL builder URL-encodes username/password/database and emits direct 5432 and pooled 6432 variants with TLS required.
 
