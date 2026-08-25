@@ -224,12 +224,12 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 | GET | `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` | Bounded rows/search (implemented; offset/limit; `q` max 128) |
 | GET | `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` | PK column names (PG-008 Partial freeze; `postgres.read`; no CSRF; no flag) |
 | DELETE | `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` | Selected rows; typed table confirmation + owner reauth (PG-008 Partial freeze; `postgres.destructive` + CSRF + `REDGRES_FEATURE_POSTGRES_ROW_DELETE`) |
-| POST | `/api/v1/postgres/databases/{db}/truncate` | Explicit target confirmation + reauth |
+| POST | `/api/v1/postgres/databases/{db}/truncate` | Truncate all listed BASE TABLEs; typed database confirmation + owner reauth (PG-009 Partial freeze; `postgres.destructive` + CSRF + `REDGRES_FEATURE_POSTGRES_TRUNCATE`) |
 | GET | `/api/v1/postgres/security` | Cluster security overview (implemented; vault existence query) |
 
 Database/role names in URL segments are decoded then validated. Transport validation never replaces PostgreSQL identifier quoting.
 
-**Implemented now:** `GET /api/v1/postgres/databases`, `GET /api/v1/postgres/databases/{db}`, `GET /api/v1/postgres/databases/{db}/connection`, `GET /api/v1/postgres/databases/{db}/tables`, `GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows`, and `GET /api/v1/postgres/security` require a session and the `postgres.read` capability. `POST /api/v1/postgres/databases/{db}/connection/reveal` requires a session, `postgres.credentials`, and CSRF (PG-005 Partial). `POST /api/v1/postgres/databases` requires a session, `postgres.provision`, and CSRF (PG-003 Partial). `POST /api/v1/postgres/databases/{db}/credentials/rotate` requires a session, `postgres.credentials`, and CSRF (PG-006 Partial). `POST /api/v1/postgres/databases/{db}/duplicate` requires a session, `postgres.provision`, and CSRF (PG-010 Partial). `GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` requires a session and `postgres.read` (PG-008 Partial freeze; no CSRF; no flag). `DELETE /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` requires a session, `postgres.destructive`, CSRF, and `REDGRES_FEATURE_POSTGRES_ROW_DELETE` (PG-008 Partial freeze; AUTH-006). List and table list are unpaginated and hard-capped at 500 (`truncated: true` if more rows exist). Details include owner, size, collation/ctype, locale fields, connection count, and security flags. Details `saved_credential` is a vault **existence** result for the database owner (`present` / `missing` / `not_available` with reason `vault_unavailable`). Ciphertext is never selected or returned. `vault_not_implemented` is not used. Table list returns `{schema,name}` for `information_schema` `BASE TABLE` rows outside `pg_catalog` and `information_schema`. Schema/table names on the table list are result columns. Row browse quotes schema, table, and column names with `pgx.Identifier` and parameterizes values. Query `q` is optional (no minimum); more than 128 Unicode code points returns `400` `validation_error` with `fields.q` and does not query. `q` `ILIKE`s columns whose `data_type` contains `text`, `character`, or `citext` (same predicate as `database-app` `fetch_table_data` at `1c3e8e2`; `citext` stored as `USER-DEFINED` is therefore usually not searched). `%` and `_` in `q` remain LIKE wildcards. Default `limit` is 50; `limit<=0` or `limit>500` clamps to 50; `offset<0` clamps to 0; non-integer `limit`/`offset` is `400`. Response is `{columns,rows,total,offset,limit,request_id}`. A missing or non-`BASE TABLE` schema/table, `pg_catalog`/`information_schema`, or a table with no columns is `404` `not_found` (same message as a missing database). An existing table with columns and zero matching rows is `200` with `rows: []` and `total: 0`. Cell values use JSON-safe encoding (`null`, bool, finite numbers, `numeric` as string, `bytea` as PostgreSQL `\x` hex text, timestamps as RFC3339). Encode/connect/query failure is `503` `dependency_unavailable` and never a healthy empty page. Protected names, protected owners, templates, and `datallowconn=false` are omitted from the list and return the same `404` `not_found` as a missing database (not `protected_resource`); table list and rows do not open a per-database connection for those names. Invalid identifiers return `400` `validation_error` without querying. `GET /api/v1/healthz` does not ping PostgreSQL.
+**Implemented now:** `GET /api/v1/postgres/databases`, `GET /api/v1/postgres/databases/{db}`, `GET /api/v1/postgres/databases/{db}/connection`, `GET /api/v1/postgres/databases/{db}/tables`, `GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows`, and `GET /api/v1/postgres/security` require a session and the `postgres.read` capability. `POST /api/v1/postgres/databases/{db}/connection/reveal` requires a session, `postgres.credentials`, and CSRF (PG-005 Partial). `POST /api/v1/postgres/databases` requires a session, `postgres.provision`, and CSRF (PG-003 Partial). `POST /api/v1/postgres/databases/{db}/credentials/rotate` requires a session, `postgres.credentials`, and CSRF (PG-006 Partial). `POST /api/v1/postgres/databases/{db}/duplicate` requires a session, `postgres.provision`, and CSRF (PG-010 Partial). `GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` requires a session and `postgres.read` (PG-008 Partial freeze; no CSRF; no flag). `DELETE /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` requires a session, `postgres.destructive`, CSRF, and `REDGRES_FEATURE_POSTGRES_ROW_DELETE` (PG-008 Partial freeze; AUTH-006). `POST /api/v1/postgres/databases/{db}/truncate` requires a session, `postgres.destructive`, CSRF, and `REDGRES_FEATURE_POSTGRES_TRUNCATE` (PG-009 Partial freeze; AUTH-006). List and table list are unpaginated and hard-capped at 500 (`truncated: true` if more rows exist). Details include owner, size, collation/ctype, locale fields, connection count, and security flags. Details `saved_credential` is a vault **existence** result for the database owner (`present` / `missing` / `not_available` with reason `vault_unavailable`). Ciphertext is never selected or returned. `vault_not_implemented` is not used. Table list returns `{schema,name}` for `information_schema` `BASE TABLE` rows outside `pg_catalog` and `information_schema`. Schema/table names on the table list are result columns. Row browse quotes schema, table, and column names with `pgx.Identifier` and parameterizes values. Query `q` is optional (no minimum); more than 128 Unicode code points returns `400` `validation_error` with `fields.q` and does not query. `q` `ILIKE`s columns whose `data_type` contains `text`, `character`, or `citext` (same predicate as `database-app` `fetch_table_data` at `1c3e8e2`; `citext` stored as `USER-DEFINED` is therefore usually not searched). `%` and `_` in `q` remain LIKE wildcards. Default `limit` is 50; `limit<=0` or `limit>500` clamps to 50; `offset<0` clamps to 0; non-integer `limit`/`offset` is `400`. Response is `{columns,rows,total,offset,limit,request_id}`. A missing or non-`BASE TABLE` schema/table, `pg_catalog`/`information_schema`, or a table with no columns is `404` `not_found` (same message as a missing database). An existing table with columns and zero matching rows is `200` with `rows: []` and `total: 0`. Cell values use JSON-safe encoding (`null`, bool, finite numbers, `numeric` as string, `bytea` as PostgreSQL `\x` hex text, timestamps as RFC3339). Encode/connect/query failure is `503` `dependency_unavailable` and never a healthy empty page. Protected names, protected owners, templates, and `datallowconn=false` are omitted from the list and return the same `404` `not_found` as a missing database (not `protected_resource`); table list and rows do not open a per-database connection for those names. Invalid identifiers return `400` `validation_error` without querying. `GET /api/v1/healthz` does not ping PostgreSQL.
 
 **GET `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` (PG-008 Partial freeze).** Session cookie and `postgres.read` (not `postgres.destructive`). No CSRF. No feature flag. Register next to GET `/rows`:
 
@@ -295,9 +295,87 @@ Success `200`:
 
 Sibling deltas (do not copy): FastAPI no CSRF; `ENABLE_DESTRUCTIVE_ACTIONS`; client `primary_key_column`; `schema.table::regclass` + `LIMIT 1` without `ORDER BY`; HTTP 500 `str(e)`; `console.log` of PK values; `{deleted, message}` toast envelope; empty-array success `{deleted: 0}`.
 
-PG-008 stays Partial. AUTH-006 stays Partial: Redis `DELETE /api/v1/redis/users/{username}` plus this DELETE. PostgreSQL drop/truncate reauth is not this slice. Live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright viewports, `go test -race`, CI, and Node 24.19.0 remain outstanding. Gate 4 does not apply (no vault decrypt). Do not mark Complete.
+PG-008 stays Partial. AUTH-006 stays Partial: Redis `DELETE /api/v1/redis/users/{username}` plus this DELETE (PG-009 truncate is a separate freeze). PostgreSQL drop reauth is not this slice. Live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright viewports, `go test -race`, CI, and Node 24.19.0 remain outstanding. Gate 4 does not apply (no vault decrypt). Do not mark Complete.
 
 **UI copy (frozen with this DELETE contract):** Row grid checkboxes only when GET primary-key returns **exactly one** column. Hide checkboxes when `primary_key` is `[]` or length ≠ 1. **Delete selected** is `--danger` (not PostgreSQL identity blue), shown when a single-column PK exists (including when the flag is off; HTTP `403` uses **Row delete is turned off.**). Hidden while rows loading. Disabled while delete is in flight, while a credential ticket is open, or while zero rows are selected. Dialog `role=dialog`, title **Delete selected rows**, same focus trap as Redis Delete. Copy: type the exact **table** name and owner password; states the selected count and `schema.table` via `displayText()`; **Cannot be undone.** Fields: table confirm `autocomplete=off`; owner password `type=password` `autocomplete=current-password`. Confirm Delete disabled until confirmation equals the path table **and** password length > 0. Client confirmation is not authorization. DELETE uses CSRF, `encodeURIComponent` for db/schema/table, JSON `{ table_confirmation, owner_password, primary_key_values }` only. HTTP 200: close dialog, clear password/confirmation/selection, reload the current row page. `reauth_required`: stay on dialog, announce error, **clear password**, keep confirmation. 401: session-expired, clear secrets. 400 confirmation/PK stay on dialog. 404 / generic 503 inspector families. Flag-off 403 stays on dialog with **Row delete is turned off.** Memory only; clear selection on database/table change, Back, logout. Search / login / Security overview never DELETE rows.
+
+**POST `/api/v1/postgres/databases/{db}/truncate` (PG-009 / AUTH-006 Partial freeze).** Session cookie, `postgres.destructive` (not `postgres.read`, not `postgres.provision`, not `postgres.credentials`), and CSRF (`requireMutation`). Register next to duplicate, **before** `GET .../databases/{db}`:
+
+```go
+r.With(s.requireSession, s.requireCapability("postgres.destructive"), s.requireMutation).Post("/api/v1/postgres/databases/{db}/truncate", s.handlePostgresDatabaseTruncate)
+```
+
+Other methods on `/truncate` are `405` `method_not_allowed`. Path `{db}` uses existing `decodePathIdentifier`. Invalid name → `400` `validation_error`, no catalog. There is no `POST /api/v1/auth/reauth` and no short-lived reauth grant. Handler timeout is **30s**. In-process TryLock on the **database name** only (request-scoped memory; do not share rotate/duplicate lock maps). Lock fail → `409` `operation_in_progress`, copy **A truncate is already in progress.** No `202`. No `migrations/002_operations.sql`. Responses are `Cache-Control: no-store`. Feature flag is **`REDGRES_FEATURE_POSTGRES_TRUNCATE`** only (default unset = off), parsed with `envBool` (same rules as row delete). There is no `ENABLE_DESTRUCTIVE_ACTIONS`. This Partial is in-request **200**. Do not bump pgx (`v5.10.0`). Official PostgreSQL 17/18 `TRUNCATE`: [17](https://www.postgresql.org/docs/17/sql-truncate.html), [18](https://www.postgresql.org/docs/18/sql-truncate.html). Backup freshness is **not** an HTTP gate (table-set mutation, not DROP DATABASE). `docs/OPERATIONS.md` remains the operator runbook. Gate 4 does not apply.
+
+Body **only**:
+
+```json
+{
+  "database_confirmation": "project_a",
+  "owner_password": "<owner password>"
+}
+```
+
+`database_confirmation` is the path `{db}`. Do not require a typed table list. `DisallowUnknownFields`. Unknown fields (including `confirmation`, `table_confirmation`, `password`, `tables`, `cascade`) → `400` `validation_error` (`Unknown field`), no audit, no PostgreSQL.
+
+**Check order:**
+
+1. Middleware: session, `postgres.destructive`, CSRF.
+2. Flag unset or false → `403` `forbidden`, copy **Truncate is turned off.**, **no JSON decode**, no audit, no PostgreSQL. Invalid flag value fails `config.Load` (names the env var; never echoes the value).
+3. Path `decodePathIdentifier` `{db}`. Invalid → `400`, no catalog.
+4. JSON decode.
+5. `database_confirmation` **exact** match to path `{db}`. Mismatch or empty → `400` `validation_error` with `fields.database_confirmation`, copy **Type the exact database name to confirm truncate**, no audit, no PostgreSQL.
+6. AUTH-006: `auth.Reauthenticate` (`LookupOwnerByUsername` + `Verify` on `owner_password`). Wrong password → `403` `reauth_required`, **Owner password is incorrect**, failure audit `postgres.database.truncate` with metadata **`database` only**, **no SQL**. Missing owner → `VerifyUnknown` then `401` `unauthorized`, no audit, no SQL. Other SQLite lookup errors → `503` `dependency_unavailable`. **Do not** increment AUTH-005 `login_attempts`. **Do not** return `429`. Never log, audit, or return `owner_password`.
+7. TryLock. Then `Service.Truncate`.
+8. Success audit then **200**. Audit-fail after `TRUNCATE` → `503` `dependency_unavailable` (tables stay truncated; same fail-closed family as Redis DELETE / PG-008).
+
+**Manageability:** same as GET tables: protected names (`postgres`, `template0`, `template1`, `database_console_vault`, configured admin/state databases, deny-list, protected owners), template, `datallowconn=false`, missing database → `404` `not_found` (same operator copy as details), **not** `403` `protected_resource`. Failure audit allowed after reauth; **no `TRUNCATE`**. Nil adapter → `503`.
+
+**Table list before any `TRUNCATE`:** reuse existing `listTablesSQL` (do not invent catalog SQL; do not filter `information_schema.enforced`):
+
+```sql
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_type = 'BASE TABLE'
+  AND table_schema NOT IN ('pg_catalog', 'information_schema')
+ORDER BY table_schema, table_name
+LIMIT 501
+```
+
+Catalog names use `QuoteCatalogIdentifier` / `pgx.Identifier{schema,table}.Sanitize()`; empty/NUL **fail closed** (entire request, no `TRUNCATE`). HTTP `{db}` stays `ValidateIdentifier`. Connect through existing `connectTarget`.
+
+If `len > 500` (GET-tables truncated): **no `TRUNCATE`**. HTTP **`409` `conflict`**, copy **Table list is truncated. Truncate cannot run.** Failure audit `database` only.
+
+Zero tables: still require AUTH-006; then **200** with `truncated: 0`, `failed: []`, `total_tables: 0`.
+
+**SQL (frozen):** one statement naming every listed `{schema}.{table}`:
+
+```sql
+TRUNCATE TABLE {quoted schema.table, ...} RESTART IDENTITY
+```
+
+No `CASCADE` (RESTRICT default). No `ONLY`. No `CONTINUE IDENTITY`. No per-table loop. Identifiers only (table names are not query parameters). pgx **v5.10.0**. Sibling per-table `CASCADE` + swallowed exceptions is forbidden. `failed` is `[]` on HTTP 200. Statement failure after listing → `503` `dependency_unavailable` (“PostgreSQL is unavailable”), failure audit `database` only, no 200 with a partial count.
+
+Success `200`:
+
+```json
+{
+  "truncated": 12,
+  "failed": [],
+  "total_tables": 12,
+  "request_id": "<32 lowercase hex>"
+}
+```
+
+`failed` is never `null`. `truncated` is the **count of truncated tables**, not the GET-list cap flag. No sibling `message`. No SQL, password, URLs, `err.Error()`, or table contents.
+
+**Audit:** `postgres.database.truncate`. Success metadata: `database`, `truncated` (count), `total_tables`. Failure metadata (wrong password, 404, truncated-list, 503, lock): `database` only. Never passwords, SQL, URLs, table contents, raw errors.
+
+Sibling deltas (do not copy): FastAPI `DELETE /databases/{name}/data` with session only; no CSRF; `ENABLE_DESTRUCTIVE_ACTIONS`; click-through modal (no typed name, no owner password); per-table `CASCADE` + swallowed exceptions; `{truncated, total_tables, message}`; HTTP 500 `str(e)`.
+
+PG-009 stays Partial. AUTH-006 stays Partial: Redis `DELETE /api/v1/redis/users/{username}` plus PG-008 row DELETE plus this POST. PostgreSQL drop reauth is not this slice. Live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright viewports, `go test -race`, CI, and Node 24.19.0 remain outstanding. Gate 4 does not apply. Do not mark Complete.
+
+**UI copy (frozen with this POST contract):** Inspector **Truncate** is `--danger` (not PostgreSQL identity blue) when a manageable database is selected and details are loaded (not gated on rotation-eligible). Shown when the flag is off (HTTP `403` uses **Truncate is turned off.**). Hidden while details loading. Disabled while truncate/reveal/rotate/duplicate/create/row-delete is in flight or a credential ticket is open. Place in the inspector **danger** action row, not Security overview, not page-header Create, not the row-grid **Delete selected** control. Dialog `role=dialog`, title **Truncate project data**, same focus trap as Redis Delete / PG-008. Copy: type the exact **database** name and owner password; this removes all rows from all tables in `{db}` via `displayText()`; tables remain; the database is not dropped; **Sequences owned by those tables restart.**; **Cannot be undone.** Do not claim backup verification. Fields: database confirm `autocomplete=off`; owner password `type=password` `autocomplete=current-password`. Confirm Truncate disabled until confirmation equals the selected database **and** password length > 0. Client confirmation is not authorization. POST uses CSRF, `encodeURIComponent(db)`, JSON `{ database_confirmation, owner_password }` only. HTTP 200: close dialog, clear password/confirmation, reload tables; if a table is selected, reload the current row page. `reauth_required`: stay, announce error, **clear password**, keep confirmation. 401: session-expired, clear secrets. Flag-off 403 stays on dialog with **Truncate is turned off.** 409 truncated-list / in-progress stay on dialog. 404 / generic 503 inspector families. Memory only; clear on database change, Back, logout. Search / login / Security overview never POST truncate.
 
 **GET `/api/v1/postgres/security`** requires a session cookie and the `postgres.read` capability, and does not require CSRF. There are no query parameters. The path is exact. Other methods are `405` `method_not_allowed`. Missing session is `401` `unauthorized` with no `summary`, `databases`, `connections`, `saved_credential`, or `truncated` keys. Nil adapter or catalog/query failure is `503` `dependency_unavailable` (same operator copy as other PostgreSQL GETs) and is never a `200` with empty arrays. Responses are `Cache-Control: no-store`. This GET is not a mutation and does not write an audit event. Responses never include passwords, URLs, hashes, role OIDs, raw `datacl`, SQL, `err.Error()`, `connection_limit`, `size`, `size_bytes`, `has_saved_password`, `can_rotate`, or URL templates. `summary.missing_password_count` is present only when the vault existence query succeeded (see below).
 
@@ -996,7 +1074,7 @@ Success `200`:
 
 No `ok`, `user`, `state`, `credential`, `reason`. Sibling redis-ui `{ok: true}` is **not** copied.
 
-AUTH-006 stays Partial: Redis ACL delete plus PG-008 row delete (separate freeze). PostgreSQL drop/truncate reauth is not REDIS-008. REDIS-008 stays Partial: MemoryClient/HTTP/jsdom; not COMPATIBILITY.md §6; not Playwright viewports. Do not mark Complete.
+AUTH-006 stays Partial: Redis ACL delete plus PG-008 row delete plus PG-009 truncate (separate freezes). PostgreSQL drop reauth is not REDIS-008. REDIS-008 stays Partial: MemoryClient/HTTP/jsdom; not COMPATIBILITY.md §6; not Playwright viewports. Do not mark Complete.
 
 **UI copy (frozen with this contract):** Inspector **Delete** for non-protected users when list `state` is `ok`; hidden for protected / `not_configured` / `unavailable` / while detail loading. Danger surface (`--danger`, not Redis identity `--redis`). Disabled while delete/enable/rotate/edit is in flight or a credential ticket is open. Dialog `role=dialog` title **Delete Redis user**. Copy: type the exact username and owner password; this removes the ACL user; **existing Redis connections for that user are terminated; keys are not deleted; cannot be undone**. Fields: username confirm `autocomplete=off`; owner password `type=password` `autocomplete=current-password`. Confirm **Delete** disabled until confirmation equals the selected username **and** password length > 0. Client confirmation is not authorization. CSRF + `encodeURIComponent(username)` + JSON body. HTTP 200: close dialog, **clear password and confirmation**, clear inspector selection, refresh list. 401: session-expired, clear secrets, no leftover password. `reauth_required`: stay on dialog, announce error, **clear password field**, keep confirmation. 403 protected / 404 / 503: same copy families as rotate. State in memory only; clear on logout, section change, inspect another user, dismiss. Search still never deletes. Login never DELETE.
 

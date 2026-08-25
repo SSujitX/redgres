@@ -72,17 +72,17 @@ When set, the value must be an absolute URL with a scheme and host, no userinfo,
 ## Feature gates
 
 - `REDGRES_FEATURE_POSTGRES_DROP=false` (target; not loaded this slice)
-- `REDGRES_FEATURE_POSTGRES_TRUNCATE=false` (target; not loaded this slice)
+- `REDGRES_FEATURE_POSTGRES_TRUNCATE=false` (PG-009 Partial freeze: **implemented**)
 - `REDGRES_FEATURE_POSTGRES_ROW_DELETE=false` (PG-008 Partial freeze: **implemented**)
 
-`REDGRES_FEATURE_POSTGRES_ROW_DELETE` is parsed with `envBool`: unset/empty → false; `1`/`true`/`yes`/`on` → true; `0`/`false`/`no`/`off` → false; any other value fails `Load` and names the env var (never echoes the value). Do not use `envBoolDefaultFalse` (it would swallow invalid as off). Truncate and drop keys are not loaded in the PG-008 slice.
+`REDGRES_FEATURE_POSTGRES_ROW_DELETE` and `REDGRES_FEATURE_POSTGRES_TRUNCATE` are parsed with `envBool`: unset/empty → false; `1`/`true`/`yes`/`on` → true; `0`/`false`/`no`/`off` → false; any other value fails `Load` and names the env var (never echoes the value). Do not use `envBoolDefaultFalse` (it would swallow invalid as off). Drop keys are not loaded in the PG-009 slice.
 
 There is no `REDGRES_FEATURE_POSTGRES_CREATE`. Create is not a destructive flag.
 There is no `REDGRES_FEATURE_POSTGRES_ROTATE`. Rotate is not a destructive flag.
 There is no `REDGRES_FEATURE_POSTGRES_DUPLICATE`. Duplicate is not a destructive flag.
 There is no `ENABLE_DESTRUCTIVE_ACTIONS` and no `REDGRES_FEATURE_POSTGRES_DELETE`.
 
-Enabling a flag makes the server-side workflow reachable; it never bypasses capabilities, protected targets, CSRF, confirmation, reauthentication, or audit. Flag-off DELETE rows is `403` `forbidden` with copy **Row delete is turned off.** before JSON decode. `GET /api/v1/session` does not gain a `features` object in this slice.
+Enabling a flag makes the server-side workflow reachable; it never bypasses capabilities, protected targets, CSRF, confirmation, reauthentication, or audit. Flag-off DELETE rows is `403` `forbidden` with copy **Row delete is turned off.** before JSON decode. Flag-off POST truncate is `403` `forbidden` with copy **Truncate is turned off.** before JSON decode. `GET /api/v1/session` does not gain a `features` object in this slice.
 
 ## Owner bootstrap CLI
 
