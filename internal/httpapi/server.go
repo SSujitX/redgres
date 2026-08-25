@@ -23,7 +23,7 @@ type redisHealth interface {
 	Status(ctx context.Context) (redisadmin.Metrics, error)
 	ListUsers(ctx context.Context) (redisadmin.UserList, error)
 	GetUser(ctx context.Context, username string) (redisadmin.User, error)
-	CreateUser(ctx context.Context, username, keyPattern, preset, queueKind string) (redisadmin.CreateResult, error)
+	CreateUser(ctx context.Context, username, keyPattern, preset, queueKind string, commands []string) (redisadmin.CreateResult, error)
 	UpdatePermissions(ctx context.Context, username, keyPattern, preset, queueKind string, commands []string) (redisadmin.User, error)
 	SetEnabled(ctx context.Context, username string, enabled bool) (redisadmin.User, error)
 	RotateUser(ctx context.Context, username string) (redisadmin.RotateResult, error)

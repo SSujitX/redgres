@@ -240,3 +240,107 @@ func TestUpdatePermissionsCustomTooManyCommands(t *testing.T) {
 		t.Fatalf("SETUSER on oversized commands: %#v", mem.ACLSetUserCalls)
 	}
 }
+
+func TestCreateUserCustomGrantVectors(t *testing.T) {
+	cases := []struct {
+		name     string
+		commands []string
+		want     []string
+	}{
+		{name: "cache-read-write-subset", commands: []string{"ECHO", " get ", "ping", "GET"}, want: []string{"echo", "get", "ping"}},
+		{name: "connection-safe-only", commands: []string{"quit", "hello", "echo", "ping"}, want: []string{"echo", "hello", "ping", "quit"}},
+		{name: "queue-lists-subset", commands: []string{"lpush", "blpop", "rpop"}, want: []string{"blpop", "lpush", "rpop"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := &MemoryClient{}
+			svc := NewService(mem)
+			got, err := svc.CreateUser(context.Background(), "project_a", "project_a", PresetCustom, "", tc.commands)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.User.Enabled || got.User.Protected || got.User.RuleFidelity != RuleExact {
+				t.Fatalf("user = %#v", got.User)
+			}
+			if got.User.Preset != PresetCustom {
+				t.Fatalf("preset = %q", got.User.Preset)
+			}
+			if !equalSet(got.User.Commands, tc.want) {
+				t.Fatalf("commands = %#v want %#v", got.User.Commands, tc.want)
+			}
+			if len(mem.ACLSetUserCalls) != 1 {
+				t.Fatalf("ACLSetUser calls = %d", len(mem.ACLSetUserCalls))
+			}
+			assertCreateRules(t, mem.ACLSetUserCalls[0].Rules, got.Password, "project_a:*", tc.want)
+		})
+	}
+}
+
+func TestCreateUserCustomRejectsBeforeRedis(t *testing.T) {
+	cases := []struct {
+		name     string
+		commands []string
+	}{
+		{name: "flushall", commands: []string{"flushall"}},
+		{name: "acl", commands: []string{"acl"}},
+		{name: "config", commands: []string{"config"}},
+		{name: "eval", commands: []string{"eval"}},
+		{name: "at-all", commands: []string{"@all"}},
+		{name: "plus", commands: []string{"+get"}},
+		{name: "minus", commands: []string{"-@all"}},
+		{name: "tilde", commands: []string{"~project:*"}},
+		{name: "gt", commands: []string{">secret"}},
+		{name: "pipe", commands: []string{"get|set"}},
+		{name: "space", commands: []string{"get extra"}},
+		{name: "reset", commands: []string{"reset"}},
+		{name: "unknown", commands: []string{"notacommand"}},
+		{name: "empty", commands: nil},
+		{name: "empty-array", commands: []string{}},
+		{name: "blank", commands: []string{"", "  "}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := &MemoryClient{
+				ACLListErr: errors.New("acl list should not run"),
+			}
+			svc := NewService(mem)
+			_, err := svc.CreateUser(context.Background(), "project_a", "project_a", PresetCustom, "", tc.commands)
+			if !errors.Is(err, ErrInvalidCommands) {
+				t.Fatalf("err = %v", err)
+			}
+			if len(mem.ACLSetUserCalls) != 0 {
+				t.Fatalf("SETUSER on reject: %#v", mem.ACLSetUserCalls)
+			}
+		})
+	}
+}
+
+func TestCreateUserNamedRejectsCommandsBeforeRedis(t *testing.T) {
+	mem := &MemoryClient{
+		ACLListErr: errors.New("acl list should not run"),
+	}
+	svc := NewService(mem)
+	_, err := svc.CreateUser(context.Background(), "project_a", "project_a", PresetReadOnly, "", []string{"get"})
+	if !errors.Is(err, ErrInvalidCommands) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(mem.ACLSetUserCalls) != 0 {
+		t.Fatalf("SETUSER on named+commands: %#v", mem.ACLSetUserCalls)
+	}
+}
+
+func TestCreateUserCustomTooManyCommands(t *testing.T) {
+	mem := &MemoryClient{ACLListErr: errors.New("acl list should not run")}
+	svc := NewService(mem)
+	cmds := make([]string, maxACLCommands+1)
+	for i := range cmds {
+		cmds[i] = "ping"
+	}
+	_, err := svc.CreateUser(context.Background(), "project_a", "project_a", PresetCustom, "", cmds)
+	if !errors.Is(err, ErrInvalidCommands) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(mem.ACLSetUserCalls) != 0 {
+		t.Fatalf("SETUSER on oversized commands: %#v", mem.ACLSetUserCalls)
+	}
+}

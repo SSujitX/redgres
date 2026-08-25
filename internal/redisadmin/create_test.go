@@ -10,7 +10,7 @@ import (
 func TestCreateUserBuildsSafeCacheReadWriteRules(t *testing.T) {
 	mem := &MemoryClient{}
 	svc := NewService(mem)
-	got, err := svc.CreateUser(context.Background(), "project_a", "project_a", "", "")
+	got, err := svc.CreateUser(context.Background(), "project_a", "project_a", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,6 +36,82 @@ func TestCreateUserBuildsSafeCacheReadWriteRules(t *testing.T) {
 	}
 }
 
+func TestCreateUserCustomAllowList(t *testing.T) {
+	mem := &MemoryClient{}
+	svc := NewService(mem)
+	got, err := svc.CreateUser(context.Background(), "project_a", "project_a", PresetCustom, "", []string{"ECHO", " get ", "ping", "GET"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.User.Enabled || got.User.Protected || got.User.RuleFidelity != RuleExact {
+		t.Fatalf("user = %#v", got.User)
+	}
+	if got.User.Preset != PresetCustom || got.User.QueueKind != "" {
+		t.Fatalf("labels = %#v", got.User)
+	}
+	want := []string{"echo", "get", "ping"}
+	if !equalSet(got.User.Commands, want) {
+		t.Fatalf("commands = %#v want %#v", got.User.Commands, want)
+	}
+	if len(mem.ACLSetUserCalls) != 1 {
+		t.Fatalf("ACLSetUser calls = %d", len(mem.ACLSetUserCalls))
+	}
+	assertCreateRules(t, mem.ACLSetUserCalls[0].Rules, got.Password, "project_a:*", want)
+}
+
+func TestCreateUserCustomMatchingNamedSetInfersNamedPreset(t *testing.T) {
+	mem := &MemoryClient{}
+	svc := NewService(mem)
+	got, err := svc.CreateUser(context.Background(), "project_a", "project_a", PresetCustom, "", inspectReadOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.User.Preset != PresetReadOnly {
+		t.Fatalf("inferPreset = %q want %s", got.User.Preset, PresetReadOnly)
+	}
+	if got.User.QueueKind != "" {
+		t.Fatalf("queue_kind = %q", got.User.QueueKind)
+	}
+	if !equalSet(got.User.Commands, inspectReadOnly) {
+		t.Fatalf("commands mismatch")
+	}
+	assertCreateRules(t, mem.ACLSetUserCalls[0].Rules, got.Password, "project_a:*", inspectReadOnly)
+}
+
+func TestCreateUserNamedEmptyCommandsStillSucceeds(t *testing.T) {
+	cases := []struct {
+		name     string
+		preset   string
+		commands []string
+	}{
+		{name: "omitted", preset: "", commands: nil},
+		{name: "empty-array", preset: PresetReadOnly, commands: []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := &MemoryClient{}
+			svc := NewService(mem)
+			got, err := svc.CreateUser(context.Background(), "project_a", "project_a", tc.preset, "", tc.commands)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(mem.ACLSetUserCalls) != 1 {
+				t.Fatalf("ACLSetUser calls = %d", len(mem.ACLSetUserCalls))
+			}
+			wantPreset := PresetCacheReadWrite
+			wantCmds := inspectCacheReadWrite
+			if tc.preset == PresetReadOnly {
+				wantPreset = PresetReadOnly
+				wantCmds = inspectReadOnly
+			}
+			if got.User.Preset != wantPreset {
+				t.Fatalf("preset = %q", got.User.Preset)
+			}
+			assertCreateRules(t, mem.ACLSetUserCalls[0].Rules, got.Password, "project_a:*", wantCmds)
+		})
+	}
+}
+
 func TestCreateUserNamedPresetsGrantMatchingInspectSets(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -54,7 +130,7 @@ func TestCreateUserNamedPresetsGrantMatchingInspectSets(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mem := &MemoryClient{}
 			svc := NewService(mem)
-			got, err := svc.CreateUser(context.Background(), "project_a", "project_a", tc.preset, tc.queueKind)
+			got, err := svc.CreateUser(context.Background(), "project_a", "project_a", tc.preset, tc.queueKind, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -80,10 +156,14 @@ func TestCreateUserRejectsCustomUnknownAndQueueKindMismatch(t *testing.T) {
 		name      string
 		preset    string
 		queueKind string
+		commands  []string
 		want      error
 	}{
-		{name: "custom", preset: PresetCustom, want: ErrInvalidPreset},
+		{name: "custom-empty", preset: PresetCustom, want: ErrInvalidCommands},
+		{name: "custom-with-kind", preset: PresetCustom, queueKind: QueueLists, commands: []string{"get"}, want: ErrInvalidQueueKind},
 		{name: "unknown", preset: "not-a-preset", want: ErrInvalidPreset},
+		{name: "named-with-commands", preset: PresetReadOnly, commands: []string{"get"}, want: ErrInvalidCommands},
+		{name: "empty-preset-with-commands", commands: []string{"get"}, want: ErrInvalidCommands},
 		{name: "queue-missing-kind", preset: PresetQueueWorker, want: ErrInvalidQueueKind},
 		{name: "queue-bad-kind", preset: PresetQueueWorker, queueKind: "jobs", want: ErrInvalidQueueKind},
 		{name: "cache-with-kind", preset: PresetCacheReadWrite, queueKind: QueueLists, want: ErrInvalidQueueKind},
@@ -92,9 +172,9 @@ func TestCreateUserRejectsCustomUnknownAndQueueKindMismatch(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			mem := &MemoryClient{}
+			mem := &MemoryClient{ACLListErr: errors.New("acl list should not run")}
 			svc := NewService(mem)
-			_, err := svc.CreateUser(context.Background(), "project_a", "project_a", tc.preset, tc.queueKind)
+			_, err := svc.CreateUser(context.Background(), "project_a", "project_a", tc.preset, tc.queueKind, tc.commands)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v want %v", err, tc.want)
 			}
@@ -108,13 +188,13 @@ func TestCreateUserRejectsCustomUnknownAndQueueKindMismatch(t *testing.T) {
 func TestCreateUserRejectsProtectedAndDuplicate(t *testing.T) {
 	mem := &MemoryClient{ACLLines: []string{"user project_a on ~project_a:* -@all +ping"}}
 	svc := NewServiceAdmin(mem, "ops_admin")
-	if _, err := svc.CreateUser(context.Background(), "admin", "project_a", "", ""); !errors.Is(err, ErrProtectedUser) {
+	if _, err := svc.CreateUser(context.Background(), "admin", "project_a", "", "", nil); !errors.Is(err, ErrProtectedUser) {
 		t.Fatalf("admin err = %v", err)
 	}
-	if _, err := svc.CreateUser(context.Background(), "ops_admin", "ops", "", ""); !errors.Is(err, ErrProtectedUser) {
+	if _, err := svc.CreateUser(context.Background(), "ops_admin", "ops", "", "", nil); !errors.Is(err, ErrProtectedUser) {
 		t.Fatalf("configured admin err = %v", err)
 	}
-	if _, err := svc.CreateUser(context.Background(), "project_a", "project_a", "", ""); !errors.Is(err, ErrConflict) {
+	if _, err := svc.CreateUser(context.Background(), "project_a", "project_a", "", "", nil); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate err = %v", err)
 	}
 	if len(mem.ACLSetUserCalls) != 0 {
@@ -124,14 +204,14 @@ func TestCreateUserRejectsProtectedAndDuplicate(t *testing.T) {
 
 func TestCreateUserNilClientIsNotConfigured(t *testing.T) {
 	svc := NewService(nil)
-	if _, err := svc.CreateUser(context.Background(), "project_a", "project_a", "", ""); !errors.Is(err, ErrNotConfigured) {
+	if _, err := svc.CreateUser(context.Background(), "project_a", "project_a", "", "", nil); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestCreateUserMapsRedisFailure(t *testing.T) {
 	svc := NewService(&MemoryClient{ACLListErr: errors.New("NOAUTH Authentication required. canary-secret")})
-	_, err := svc.CreateUser(context.Background(), "project_a", "project_a", "", "")
+	_, err := svc.CreateUser(context.Background(), "project_a", "project_a", "", "", nil)
 	if !errors.Is(err, ErrAuthFailed) {
 		t.Fatalf("err = %v", err)
 	}
@@ -144,7 +224,7 @@ func TestCreateUserMapsSetUserModifierError(t *testing.T) {
 	svc := NewService(&MemoryClient{
 		ACLSetUserErr: errors.New("ERR Error in ACL SETUSER modifier '>canary-secret': Syntax error"),
 	})
-	_, err := svc.CreateUser(context.Background(), "project_a", "project_a", "", "")
+	_, err := svc.CreateUser(context.Background(), "project_a", "project_a", "", "", nil)
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v", err)
 	}
@@ -170,6 +250,11 @@ func assertCreateRules(t *testing.T, rules []string, password, pattern string, w
 	}
 	if rules[4] != "resetchannels" || rules[5] != "-@all" {
 		t.Fatalf("channel/category rules = %#v", rules[4:6])
+	}
+	for _, rule := range rules {
+		if rule == "nocommands" {
+			t.Fatalf("create SETUSER has nocommands: %#v", rules)
+		}
 	}
 	upperJoined := strings.ToUpper(joined)
 	for _, bad := range []string{"+@ALL", "+ACL", "+CONFIG", "+FLUSHALL", "+FLUSHDB", "+SCRIPT", "+EVAL"} {

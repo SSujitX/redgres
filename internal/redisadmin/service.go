@@ -113,7 +113,7 @@ func (s *Service) ListUsers(ctx context.Context) (UserList, error) {
 	return out, nil
 }
 
-func (s *Service) CreateUser(ctx context.Context, username, keyPattern, preset, queueKind string) (CreateResult, error) {
+func (s *Service) CreateUser(ctx context.Context, username, keyPattern, preset, queueKind string, commands []string) (CreateResult, error) {
 	if err := ValidateUsername(username); err != nil {
 		return CreateResult{}, err
 	}
@@ -121,7 +121,7 @@ func (s *Service) CreateUser(ctx context.Context, username, keyPattern, preset, 
 	if err != nil {
 		return CreateResult{}, err
 	}
-	resolved, commands, err := resolveNamedPreset(preset, queueKind)
+	resolved, cmds, err := resolveCreateGrants(preset, queueKind, commands)
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -146,7 +146,7 @@ func (s *Service) CreateUser(ctx context.Context, username, keyPattern, preset, 
 	if err != nil {
 		return CreateResult{}, ErrUnavailable
 	}
-	rules := buildCreateACLRules(password, pattern, commands)
+	rules := buildCreateACLRules(password, pattern, cmds)
 	if err := s.client.ACLSetUser(ctx, username, rules...); err != nil {
 		return CreateResult{}, classifyRedisError(err)
 	}
@@ -159,11 +159,32 @@ func (s *Service) CreateUser(ctx context.Context, username, keyPattern, preset, 
 			QueueKind:    resolved.queueKind,
 			Protected:    false,
 			RuleFidelity: RuleExact,
-			Commands:     append([]string(nil), commands...),
+			Commands:     append([]string(nil), cmds...),
 			Categories:   []string{},
 		},
 		Password: password,
 	}, nil
+}
+
+func resolveCreateGrants(preset, queueKind string, commands []string) (inspectPreset, []string, error) {
+	if preset == PresetCustom {
+		if queueKind != "" {
+			return inspectPreset{}, nil, ErrInvalidQueueKind
+		}
+		cmds, err := resolveCustomCommands(commands)
+		if err != nil {
+			return inspectPreset{}, nil, err
+		}
+		return inferPreset(cmds), cmds, nil
+	}
+	resolved, cmds, err := resolveNamedPreset(preset, queueKind)
+	if err != nil {
+		return inspectPreset{}, nil, err
+	}
+	if len(uniqueSorted(commands)) > 0 {
+		return inspectPreset{}, nil, ErrInvalidCommands
+	}
+	return resolved, cmds, nil
 }
 
 func buildCreateACLRules(password, keyPattern string, commands []string) []string {

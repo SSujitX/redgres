@@ -57,10 +57,11 @@ type redisUserBody struct {
 }
 
 type redisCreateRequest struct {
-	Username   string `json:"username"`
-	KeyPattern string `json:"key_pattern"`
-	Preset     string `json:"preset"`
-	QueueKind  string `json:"queue_kind"`
+	Username   string   `json:"username"`
+	KeyPattern string   `json:"key_pattern"`
+	Preset     string   `json:"preset"`
+	QueueKind  string   `json:"queue_kind"`
+	Commands   []string `json:"commands"`
 }
 
 type redisPatchRequest struct {
@@ -191,7 +192,7 @@ func (s *Server) handleRedisUsersCreate(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
 		return
 	}
-	created, err := s.redis.CreateUser(ctx, body.Username, body.KeyPattern, body.Preset, body.QueueKind)
+	created, err := s.redis.CreateUser(ctx, body.Username, body.KeyPattern, body.Preset, body.QueueKind, body.Commands)
 	if err != nil {
 		_ = s.audit.Record(sess.Username, "redis.user.create", body.Username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
 		s.writeRedisCreateError(w, r, err)
@@ -427,6 +428,8 @@ func (s *Server) writeRedisCreateError(w http.ResponseWriter, r *http.Request, e
 		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid preset", map[string]string{"preset": "invalid"})
 	case errors.Is(err, redisadmin.ErrInvalidQueueKind):
 		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid queue kind", map[string]string{"queue_kind": "invalid"})
+	case errors.Is(err, redisadmin.ErrInvalidCommands):
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid commands", map[string]string{"commands": "invalid"})
 	case errors.Is(err, redisadmin.ErrProtectedUser):
 		s.writeError(w, r, http.StatusForbidden, CodeProtectedResource, "This Redis user is protected")
 	case errors.Is(err, redisadmin.ErrConflict):
@@ -445,7 +448,7 @@ func redisCreateAuditMeta(username, keyPattern, preset, queueKind string) map[st
 		preset = redisadmin.PresetCacheReadWrite
 	}
 	switch preset {
-	case redisadmin.PresetCacheReadWrite, redisadmin.PresetReadOnly:
+	case redisadmin.PresetCacheReadWrite, redisadmin.PresetReadOnly, redisadmin.PresetCustom:
 		if queueKind == "" {
 			meta["preset"] = preset
 		}

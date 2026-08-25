@@ -665,6 +665,9 @@ func TestRedisUsersCreateNamedPresets(t *testing.T) {
 			if strings.Contains(metadata, ">") || strings.Contains(metadata, "csrf") {
 				t.Fatalf("audit leaked secret: %s", metadata)
 			}
+			if strings.Contains(metadata, `"commands"`) {
+				t.Fatalf("audit leaked commands: %s", metadata)
+			}
 		})
 	}
 }
@@ -704,8 +707,37 @@ func TestRedisUsersCreateIncludesPublicURLWhenHostAndPortSet(t *testing.T) {
 	}
 }
 
+func TestRedisUsersCreateNamedEmptyCommandsArray(t *testing.T) {
+	mem := &redisadmin.MemoryClient{}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/redis/users", cookie, csrf, `{"username":"project_a","key_pattern":"project_a","preset":"read-only","commands":[]}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := raw["user"].(map[string]any)
+	if user["preset"] != "read-only" {
+		t.Fatalf("preset = %#v", user["preset"])
+	}
+	if _, ok := user["commands"]; ok {
+		t.Fatalf("create summary leaked commands: %#v", user)
+	}
+	if len(mem.ACLSetUserCalls) != 1 {
+		t.Fatalf("ACLSetUser calls = %d", len(mem.ACLSetUserCalls))
+	}
+}
+
 func TestRedisUsersCreateUnknownFieldsAndValidation(t *testing.T) {
-	srv := testServerWithRedis(t, redisadmin.NewService(&redisadmin.MemoryClient{}))
+	srv := testServerWithRedis(t, redisadmin.NewService(&redisadmin.MemoryClient{
+		ACLListErr: errors.New("acl list should not run"),
+	}))
 	seedOwner(t, srv)
 	h := srv.Handler()
 	cookie, csrf := login(t, h)
@@ -717,11 +749,12 @@ func TestRedisUsersCreateUnknownFieldsAndValidation(t *testing.T) {
 		status int
 	}{
 		{name: "unknown_preset", body: `{"username":"project_a","key_pattern":"project_a","preset":"not-a-preset"}`, field: "preset", code: CodeValidationError, status: http.StatusBadRequest},
-		{name: "custom_preset", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom"}`, field: "preset", code: CodeValidationError, status: http.StatusBadRequest},
+		{name: "custom_preset", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom"}`, field: "commands", code: CodeValidationError, status: http.StatusBadRequest},
 		{name: "unknown_password", body: `{"username":"project_a","key_pattern":"project_a","password":"canary-secret"}`, code: CodeValidationError, status: http.StatusBadRequest},
-		{name: "unknown_commands", body: `{"username":"project_a","key_pattern":"project_a","commands":["get"]}`, code: CodeValidationError, status: http.StatusBadRequest},
+		{name: "named_with_commands", body: `{"username":"project_a","key_pattern":"project_a","commands":["get"]}`, field: "commands", code: CodeValidationError, status: http.StatusBadRequest},
 		{name: "unknown_categories", body: `{"username":"project_a","key_pattern":"project_a","categories":["@string"]}`, code: CodeValidationError, status: http.StatusBadRequest},
 		{name: "unknown_enabled", body: `{"username":"project_a","key_pattern":"project_a","enabled":true}`, code: CodeValidationError, status: http.StatusBadRequest},
+		{name: "custom_with_queue_kind", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom","commands":["ping"],"queue_kind":"lists"}`, field: "queue_kind", code: CodeValidationError, status: http.StatusBadRequest},
 		{name: "queue_kind_without_queue_preset", body: `{"username":"project_a","key_pattern":"project_a","preset":"read-only","queue_kind":"lists"}`, field: "queue_kind", code: CodeValidationError, status: http.StatusBadRequest},
 		{name: "queue_worker_missing_kind", body: `{"username":"project_a","key_pattern":"project_a","preset":"queue-worker"}`, field: "queue_kind", code: CodeValidationError, status: http.StatusBadRequest},
 		{name: "queue_worker_bad_kind", body: `{"username":"project_a","key_pattern":"project_a","preset":"queue-worker","queue_kind":"jobs"}`, field: "queue_kind", code: CodeValidationError, status: http.StatusBadRequest},
@@ -898,6 +931,9 @@ func assertAuditCreateSafe(t *testing.T, srv *Server, password string) {
 	}
 	if !strings.Contains(metadata, `"username":"project_a"`) || !strings.Contains(metadata, `"preset":"cache-read-write"`) {
 		t.Fatalf("audit metadata = %s", metadata)
+	}
+	if strings.Contains(metadata, `"commands"`) || strings.Contains(metadata, ">") {
+		t.Fatalf("audit leaked commands or password rule: %s", metadata)
 	}
 }
 

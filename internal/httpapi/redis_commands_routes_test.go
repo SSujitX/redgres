@@ -254,8 +254,123 @@ func TestRedisUserPatchCustomRejectsDangerousAndEmpty(t *testing.T) {
 	}
 }
 
-func TestRedisUsersCreateCustomStill400(t *testing.T) {
+func TestRedisUsersCreateCustom201(t *testing.T) {
 	mem := &redisadmin.MemoryClient{}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	body := `{"username":"project_a","key_pattern":"project_a","preset":"custom","commands":["echo","get","ping"]}`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/redis/users", cookie, csrf, body))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q", rec.Header().Get("Cache-Control"))
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["state"]; ok {
+		t.Fatalf("create leaked state: %s", rec.Body.Bytes())
+	}
+	user, _ := raw["user"].(map[string]any)
+	if user["username"] != "project_a" || user["enabled"] != true || user["key_pattern"] != "project_a:*" {
+		t.Fatalf("user = %#v", user)
+	}
+	if user["preset"] != "custom" || user["protected"] != false || user["rule_fidelity"] != "exact" {
+		t.Fatalf("user labels = %#v", user)
+	}
+	if _, ok := user["commands"]; ok {
+		t.Fatalf("create summary leaked commands: %#v", user)
+	}
+	if _, ok := user["queue_kind"]; ok {
+		t.Fatalf("queue_kind present for custom: %#v", user)
+	}
+	cred, _ := raw["credential"].(map[string]any)
+	password, _ := cred["password"].(string)
+	if cred["username"] != "project_a" || cred["one_time"] != true || len(password) != 32 {
+		t.Fatalf("credential = %#v", cred)
+	}
+	if len(mem.ACLSetUserCalls) != 1 {
+		t.Fatalf("ACLSetUser calls = %d", len(mem.ACLSetUserCalls))
+	}
+	assertHTTPCreateRulesSafe(t, mem.ACLSetUserCalls[0].Rules, password, "project_a:*", []string{"echo", "get", "ping"})
+	var metadata string
+	if err := srv.db.QueryRow(`SELECT metadata FROM audit_events WHERE action = 'redis.user.create' ORDER BY id DESC LIMIT 1`).Scan(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(metadata, `"username":"project_a"`) || !strings.Contains(metadata, `"preset":"custom"`) || !strings.Contains(metadata, `"key_pattern":"project_a:*"`) {
+		t.Fatalf("audit metadata = %s", metadata)
+	}
+	if strings.Contains(metadata, `"commands"`) || strings.Contains(metadata, `"queue_kind"`) || strings.Contains(metadata, password) || strings.Contains(metadata, ">") {
+		t.Fatalf("audit leaked commands or secret: %s", metadata)
+	}
+}
+
+func TestRedisUsersCreateCustomMatchingNamedSetInfersPreset(t *testing.T) {
+	mem := &redisadmin.MemoryClient{}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	var cmds []string
+	for _, p := range redisadmin.NamedPresets() {
+		if p.Preset == "read-only" {
+			cmds = p.Commands
+			break
+		}
+	}
+	if len(cmds) == 0 {
+		t.Fatal("read-only catalog missing")
+	}
+	rawCmds, err := json.Marshal(cmds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"username":"project_a","key_pattern":"project_a","preset":"custom","commands":` + string(rawCmds) + `}`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/redis/users", cookie, csrf, body))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := raw["user"].(map[string]any)
+	if user["preset"] != "read-only" {
+		t.Fatalf("inferPreset = %#v want read-only", user["preset"])
+	}
+}
+
+func TestRedisUsersCreateNamedCommandsRejectedBeforeRedis(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLListErr: errors.New("acl list should not run")}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/redis/users", cookie, csrf, `{"username":"project_a","key_pattern":"project_a","preset":"read-only","commands":["get"]}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeValidationError || body.Error.Fields["commands"] == "" {
+		t.Fatalf("error = %#v", body.Error)
+	}
+	if len(mem.ACLSetUserCalls) != 0 {
+		t.Fatalf("SETUSER on named+commands: %#v", mem.ACLSetUserCalls)
+	}
+}
+
+func TestRedisUsersCreateCustomRejectsBeforeRedis(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLListErr: errors.New("acl list should not run")}
 	srv := testServerWithRedis(t, redisadmin.NewService(mem))
 	seedOwner(t, srv)
 	h := srv.Handler()
@@ -265,8 +380,12 @@ func TestRedisUsersCreateCustomStill400(t *testing.T) {
 		body  string
 		field string
 	}{
-		{name: "preset-custom", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom"}`, field: "preset"},
-		{name: "commands-unknown", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom","commands":["get"]}`},
+		{name: "omitted", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom"}`, field: "commands"},
+		{name: "empty-array", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom","commands":[]}`, field: "commands"},
+		{name: "flushall", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom","commands":["flushall"]}`, field: "commands"},
+		{name: "at-all", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom","commands":["@all"]}`, field: "commands"},
+		{name: "acl", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom","commands":["acl"]}`, field: "commands"},
+		{name: "queue-kind", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom","commands":["ping"],"queue_kind":"lists"}`, field: "queue_kind"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -279,16 +398,39 @@ func TestRedisUsersCreateCustomStill400(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 				t.Fatal(err)
 			}
-			if body.Error.Code != CodeValidationError {
-				t.Fatalf("code = %q", body.Error.Code)
-			}
-			if tc.field != "" && body.Error.Fields[tc.field] == "" {
-				t.Fatalf("missing fields.%s: %#v", tc.field, body.Error.Fields)
+			if body.Error.Code != CodeValidationError || body.Error.Fields[tc.field] == "" {
+				t.Fatalf("error = %#v want fields.%s", body.Error, tc.field)
 			}
 		})
 	}
 	if len(mem.ACLSetUserCalls) != 0 {
-		t.Fatalf("SETUSER on create custom: %#v", mem.ACLSetUserCalls)
+		t.Fatalf("SETUSER on command reject: %#v", mem.ACLSetUserCalls)
+	}
+}
+
+func TestRedisUsersCreateCustomAuditFailClosed(t *testing.T) {
+	mem := &redisadmin.MemoryClient{}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	dead, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "dead-audit-create-custom.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = dead.Close() })
+	_ = dead.Close()
+	srv.audit = audit.Store{DB: dead}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/redis/users", cookie, csrf, `{"username":"project_a","key_pattern":"project_a","preset":"custom","commands":["echo","get","ping"]}`))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	if strings.Contains(rec.Body.String(), `"credential"`) || strings.Contains(rec.Body.String(), `"password"`) {
+		t.Fatalf("audit failure returned credential: %s", rec.Body.Bytes())
+	}
+	if len(mem.ACLSetUserCalls) != 1 {
+		t.Fatalf("expected SETUSER before audit fail, calls = %d", len(mem.ACLSetUserCalls))
 	}
 }
 
@@ -429,6 +571,41 @@ func assertHTTPUpdateRulesSafe(t *testing.T, rules []string) {
 	}
 	if rules[0] != "resetkeys" || rules[3] != "nocommands" || rules[4] != "-@all" {
 		t.Fatalf("SETUSER shape = %#v", rules)
+	}
+}
+
+func assertHTTPCreateRulesSafe(t *testing.T, rules []string, password, pattern string, wantCmds []string) {
+	t.Helper()
+	if len(rules) < 6 {
+		t.Fatalf("rules too short: %#v", rules)
+	}
+	joined := strings.Join(rules, " ")
+	if rules[0] != "reset" || rules[1] != "on" {
+		t.Fatalf("prefix rules = %#v", rules[:2])
+	}
+	if rules[2] != ">"+password {
+		t.Fatalf("password rule = %q", rules[2])
+	}
+	if rules[3] != "~"+pattern {
+		t.Fatalf("key rule = %q", rules[3])
+	}
+	if rules[4] != "resetchannels" || rules[5] != "-@all" {
+		t.Fatalf("channel/category rules = %#v", rules[4:6])
+	}
+	for _, rule := range rules {
+		if rule == "nocommands" {
+			t.Fatalf("create SETUSER has nocommands: %#v", rules)
+		}
+	}
+	upperJoined := strings.ToUpper(joined)
+	for _, bad := range []string{"+@ALL", "+ACL", "+CONFIG", "+FLUSHALL", "+FLUSHDB", "+SCRIPT", "+EVAL"} {
+		if strings.Contains(upperJoined, bad) {
+			t.Fatalf("dangerous %s in %s", bad, joined)
+		}
+	}
+	got := httpGrantedCommands(rules)
+	if !stringSlicesEqual(got, wantCmds) {
+		t.Fatalf("granted = %#v want %#v", got, wantCmds)
 	}
 }
 
