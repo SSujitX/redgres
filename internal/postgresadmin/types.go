@@ -29,6 +29,7 @@ type Catalog interface {
 	Lookup(ctx context.Context, name string) (CatalogRow, error)
 	ListTables(ctx context.Context, database string) ([]TableItem, error)
 	ListRows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
+	ListConnectionGroups(ctx context.Context) ([]ConnectionGroup, error)
 	Ping(ctx context.Context) error
 }
 
@@ -38,6 +39,7 @@ type Inventory interface {
 	Details(ctx context.Context, name string) (DatabaseDetails, error)
 	Tables(ctx context.Context, name string) (TableListResult, error)
 	Rows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
+	SecurityOverview(ctx context.Context) (SecurityOverview, error)
 	Ping(ctx context.Context) error
 }
 
@@ -113,4 +115,41 @@ type RowPage struct {
 
 func vaultNotAvailable() SavedCredential {
 	return SavedCredential{Status: "not_available", Reason: "vault_not_implemented"}
+}
+
+type SecuritySummary struct {
+	DatabaseCount         int `json:"database_count"`
+	PublicConnectCount    int `json:"public_connect_count"`
+	ActiveConnectionCount int `json:"active_connection_count"`
+	ConnectionGroupCount  int `json:"connection_group_count"`
+}
+
+type SecurityDatabase struct {
+	Name              string `json:"name"`
+	Owner             string `json:"owner"`
+	Protected         bool   `json:"protected"`
+	PublicCanConnect  bool   `json:"public_can_connect"`
+	OwnerIsSuperuser  bool   `json:"owner_is_superuser"`
+	OwnerCanLogin     bool   `json:"owner_can_login"`
+	OwnerCreatedb     bool   `json:"owner_createdb"`
+	OwnerCreaterole   bool   `json:"owner_createrole"`
+	OwnerReplication  bool   `json:"owner_replication"`
+	ActiveConnections int    `json:"active_connections"`
+}
+
+type ConnectionGroup struct {
+	Database    string `json:"database"`
+	User        string `json:"user"`
+	Client      string `json:"client"`
+	Application string `json:"application"`
+	State       string `json:"state"`
+	Count       int    `json:"count"`
+}
+
+type SecurityOverview struct {
+	Summary         SecuritySummary    `json:"summary"`
+	SavedCredential SavedCredential    `json:"saved_credential"`
+	Databases       []SecurityDatabase `json:"databases"`
+	Connections     []ConnectionGroup  `json:"connections"`
+	Truncated       bool               `json:"truncated"`
 }

@@ -3,6 +3,7 @@ package postgresadmin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -69,6 +70,13 @@ func TestServiceUnavailableWithoutCatalog(t *testing.T) {
 	if _, err := svc.Rows(context.Background(), "project_a", "public", "items", "", 0, 50); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("rows: %v", err)
 	}
+	if _, err := svc.SecurityOverview(context.Background()); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("security: %v", err)
+	}
+	var nilSvc *Service
+	if _, err := nilSvc.SecurityOverview(context.Background()); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("nil service: %v", err)
+	}
 }
 
 func TestServiceMapsCanaryErrors(t *testing.T) {
@@ -79,6 +87,13 @@ func TestServiceMapsCanaryErrors(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("leaked %v", err)
+	}
+	_, err = svc.SecurityOverview(context.Background())
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("security: %v", err)
+	}
+	if strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("security leaked %v", err)
 	}
 }
 
@@ -357,4 +372,205 @@ func TestServiceSearchMapsCanaryErrors(t *testing.T) {
 	if strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("leaked %v", err)
 	}
+}
+
+func securityOverviewCatalog() *MemoryCatalog {
+	return &MemoryCatalog{
+		Rows: []CatalogRow{
+			{
+				Name: "postgres", Owner: "postgres", AllowConn: true, ConnectionCount: 1,
+				OwnerIsSuperuser: true, OwnerCanLogin: true, OwnerCreatedb: true, OwnerCreaterole: true, OwnerReplication: true,
+			},
+			{Name: "database_console_vault", Owner: "postgres", AllowConn: true},
+			{Name: "template0", Owner: "postgres", AllowConn: false, IsTemplate: true},
+			{Name: "template1", Owner: "postgres", AllowConn: true, IsTemplate: true},
+			{
+				Name: "project_a", Owner: "project_a_role", AllowConn: true, PublicCanConnect: true, ConnectionCount: 2,
+				OwnerCanLogin: true,
+			},
+			{Name: "no_connect", Owner: "app_role", AllowConn: false, PublicCanConnect: true},
+			{Name: "owned_by_admin", Owner: "redgres_console", AllowConn: true},
+			{Name: "zeta_last", Owner: "project_z_role", AllowConn: true},
+		},
+		Connections: []ConnectionGroup{
+			{Database: "project_a", User: "project_a_role", Client: "10.0.0.1", Application: "app", State: "active", Count: 2},
+			{Database: "postgres", User: "postgres", Client: "local", Application: "redgres", State: "idle", Count: 1},
+		},
+	}
+}
+
+func TestServiceSecurityOverviewOmitsTemplatesIncludesProtected(t *testing.T) {
+	svc := NewService(securityOverviewCatalog(), NewPolicy(config.Config{
+		PostgresDatabase: "postgres",
+		PostgresUser:     "redgres_console",
+	}))
+	got, err := svc.SecurityOverview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SavedCredential.Status != "not_available" || got.SavedCredential.Reason != "vault_not_implemented" {
+		t.Fatalf("credential = %#v", got.SavedCredential)
+	}
+	if got.Databases == nil || got.Connections == nil {
+		t.Fatalf("arrays must not be nil: %#v", got)
+	}
+	if got.Truncated {
+		t.Fatal("truncated")
+	}
+	if got.Summary != (SecuritySummary{DatabaseCount: 6, PublicConnectCount: 2, ActiveConnectionCount: 3, ConnectionGroupCount: 2}) {
+		t.Fatalf("summary = %#v", got.Summary)
+	}
+	names := make([]string, len(got.Databases))
+	protected := map[string]bool{}
+	for i, row := range got.Databases {
+		names[i] = row.Name
+		protected[row.Name] = row.Protected
+	}
+	wantNames := []string{"database_console_vault", "no_connect", "owned_by_admin", "postgres", "project_a", "zeta_last"}
+	if strings.Join(names, ",") != strings.Join(wantNames, ",") {
+		t.Fatalf("names = %v", names)
+	}
+	if protected["postgres"] != true || protected["database_console_vault"] != true || protected["no_connect"] != true || protected["owned_by_admin"] != true {
+		t.Fatalf("protected flags = %#v", protected)
+	}
+	if protected["project_a"] || protected["zeta_last"] {
+		t.Fatalf("manageable marked protected: %#v", protected)
+	}
+	listed, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Databases) != 2 || listed.Databases[0].Name != "project_a" {
+		t.Fatalf("list must still omit protected: %#v", listed)
+	}
+	var vault, project SecurityDatabase
+	for _, row := range got.Databases {
+		switch row.Name {
+		case "database_console_vault":
+			vault = row
+		case "project_a":
+			project = row
+		}
+	}
+	if vault.Owner != "postgres" || vault.PublicCanConnect || vault.ActiveConnections != 0 {
+		t.Fatalf("vault row = %#v", vault)
+	}
+	if project.Owner != "project_a_role" || !project.PublicCanConnect || !project.OwnerCanLogin || project.ActiveConnections != 2 {
+		t.Fatalf("project row = %#v", project)
+	}
+	if len(got.Connections) != 2 || got.Connections[0].Database != "postgres" || got.Connections[1].Count != 2 {
+		t.Fatalf("connections = %#v", got.Connections)
+	}
+}
+
+func TestServiceSecurityOverviewEmptyArraysAreNonNil(t *testing.T) {
+	got, err := testService(nil).SecurityOverview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Databases == nil || len(got.Databases) != 0 || got.Connections == nil || len(got.Connections) != 0 {
+		t.Fatalf("empty = %#v", got)
+	}
+	if got.SavedCredential.Reason != "vault_not_implemented" {
+		t.Fatalf("credential = %#v", got.SavedCredential)
+	}
+}
+
+func TestServiceSecurityOverviewNormalizesConnectionLabels(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows: []CatalogRow{projectRow("project_a", "project_a_role")},
+		Connections: []ConnectionGroup{
+			{Count: 4},
+		},
+	}, NewPolicy(config.Config{}))
+	got, err := svc.SecurityOverview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Connections) != 1 {
+		t.Fatalf("connections = %#v", got.Connections)
+	}
+	row := got.Connections[0]
+	if row.Database != "(none)" || row.User != "(unknown)" || row.Client != "local" || row.Application != "—" || row.State != "unknown" || row.Count != 4 {
+		t.Fatalf("labels = %#v", row)
+	}
+	if got.Summary.ActiveConnectionCount != 4 || got.Summary.ConnectionGroupCount != 1 {
+		t.Fatalf("summary = %#v", got.Summary)
+	}
+}
+
+func TestServiceSecurityOverviewCapsAndTruncates(t *testing.T) {
+	rows := make([]CatalogRow, 0, 502)
+	rows = append(rows, CatalogRow{Name: "template0", Owner: "postgres", IsTemplate: true})
+	for i := 0; i < 501; i++ {
+		rows = append(rows, projectRow("db"+itoa3(i), "role_"+itoa3(i)))
+	}
+	groups := make([]ConnectionGroup, 501)
+	for i := range groups {
+		groups[i] = ConnectionGroup{Database: "db" + itoa3(i), User: "u", Client: "local", Application: "a", State: "idle", Count: 2}
+	}
+	got, err := NewService(&MemoryCatalog{Rows: rows, Connections: groups}, NewPolicy(config.Config{})).SecurityOverview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated || len(got.Databases) != 500 || len(got.Connections) != 500 {
+		t.Fatalf("cap = truncated=%v dbs=%d conns=%d", got.Truncated, len(got.Databases), len(got.Connections))
+	}
+	if got.Summary.DatabaseCount != 501 || got.Summary.PublicConnectCount != 0 || got.Summary.ActiveConnectionCount != 1002 || got.Summary.ConnectionGroupCount != 501 {
+		t.Fatalf("summary before cap = %#v", got.Summary)
+	}
+	if got.Databases[0].Name != "db000" || got.Databases[499].Name != "db499" {
+		t.Fatalf("db order = %s..%s", got.Databases[0].Name, got.Databases[499].Name)
+	}
+}
+
+func TestServiceSecurityOverviewTruncatesIfEitherListExceeds(t *testing.T) {
+	rows := []CatalogRow{projectRow("project_a", "project_a_role")}
+	groups := make([]ConnectionGroup, 501)
+	for i := range groups {
+		groups[i] = ConnectionGroup{Database: "g" + itoa3(i), User: "u", Client: "local", Application: "a", State: "idle", Count: 1}
+	}
+	got, err := NewService(&MemoryCatalog{Rows: rows, Connections: groups}, NewPolicy(config.Config{})).SecurityOverview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated || len(got.Databases) != 1 || len(got.Connections) != 500 || got.Summary.ConnectionGroupCount != 501 {
+		t.Fatalf("either cap = %#v", got)
+	}
+}
+
+func TestServiceSecurityOverviewMapsConnectionCanaryErrors(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows:           []CatalogRow{projectRow("project_a", "project_a_role")},
+		ConnectionsErr: errors.New("postgresql://canary:secret@127.0.0.1/db"),
+	}, NewPolicy(config.Config{}))
+	_, err := svc.SecurityOverview(context.Background())
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("leaked %v", err)
+	}
+}
+
+func TestConnectionGroupsSQLDoesNotQueryVault(t *testing.T) {
+	blob := strings.ToLower(listConnectionGroupsSQL + catalogSQL)
+	for _, needle := range []string{"project_credentials", "encrypted_password", "query_text", "query,", "pg_stat_activity.query"} {
+		if strings.Contains(blob, needle) {
+			t.Fatalf("forbidden %q in catalog SQL", needle)
+		}
+	}
+	if !strings.Contains(listConnectionGroupsSQL, "backend_type = 'client backend'") {
+		t.Fatal("must filter client backends")
+	}
+	if !strings.Contains(listConnectionGroupsSQL, "pid <> pg_backend_pid()") {
+		t.Fatal("must exclude the inspecting backend")
+	}
+	if !strings.Contains(listConnectionGroupsSQL, "GROUP BY datname, usename, client_addr, application_name, state") {
+		t.Fatal("must group like database-app get_security_overview")
+	}
+}
+
+func itoa3(n int) string {
+	return fmt.Sprintf("%03d", n)
 }

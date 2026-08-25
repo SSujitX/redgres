@@ -8,15 +8,17 @@ type MemoryTable struct {
 }
 
 type MemoryCatalog struct {
-	Rows         []CatalogRow
-	Err          error
-	PingErr      error
-	Tables       map[string][]TableItem
-	TablesErr    error
-	LastTablesDB string
-	TableData    map[string]MemoryTable
-	RowsErr      error
-	LastRowsKey  string
+	Rows           []CatalogRow
+	Err            error
+	PingErr        error
+	Tables         map[string][]TableItem
+	TablesErr      error
+	LastTablesDB   string
+	TableData      map[string]MemoryTable
+	RowsErr        error
+	LastRowsKey    string
+	Connections    []ConnectionGroup
+	ConnectionsErr error
 }
 
 func (m *MemoryCatalog) Ping(context.Context) error {
@@ -117,4 +119,16 @@ func (m *MemoryCatalog) ListRows(_ context.Context, database, schema, table, _ s
 		Offset:  offset,
 		Limit:   limit,
 	}, nil
+}
+
+func (m *MemoryCatalog) ListConnectionGroups(context.Context) ([]ConnectionGroup, error) {
+	if m.ConnectionsErr != nil {
+		return nil, m.ConnectionsErr
+	}
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	out := make([]ConnectionGroup, len(m.Connections))
+	copy(out, m.Connections)
+	return out, nil
 }

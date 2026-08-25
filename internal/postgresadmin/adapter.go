@@ -48,6 +48,21 @@ LEFT JOIN (
 ) c ON c.datname = d.datname
 `
 
+const listConnectionGroupsSQL = `
+SELECT
+	datname,
+	usename,
+	COALESCE(client_addr::text, 'local'),
+	COALESCE(application_name, ''),
+	state,
+	count(*)::int
+FROM pg_stat_activity
+WHERE backend_type = 'client backend'
+  AND pid <> pg_backend_pid()
+GROUP BY datname, usename, client_addr, application_name, state
+ORDER BY datname, usename, client_addr
+`
+
 type PoolCatalog struct {
 	pool *pgxpool.Pool
 }
@@ -279,6 +294,49 @@ func (c PoolCatalog) Lookup(ctx context.Context, name string) (CatalogRow, error
 		return CatalogRow{}, ErrUnavailable
 	}
 	return row, nil
+}
+
+func (c PoolCatalog) ListConnectionGroups(ctx context.Context) ([]ConnectionGroup, error) {
+	if c.pool == nil {
+		return nil, ErrUnavailable
+	}
+	rows, err := c.pool.Query(ctx, listConnectionGroupsSQL)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	defer rows.Close()
+	out := make([]ConnectionGroup, 0)
+	for rows.Next() {
+		var (
+			database    *string
+			user        *string
+			client      string
+			application *string
+			state       *string
+			count       int
+		)
+		if err := rows.Scan(&database, &user, &client, &application, &state, &count); err != nil {
+			return nil, ErrUnavailable
+		}
+		group := ConnectionGroup{Client: client, Count: count}
+		if database != nil {
+			group.Database = *database
+		}
+		if user != nil {
+			group.User = *user
+		}
+		if application != nil {
+			group.Application = *application
+		}
+		if state != nil {
+			group.State = *state
+		}
+		out = append(out, displayConnectionGroup(group))
+	}
+	if rows.Err() != nil {
+		return nil, ErrUnavailable
+	}
+	return out, nil
 }
 
 type rowScanner interface {

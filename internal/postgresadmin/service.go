@@ -3,6 +3,7 @@ package postgresadmin
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 )
 
@@ -182,6 +183,106 @@ func (s *Service) Rows(ctx context.Context, database, schema, table, q string, o
 		page.Rows = []map[string]any{}
 	}
 	return page, nil
+}
+
+func (s *Service) SecurityOverview(ctx context.Context) (SecurityOverview, error) {
+	if s == nil || s.catalog == nil {
+		return SecurityOverview{}, ErrUnavailable
+	}
+	rows, err := s.catalog.List(ctx)
+	if err != nil {
+		return SecurityOverview{}, mapCatalogError(err)
+	}
+	groups, err := s.catalog.ListConnectionGroups(ctx)
+	if err != nil {
+		return SecurityOverview{}, mapCatalogError(err)
+	}
+	databases := make([]SecurityDatabase, 0, len(rows))
+	publicConnect := 0
+	for _, row := range rows {
+		if row.IsTemplate {
+			continue
+		}
+		if row.PublicCanConnect {
+			publicConnect++
+		}
+		databases = append(databases, SecurityDatabase{
+			Name:              row.Name,
+			Owner:             row.Owner,
+			Protected:         !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate),
+			PublicCanConnect:  row.PublicCanConnect,
+			OwnerIsSuperuser:  row.OwnerIsSuperuser,
+			OwnerCanLogin:     row.OwnerCanLogin,
+			OwnerCreatedb:     row.OwnerCreatedb,
+			OwnerCreaterole:   row.OwnerCreaterole,
+			OwnerReplication:  row.OwnerReplication,
+			ActiveConnections: row.ConnectionCount,
+		})
+	}
+	sort.Slice(databases, func(i, j int) bool { return databases[i].Name < databases[j].Name })
+
+	connections := make([]ConnectionGroup, 0, len(groups))
+	active := 0
+	for _, group := range groups {
+		group = displayConnectionGroup(group)
+		active += group.Count
+		connections = append(connections, group)
+	}
+	sort.Slice(connections, func(i, j int) bool {
+		a, b := connections[i], connections[j]
+		if a.Database != b.Database {
+			return a.Database < b.Database
+		}
+		if a.User != b.User {
+			return a.User < b.User
+		}
+		if a.Client != b.Client {
+			return a.Client < b.Client
+		}
+		if a.Application != b.Application {
+			return a.Application < b.Application
+		}
+		return a.State < b.State
+	})
+
+	out := SecurityOverview{
+		Summary: SecuritySummary{
+			DatabaseCount:         len(databases),
+			PublicConnectCount:    publicConnect,
+			ActiveConnectionCount: active,
+			ConnectionGroupCount:  len(connections),
+		},
+		SavedCredential: vaultNotAvailable(),
+		Databases:       databases,
+		Connections:     connections,
+		Truncated:       len(databases) > listCap || len(connections) > listCap,
+	}
+	if len(out.Databases) > listCap {
+		out.Databases = out.Databases[:listCap]
+	}
+	if len(out.Connections) > listCap {
+		out.Connections = out.Connections[:listCap]
+	}
+	return out, nil
+}
+
+func displayConnectionGroup(group ConnectionGroup) ConnectionGroup {
+	if group.Database == "" {
+		group.Database = "(none)"
+	}
+	if group.User == "" {
+		group.User = "(unknown)"
+	}
+	if group.Client == "" {
+		group.Client = "local"
+	}
+	if group.Application == "" {
+		group.Application = "—"
+	}
+	if group.State == "" {
+		group.State = "unknown"
+	}
+	return group
 }
 
 func clampRowPage(limit, offset int) (int, int) {

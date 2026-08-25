@@ -80,6 +80,11 @@ type postgresRowsBody struct {
 	RequestID string `json:"request_id"`
 }
 
+type postgresSecurityBody struct {
+	postgresadmin.SecurityOverview
+	RequestID string `json:"request_id"`
+}
+
 func (s *Server) handlePostgresRows(w http.ResponseWriter, r *http.Request) {
 	database, err := decodePathIdentifier(chi.URLParam(r, "db"))
 	if err != nil {
@@ -121,6 +126,19 @@ func (s *Server) handlePostgresRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, r, http.StatusOK, postgresRowsBody{RowPage: result, RequestID: requestID(r)})
+}
+
+func (s *Server) handlePostgresSecurity(w http.ResponseWriter, r *http.Request) {
+	if s.postgres == nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	result, err := s.postgres.SecurityOverview(r.Context())
+	if err != nil {
+		s.writePostgresError(w, r, err)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, postgresSecurityBody{SecurityOverview: result, RequestID: requestID(r)})
 }
 
 func parseOptionalInt(raw string, fallback int) (int, bool) {
