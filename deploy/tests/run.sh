@@ -479,6 +479,17 @@ expect_status_and_stages 'pgbouncer disabled skips pgbouncer binary' \
 
 DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
 DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-unparseable.version"
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode existing-postgres \
+  --redis-mode existing \
+  --pgbouncer-mode existing
+expect_status_keyword 'unparseable pgbouncer --version exits 1' 1 'unparseable'
+
+DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
+DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
 run_install \
   --non-interactive \
   --dry-run \

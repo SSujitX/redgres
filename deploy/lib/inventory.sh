@@ -74,10 +74,11 @@ redgres_parse_redis_version() {
 redgres_parse_pgbouncer_version() {
   local raw="$1"
   local line token
+  local -a tokens
   redgres_detected=''
   while IFS= read -r line || [[ -n "${line}" ]]; do
-    # shellcheck disable=SC2086
-    for token in ${line}; do
+    IFS=$' \t' read -r -a tokens <<< "${line}"
+    for token in "${tokens[@]}"; do
       if [[ "${token}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
         redgres_detected="${line}"
         return 0
