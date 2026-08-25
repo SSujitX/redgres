@@ -66,7 +66,7 @@ Order from lowest to highest risk (cutover Complete still follows this list). Re
 4. Duplicate database with source-isolation tests.
 5. Selected row delete.
 6. Truncate.
-7. Drop database/conditional role cleanup.
+7. Drop database/conditional role cleanup. PG-011 Partial is in-request **200** (terminate excluding current backend, then `DROP DATABASE`, optional `DROP ROLE` + vault DELETE). Backup freshness is a documented skip this Partial (**BF-1**); the real SECURITY.md §6.7 / OPS-004 gate remains Complete.
 
 Destructive features remain disabled until their individual integration, backup, reauth, and protected-resource gates pass.
 
