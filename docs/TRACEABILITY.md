@@ -5195,3 +5195,32 @@ Implementation files: internal/redisadmin/adapter.go;
  docs/ARCHITECTURE.md (SetLogger at init).
 Do not mark Complete.
 ```
+
+## Disposable CI green after SetLogger fix (2026-08-26)
+
+```text
+Requirement: NFR CI jobs. Keep all TRACEABILITY rows Partial.
+ Do not mark COMPATIBILITY.md §6 Complete. Not production.
+Evidence: origin/master `47d481b` GHA run 32898588361 success.
+ Jobs: installer, integration (postgres:18.6 + redis:8.8.2
+ service containers), playwright, backend (including
+ go test -race), frontend, embedded-build, cross-compile,
+ secret-scan, vulnerability. Local `npx playwright test`
+ (web/) 6 passed after operator Chromium install.
+Do not mark Complete.
+```
+
+## Remaining skippable live-test pins PG 17 / Redis 8.2 (2026-08-26)
+
+```text
+Requirement: OPS-006 / NFR live-matrix seam — freeze remaining
+ §8 cells only. Keep OPS Planned except OPS-001/006 Partial.
+ Keep PG/REDIS Partial. Do not mark §6 Complete.
+Evidence: redgres-compatibility-researcher (2026-08-26),
+ no docker pull. postgres:17.11@sha256:0b657ff48d7f76a1e907f381b1693eb4f2bf54c1d2df4feb6743d7dc601768dd
+ redis:8.2.9@sha256:7d1e4ce8b9395088377ab382d1f6cfdbd13b3690795198a0399ab8d683064d6d
+ PgBouncer still omitted. Do not add Redis 8.10.
+Implementation files: docs/COMPATIBILITY.md §8; docs/TESTING.md
+ merge-gate note (GHA integration job still first-cell only).
+Do not mark Complete.
+```
