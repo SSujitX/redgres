@@ -4,10 +4,10 @@ This file prevents “documented” from being mistaken for “implemented.” A
 
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
-| AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
+| AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 Partial: in-handler `Reauthenticate` on `DELETE /api/v1/redis/users/{username}` only (no `POST /api/v1/auth/reauth`, no AUTH-005 `login_attempts` increment) | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; no POST rotate); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET (no decrypt/reveal); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs; PG-003/006/008–011 not started | Partial |
-| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete); REDIS-008 not started | Partial |
+| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
@@ -3025,6 +3025,101 @@ No secret artifacts in 674bd5c..HEAD. Prior UI `53c0d1b`, security
  `c27700e`, evidence `8ed12b1` pins stand.
 Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  Not pushed.
+```
+
+## REDIS-008 ACL delete + AUTH-006 in-handler reauth Partial (2026-08-25)
+
+```text
+Requirement: REDIS-008 Partial + AUTH-006 Partial (DELETE /api/v1/redis/users/{username}
+ in-handler reauth only; inspector Delete + danger dialog). Keep REDIS-008 Partial.
+ Keep AUTH-006 Partial (this DELETE only). Keep PG-012/PG-004/PG-005 Partial.
+ Do not mark Complete. No REDGRES_FEATURE_REDIS_USER_DELETE, no
+ POST /api/v1/auth/reauth, no live Redis, no PostgreSQL drop/truncate/row-delete,
+ no go-redis bump, no CLIENT KILL, no key deletion. go-redis stays v9.22.0.
+Decision/ADR: ADR-006 unused for delete (ACL DELUSER, not command grants). AUTH-006
+ is in-handler LookupOwnerByUsername + Verify on body owner_password; no reauth
+ endpoint / short-lived grant. Capability redis.destructive + CSRF. PLAT-002:
+ redis.user.delete audit metadata username only.
+Source: redis-ui handleDeleteUser ~460–492 (read-only). Did not copy {ok: true} or
+ audit reason: reauth. Official Redis ACL DELUSER deletes the user and terminates
+ that user’s connections; cannot remove default; keys are not deleted.
+ go-redis v9.22.0 acl_commands.go: ACLDelUser(ctx, username) *IntCmd →
+ NewIntCmd(ctx, "acl", "deluser", username); adapter wraps .Result() as
+ (int64, error).
+Implementation files: internal/auth/{reauth.go,reauth_test.go};
+ internal/redisadmin/{service.go,adapter.go,memory.go,delete_test.go};
+ internal/httpapi/{server.go,redis_users_routes.go,redis_users_routes_test.go};
+ web/src/features/redis/{DeleteAclUserDialog.tsx,AclUsersPage.tsx};
+ web/src/api/redis.ts (deleteRedisUser); web/src/styles/globals.css
+ (.danger-button uses var(--danger), not --redis); web/src/App.test.tsx.
+ docs/API.md frozen on 372fbfa.
+Unit/HTTP: Reauthenticate mismatch is ErrReauthRequired (not ErrMismatchedHash);
+ missing owner VerifyUnknown then ErrUnauthorized; lookup failure distinct.
+ Service: protected (default/admin/redact_admin/configured admin EqualFold)
+ never Redis; missing no DELUSER; n==0 → ErrNotFound; DELUSER username only;
+ canary Redis errors classified without leak. HTTP: 401 no session; 403 CSRF;
+ 400 confirmation fields.username_confirmation no audit no Redis; 403
+ reauth_required audit username only (canary password absent; no reason:reauth;
+ login_attempts unchanged; no 429); 403 protected no DELUSER; 404; 503 Redis
+ canary; 200 {request_id} only (no ok/user/state/credential/reason); audit-fail
+ after DELUSER is 503 fail-closed; collection DELETE stays 405; item DELETE
+ no longer 405; enable/rotate/PATCH regressions still pass.
+UI tests: ok non-protected shows Delete; protected/loading/unavailable/
+ not_configured hide Delete; existing protected-user tests still assert no
+ Delete; dialog does not DELETE until fields valid and Confirm; CSRF +
+ encoded path + body keys only; 200 clears secrets/selection/refreshes list
+ (memory only; no setItem); 401 session-expired, no leftover password;
+ reauth_required stays on dialog, announces error, clears password, keeps
+ confirmation; 403 protected / 404 / 503 same copy families as rotate;
+ focus trap; danger class --danger not Redis identity; login never DELETE;
+ search never DELETE.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ Writer API feat/redis-008-delete-api `74f327f` (worktree
+ D:\code\github\Redgres-worktrees\redis-008-delete-api):
+  gofmt -l cmd internal migrations → empty
+  go test -count=1 ./internal/auth ./internal/redisadmin ./internal/httpapi
+   → ok auth 2.844s; redisadmin 1.939s; httpapi 31.428s
+  go test -count=1 ./... → ok (httpapi 24.983s; redisadmin 2.184s; auth 4.154s)
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+ Writer UI feat/redis-008-delete-ui `7d96501` (worktree
+ D:\code\github\Redgres-worktrees\redis-008-delete-ui):
+  npm --prefix web run test:run → Tests 242 passed (242), 41.95s
+  npm --prefix web run build → tsc + vite 8.2.2 (dist gitignored)
+ Parent after API merge `5534e86`:
+  gofmt -l cmd internal migrations → empty
+  go test -count=1 ./internal/auth ./internal/redisadmin ./internal/httpapi
+   → ok auth 3.616s; redisadmin 2.188s; httpapi 26.642s
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+ Parent after UI merge `967e156`:
+  gofmt -l cmd internal migrations → empty
+  go test -count=1 ./internal/auth ./internal/redisadmin ./internal/httpapi
+   → ok auth 5.292s; redisadmin 2.455s; httpapi 35.938s
+  go test -count=1 ./... → all ok (httpapi 29.952s; cmd/redgres 3.320s;
+   redisadmin 2.554s; auth 5.679s; web 0.680s; migrations no tests)
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+  npm --prefix web run test:run → Tests 242 passed (242), 49.18s
+  npm --prefix web run build → success (ignored internal/web/dist/app/)
+Not run: live Redis 8.2/8.8, COMPATIBILITY.md §6, Playwright viewports,
+ gitleaks, govulncheck, CI, race, Node 24.19.0.
+Known limitations: AUTH-006 is this DELETE only. Missing-owner HTTP path is
+ covered at auth.Reauthenticate; session JOIN owners means a deleted owner
+ row 401s in requireSession before the handler. DELUSER-then-audit-fail
+ leaves the Redis user gone (fail-closed, not returned as 200). GetUser/
+ DELUSER race can 404 after LIST. MemoryClient is not live Redis. No
+ dedicated reauth throttle. PostgreSQL drop/truncate/row-delete still
+ unregistered. jsdom does not resolve CSS variables to computed RGB
+ (danger vs Redis red asserted via class + globals.css source).
+Local commits: `372fbfa` (freeze), `74f327f` (API), `5534e86` (merge API),
+ `7d96501` (UI), `967e156` (merge UI), this docs record.
+ Not pushed.
+Reviewer/date: pending parent/security/verifier. Keep Partial.
+Keep REDIS-008 Partial. Keep AUTH-006 Partial. Keep PG-012 Partial.
+ Keep PG-004 Partial. Keep PG-005 Partial. Do not mark Complete.
 ```
 
 
