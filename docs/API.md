@@ -86,7 +86,7 @@ Success `200`:
   "components": [
     { "id": "redgres_state", "state": "ok" },
     { "id": "postgres_direct", "state": "not_configured" },
-    { "id": "pgbouncer", "state": "not_implemented" },
+    { "id": "pgbouncer", "state": "not_configured" },
     { "id": "redis", "state": "not_configured" },
     { "id": "tool_links", "state": "not_configured" }
   ],
@@ -102,7 +102,7 @@ Independent checks, sequential, each with a 2s timeout:
 |---|---|
 | `redgres_state` | SQLite `PingContext`. `ok` or `unavailable` + `unreachable`. |
 | `postgres_direct` | Absent adapter → `not_configured`. Else `Inventory.Ping`: `ErrNotConfigured` → `not_configured`; success → `ok`; any other error → `unavailable` + `unreachable`. Ping uses `pgxpool.Ping` on the admin pool. List/details are not used as health. |
-| `pgbouncer` | Always `not_implemented` in this slice. |
+| `pgbouncer` | Absent/empty `REDGRES_POSTGRES_POOLED_PORT` or nil ping → `not_configured`. Else `Inventory.PingPooled`: `ErrNotConfigured` → `not_configured`; success → `ok`; any other error → `unavailable` + `unreachable`. Probe connects to virtual database `pgbouncer` on the pooled port (same host/user/password/sslmode as the admin PostgreSQL connection, pgx simple query protocol) and issues `SHOW VERSION`; the version string is discarded. Independent of `postgres_direct`. This component must not emit `not_implemented`. List/details/security/tables/rows/DDL stay on 5432. |
 | `redis` | Absent adapter → `not_configured`. Else `Service.Ping`: `ErrNotConfigured` → `not_configured`; success → `ok`; any other error → `unavailable` + `unreachable`. Ping uses go-redis `Ping` only. INFO, DBSIZE, latency, and ACL are not used as health. |
 | `tool_links` | Always `not_configured` in this slice. |
 

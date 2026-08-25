@@ -20,7 +20,7 @@ Status: implemented in `internal/config`.
 
 ## PostgreSQL
 
-Status: administrative connection + protected lists implemented for inventory. URL hosts/ports and vault secret remain target.
+Status: administrative connection + protected lists implemented for inventory. Optional pooled-observation port implemented for GET `/api/v1/status` PgBouncer Ping. URL hosts/direct-port and vault secret remain target.
 
 | Variable | Status | Purpose |
 |---|---|---|
@@ -33,10 +33,10 @@ Status: administrative connection + protected lists implemented for inventory. U
 | `REDGRES_POSTGRES_PROTECTED_ROLES` | Implemented | Additional owner deny set (plus hard-coded admin/builtin roles and `pg_*`) |
 | `REDGRES_POSTGRES_PUBLIC_HOST` | Target | Host placed in project URLs |
 | `REDGRES_POSTGRES_DIRECT_PORT` | Target | Usually 5432 |
-| `REDGRES_POSTGRES_POOLED_PORT` | Target | Usually 6432 |
+| `REDGRES_POSTGRES_POOLED_PORT` | Implemented | Optional TCP port (1–65535) for PgBouncer console observation on GET `/api/v1/status`. No silent default. Production `serve` does not require it. Set only when the administrative PostgreSQL connection is otherwise configured (same fail-closed partial-key rule as other `REDGRES_POSTGRES_*` keys). Host, user, password file, and TLS settings are the existing admin keys (`REDGRES_POSTGRES_HOST`, not a public URL host). The admin role must be in PgBouncer `admin_users` or `stats_users`. Never a second password file, `pgbouncer_auth`, or `userlist.txt`. |
 | `REDGRES_LEGACY_VAULT_SECRET_FILE` | Target | Exact legacy KDF secret source |
 
-Development may start without PostgreSQL; list/details then return `503` `dependency_unavailable` and do not fabricate an empty healthy cluster. Production `serve` fails closed if the administrative connection is incomplete or the password file is unusable. Connecting **to** the `postgres` catalog database is required; listing or detailing that database is forbidden.
+Development may start without PostgreSQL; list/details then return `503` `dependency_unavailable` and do not fabricate an empty healthy cluster. Production `serve` fails closed if the administrative connection is incomplete or the password file is unusable. Production `serve` does not require `REDGRES_POSTGRES_POOLED_PORT`. Connecting **to** the `postgres` catalog database is required; listing or detailing that database is forbidden.
 
 These are application connection settings, not authority to install PostgreSQL or change extensions. Installer-only lifecycle values such as `POSTGRES_MODE`, `POSTGRES_MAJOR`, `PGBOUNCER_MODE`, `POSTGRES_EXTENSION_POLICY`, and `POSTGRES_EXTENSION_PLAN_FILE` live in the protected install configuration and are validated under [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md). The application environment never accepts package names, repositories, arbitrary extension SQL or preload libraries.
 
