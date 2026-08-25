@@ -4956,3 +4956,75 @@ Keep PG-011 Partial. Keep AUTH-006 Partial. Keep PG-008/009/010
  Partial. Do not mark Complete.
 Not pushed.
 ```
+
+## PG-011 drop evidence PASS Partial (2026-08-26)
+
+```text
+Requirement: PG-011 Partial + AUTH-006 Partial (flagged DELETE
+ /api/v1/postgres/databases/{db} plus inspector danger Drop dialog,
+ title Drop database). Keep PG-011 Partial. Keep AUTH-006 Partial
+ (Redis DELETE /api/v1/redis/users/{username} plus PG-008 row DELETE
+ plus PG-009 truncate POST plus this DELETE). Keep PG-008 Partial.
+ Keep PG-009 Partial. Keep PG-010 Partial. Reject Complete.
+ Gate 4 N/A (vault DELETE is existence-row only; no decrypt).
+ Playwright is Complete-only.
+Decision/ADR: freeze b4674fb (b4674fb0d74a52a96dde5e27f15550f661de65b9).
+ AUTH-006 in-handler LookupOwnerByUsername + Verify on body
+ owner_password. No POST /api/v1/auth/reauth. Feature flag
+ REDGRES_FEATURE_POSTGRES_DROP via envBool (unset=false). Product
+ choice BF-1: HTTP does not check backups; UI discloses Recovery
+ requires a valid external backup / Cannot be undone; no
+ backup_confirmed; no checkbox-as-authorization. OPS-004 remains
+ Complete.
+Evidence review (2026-08-26) on claimed HEAD 040ae69
+ (040ae69786a90228f625d64d1d4b35c837093f40) master. Diff range
+ b4674fb..040ae69. Product tree ee295fe
+ (ee295feade67f6c32bd0ef7dcb69b13482007434). Go SHA 85372a6
+ (85372a6df90099102864b304eba8d09daa622c3a, cherry-pick of 8fb1d72).
+ UI SHA 604a956 (604a956c7171b8ad021054f64eb28210d4ab00e8, cherry-pick
+ of 452a395). UI review pin 040ae69 Approve Partial (reviewed ee295fe;
+ no C/H/M; no required changes). Security review pin 040ae69 Approve
+ Partial (reviewed ee295fe; no C/H/M; no required changes). This
+ reviewer did not re-run go test ./... or npm test (verifier-owned)
+ and did not execute git log this turn; SHA chain matches TRACEABILITY
+ pins + independent UI/security transcripts.
+Freeze criteria mapped to implementation and recorded tests:
+ DELETE registered with GET {db} after suffix routes
+ (internal/httpapi/server.go); handlePostgresDatabaseDrop flag-off
+ 403 before decode; terminateDatabaseSQL pid <> pg_backend_pid()
+ then quoted DROP DATABASE no FORCE no IF EXISTS
+ (internal/postgresadmin/drop.go); optional DROP ROLE + vault DELETE
+ only when not OwnerDenied and OwnedDatabaseCount == 0; AUTH-006
+ in-handler; inspector DropDatabaseDialog title Drop database.
+ HTTP tests internal/httpapi/postgres_drop_routes_test.go; domain
+ internal/postgresadmin/drop_test.go; config
+ internal/config/drop_test.go; jsdom web/src/App.test.tsx.
+ Recorded parent commands (TRACEABILITY API/UI pins, not re-run):
+ gofmt empty; go test ./internal/config ./internal/postgresadmin
+ ./internal/httpapi ok (config 1.448s; postgresadmin 1.173s;
+ httpapi 36.429s); go test ./... ok after dist rebuild (httpapi
+ 49.409s; cmd/redgres 3.112s; postgresadmin 1.868s; config 2.313s);
+ go vet; go build; npm test:run 353 passed (353) Node v25.3.0 not
+ nvmrc 24.19.0; npm run build success.
+ Security Lows (non-blocking): flag-off 403 leaves owner_password
+ in the dialog (reauth_required clears it; memory only); canary is
+ HTTP + audit, not slog.
+ UI optional polish (non-blocking; Truncate/Redis Delete family):
+ useFocusTrap without restoreFocusRef; consequence copy not
+ aria-describedby; Delete selected not disabled during drop in
+ flight (handler refuses).
+ Sibling session-only / no CSRF / swallowed DROP ROLE / HTTP 500
+ str(e) / checkbox-as-authorization NOT copied.
+ Status rows AUTH-006 / PG-001..012 Partial; PG-008/009/010 stay
+ Partial. Canonical API/SECURITY/CONFIGURATION/UX already frozen;
+ this pin is TRACEABILITY-only. AGENTS.md current-truth names
+ flagged DELETE drop (implementation, not Complete).
+ No secret/runtime artifacts in inspected files. Dist not committed.
+Unexecuted Complete blockers: live PostgreSQL 17/18,
+ COMPATIBILITY.md §6, Playwright viewports, go test -race, CI,
+ Node 24.19.0, Gate 4 (N/A), POST /api/v1/auth/reauth, OPS-004
+ backup freshness, gitleaks, govulncheck.
+Keep PG-011 Partial. Keep AUTH-006 Partial. Keep PG-008 Partial.
+ Keep PG-009 Partial. Keep PG-010 Partial. Do not mark Complete.
+Not pushed.
+```
