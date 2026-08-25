@@ -31,6 +31,7 @@ type Catalog interface {
 	ListRows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
 	ListConnectionGroups(ctx context.Context) ([]ConnectionGroup, error)
 	Ping(ctx context.Context) error
+	PingPooled(ctx context.Context) error
 }
 
 type Inventory interface {
@@ -41,6 +42,7 @@ type Inventory interface {
 	Rows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
 	SecurityOverview(ctx context.Context) (SecurityOverview, error)
 	Ping(ctx context.Context) error
+	PingPooled(ctx context.Context) error
 }
 
 type SearchHit struct {

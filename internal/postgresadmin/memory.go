@@ -8,22 +8,34 @@ type MemoryTable struct {
 }
 
 type MemoryCatalog struct {
-	Rows           []CatalogRow
-	Err            error
-	PingErr        error
-	Tables         map[string][]TableItem
-	TablesErr      error
-	LastTablesDB   string
-	TableData      map[string]MemoryTable
-	RowsErr        error
-	LastRowsKey    string
-	Connections    []ConnectionGroup
-	ConnectionsErr error
+	Rows             []CatalogRow
+	Err              error
+	PingErr          error
+	Tables           map[string][]TableItem
+	TablesErr        error
+	LastTablesDB     string
+	TableData        map[string]MemoryTable
+	RowsErr          error
+	LastRowsKey      string
+	Connections      []ConnectionGroup
+	ConnectionsErr   error
+	PooledConfigured bool
+	PingPooledErr    error
 }
 
 func (m *MemoryCatalog) Ping(context.Context) error {
 	if m.PingErr != nil {
 		return m.PingErr
+	}
+	return nil
+}
+
+func (m *MemoryCatalog) PingPooled(context.Context) error {
+	if !m.PooledConfigured {
+		return ErrNotConfigured
+	}
+	if m.PingPooledErr != nil {
+		return m.PingPooledErr
 	}
 	return nil
 }

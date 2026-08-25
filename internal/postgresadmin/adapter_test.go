@@ -1,0 +1,96 @@
+package postgresadmin
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/SSujitX/redgres/internal/config"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func TestPooledPoolConfigUsesSimpleProtocolAndPgbouncerDB(t *testing.T) {
+	cfg := config.Config{
+		PostgresHost:       "127.0.0.1",
+		PostgresPort:       "5432",
+		PostgresDatabase:   "postgres",
+		PostgresUser:       "redgres_console",
+		PostgresSSLMode:    "prefer",
+		PostgresPooledPort: "6432",
+	}
+	poolCfg, err := pooledPoolConfig(cfg, "unused-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if poolCfg.ConnConfig.DefaultQueryExecMode != pgx.QueryExecModeSimpleProtocol {
+		t.Fatalf("DefaultQueryExecMode = %v want QueryExecModeSimpleProtocol", poolCfg.ConnConfig.DefaultQueryExecMode)
+	}
+	if poolCfg.ConnConfig.DefaultQueryExecMode == pgx.QueryExecModeExec {
+		t.Fatal("must not use QueryExecModeExec (extended protocol)")
+	}
+	if poolCfg.ConnConfig.Database != "pgbouncer" {
+		t.Fatalf("database = %q", poolCfg.ConnConfig.Database)
+	}
+	if poolCfg.ConnConfig.Port != 6432 {
+		t.Fatalf("port = %d", poolCfg.ConnConfig.Port)
+	}
+	if poolCfg.ConnConfig.Host != "127.0.0.1" {
+		t.Fatalf("host = %q", poolCfg.ConnConfig.Host)
+	}
+	if poolCfg.ConnConfig.User != "redgres_console" {
+		t.Fatalf("user = %q", poolCfg.ConnConfig.User)
+	}
+	if poolCfg.MinConns != 0 {
+		t.Fatalf("MinConns = %d (startup must not connect)", poolCfg.MinConns)
+	}
+	if poolCfg.ShouldPing == nil {
+		t.Fatal("pooled pool must disable acquire Ping")
+	}
+	if poolCfg.ShouldPing(context.Background(), pgxpool.ShouldPingParams{IdleDuration: time.Hour}) {
+		t.Fatal("ShouldPing must not ping the PgBouncer console")
+	}
+}
+
+func TestAdminPoolConfigKeepsExtendedProtocolAndCatalogDB(t *testing.T) {
+	cfg := config.Config{
+		PostgresHost:     "127.0.0.1",
+		PostgresPort:     "5432",
+		PostgresDatabase: "postgres",
+		PostgresUser:     "redgres_console",
+		PostgresSSLMode:  "prefer",
+	}
+	poolCfg, err := adminPoolConfig(cfg, "unused-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if poolCfg.ConnConfig.DefaultQueryExecMode == pgx.QueryExecModeSimpleProtocol {
+		t.Fatal("admin pool must not use QueryExecModeSimpleProtocol")
+	}
+	if poolCfg.ConnConfig.Database != "postgres" {
+		t.Fatalf("database = %q", poolCfg.ConnConfig.Database)
+	}
+	if poolCfg.ConnConfig.Port != 5432 {
+		t.Fatalf("port = %d", poolCfg.ConnConfig.Port)
+	}
+}
+
+func TestCatalogSQLStaysOnDirectAndPooledProbeIsShowVersion(t *testing.T) {
+	if strings.Contains(catalogSQL, "SHOW VERSION") || strings.Contains(catalogSQL, "pgbouncer") {
+		t.Fatal("catalog SQL must stay on the 5432 admin path")
+	}
+	if pooledShowVersionSQL != "SHOW VERSION" {
+		t.Fatalf("pooled probe SQL = %q", pooledShowVersionSQL)
+	}
+	if strings.Contains(listConnectionGroupsSQL, "SHOW VERSION") {
+		t.Fatal("connection groups SQL must stay on 5432")
+	}
+}
+
+func TestPoolCatalogPingPooledNilObserverIsNotConfigured(t *testing.T) {
+	var c PoolCatalog
+	if err := c.PingPooled(context.Background()); err != ErrNotConfigured {
+		t.Fatalf("err = %v", err)
+	}
+}

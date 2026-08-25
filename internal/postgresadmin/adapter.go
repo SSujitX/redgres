@@ -64,7 +64,8 @@ ORDER BY datname, usename, client_addr
 `
 
 type PoolCatalog struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	pooled *pgxpool.Pool
 }
 
 func Open(ctx context.Context, cfg config.Config) (*Service, func(), error) {
@@ -81,31 +82,39 @@ func Open(ctx context.Context, cfg config.Config) (*Service, func(), error) {
 		return nil, noop, err
 	}
 	pool, err := connectPool(ctx, cfg, password)
-	password = ""
 	if err != nil {
+		password = ""
 		return nil, noop, err
 	}
 	if err := checkServerMajor(ctx, pool, cfg.PostgresExpectedMajor); err != nil {
+		password = ""
 		pool.Close()
 		return nil, noop, err
 	}
-	return NewService(PoolCatalog{pool: pool}, policy), pool.Close, nil
+	var pooled *pgxpool.Pool
+	if cfg.PostgresPooledPort != "" {
+		pooled, err = connectPooledPool(ctx, cfg, password)
+		if err != nil {
+			password = ""
+			pool.Close()
+			return nil, noop, err
+		}
+	}
+	password = ""
+	closer := func() {
+		if pooled != nil {
+			pooled.Close()
+		}
+		pool.Close()
+	}
+	return NewService(PoolCatalog{pool: pool, pooled: pooled}, policy), closer, nil
 }
 
 func connectPool(ctx context.Context, cfg config.Config, password string) (*pgxpool.Pool, error) {
-	port, err := strconv.ParseUint(cfg.PostgresPort, 10, 16)
+	poolCfg, err := adminPoolConfig(cfg, password)
 	if err != nil {
-		return nil, errors.New("REDGRES_POSTGRES_PORT: invalid value")
+		return nil, err
 	}
-	poolCfg, err := pgxpool.ParseConfig(keywordConnInfo(cfg))
-	if err != nil {
-		return nil, ErrUnavailable
-	}
-	poolCfg.ConnConfig.Password = password
-	poolCfg.ConnConfig.Port = uint16(port)
-	poolCfg.MaxConns = 4
-	poolCfg.MinConns = 0
-	poolCfg.MaxConnLifetime = time.Hour
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, ErrUnavailable
@@ -119,11 +128,67 @@ func connectPool(ctx context.Context, cfg config.Config, password string) (*pgxp
 	return pool, nil
 }
 
+func connectPooledPool(ctx context.Context, cfg config.Config, password string) (*pgxpool.Pool, error) {
+	poolCfg, err := pooledPoolConfig(cfg, password)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	return pool, nil
+}
+
+func adminPoolConfig(cfg config.Config, password string) (*pgxpool.Config, error) {
+	port, err := strconv.ParseUint(cfg.PostgresPort, 10, 16)
+	if err != nil {
+		return nil, errors.New("REDGRES_POSTGRES_PORT: invalid value")
+	}
+	poolCfg, err := pgxpool.ParseConfig(keywordConnInfo(cfg))
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	poolCfg.ConnConfig.Password = password
+	poolCfg.ConnConfig.Port = uint16(port)
+	poolCfg.MaxConns = 4
+	poolCfg.MinConns = 0
+	poolCfg.MaxConnLifetime = time.Hour
+	return poolCfg, nil
+}
+
+func pooledPoolConfig(cfg config.Config, password string) (*pgxpool.Config, error) {
+	port, err := strconv.ParseUint(cfg.PostgresPooledPort, 10, 16)
+	if err != nil {
+		return nil, errors.New("REDGRES_POSTGRES_POOLED_PORT: invalid value")
+	}
+	poolCfg, err := pgxpool.ParseConfig(keywordPooledConnInfo(cfg))
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	poolCfg.ConnConfig.Password = password
+	poolCfg.ConnConfig.Port = uint16(port)
+	poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	poolCfg.ShouldPing = func(context.Context, pgxpool.ShouldPingParams) bool { return false }
+	poolCfg.MaxConns = 4
+	poolCfg.MinConns = 0
+	poolCfg.MaxConnLifetime = time.Hour
+	return poolCfg, nil
+}
+
 func keywordConnInfo(cfg config.Config) string {
+	return keywordConnInfoForDB(cfg, cfg.PostgresDatabase)
+}
+
+func keywordPooledConnInfo(cfg config.Config) string {
+	return keywordConnInfoForDB(cfg, "pgbouncer")
+}
+
+func keywordConnInfoForDB(cfg config.Config, dbname string) string {
 	parts := []string{
 		"host=" + keywordValue(cfg.PostgresHost),
 		"user=" + keywordValue(cfg.PostgresUser),
-		"dbname=" + keywordValue(cfg.PostgresDatabase),
+		"dbname=" + keywordValue(dbname),
 		"sslmode=" + keywordValue(cfg.PostgresSSLMode),
 		"connect_timeout=10",
 		"application_name=redgres",
@@ -188,6 +253,18 @@ func (c PoolCatalog) Ping(ctx context.Context) error {
 		return ErrUnavailable
 	}
 	if err := c.pool.Ping(ctx); err != nil {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+const pooledShowVersionSQL = "SHOW VERSION"
+
+func (c PoolCatalog) PingPooled(ctx context.Context) error {
+	if c.pooled == nil {
+		return ErrNotConfigured
+	}
+	if _, err := c.pooled.Exec(ctx, pooledShowVersionSQL); err != nil {
 		return ErrUnavailable
 	}
 	return nil
