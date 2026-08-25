@@ -7,7 +7,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 Partial: in-handler `Reauthenticate` on `DELETE /api/v1/redis/users/{username}`, flagged `DELETE /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows`, flagged `POST /api/v1/postgres/databases/{db}/truncate`, and flagged `DELETE /api/v1/postgres/databases/{db}` (no `POST /api/v1/auth/reauth`, no AUTH-005 `login_attempts` increment) | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; PG-008 Partial: GET `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` + flagged `DELETE …/rows` API (`postgres.destructive` + CSRF + AUTH-006) + inspector single-column PK checkboxes and danger Delete selected dialog (no live PG, no Playwright); PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; POST rotate is PG-006); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no Gate 4); PG-006 Partial: POST `/api/v1/postgres/databases/{db}/credentials/rotate` (`postgres.credentials` + CSRF) + ALTER ROLE + vault upsert + inspector Rotate (no live PG, no Gate 4, no AUTH-006); PG-010 Partial: POST `/api/v1/postgres/databases/{db}/duplicate` (`postgres.provision` + CSRF) TEMPLATE clone + unique owner + vault INSERT + clone-only compensation + inspector Duplicate (no live PG, no 202, no AUTH-006); PG-009 Partial: flagged `POST /api/v1/postgres/databases/{db}/truncate` (`postgres.destructive` + CSRF + AUTH-006, one `TRUNCATE … RESTART IDENTITY`) + inspector danger Truncate dialog (no live PG, no Playwright); PG-011 Partial: flagged `DELETE /api/v1/postgres/databases/{db}` (`postgres.destructive` + CSRF + AUTH-006, terminate excluding current backend then `DROP DATABASE`, optional `DROP ROLE` + vault DELETE; **BF-1** no backup HTTP gate) + inspector danger Drop dialog (no live PG, no Playwright) | Partial |
-| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
+| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + Permission presets catalog page + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | OPS-001/006 Partial: fail-closed dispatcher + `--dry-run` stage print. OPS-002 Partial: PATH host `--version` inventory on `--dry-run` only (`deploy/lib/inventory.sh`). OPS-003 Partial: fail-closed `verify --non-interactive --dry-run --config PATH` skip matrix (`result=partial`; never sources config). OPS-005 Partial: fail-closed `update --non-interactive --dry-run --release PATH` and `rollback --non-interactive --dry-run --to VERSION` skip matrices (`result=partial`; Git Bash `deploy/tests/run.sh` 63 passed). OPS-004/007 Planned (`backup` still exit 2). No packages/host mutation. | Partial |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
@@ -5374,6 +5374,34 @@ Security tests: canary env/config not printed; --release not
 Limitations: result=partial is required so exit 0 is not Complete.
  Live update/rollback without --dry-run remain exit 2. OPS-004
  backup remains Planned (exit 2). bash argv cannot carry NUL.
+Do not mark Complete.
+```
+
+## REDIS-004 Permission presets catalog UI (2026-08-26)
+
+```text
+Requirement: REDIS-004 Partial (Permission presets catalog UI).
+ Keep REDIS-004/005 Partial. Reject Complete.
+ Not COMPATIBILITY.md §6. Not live Redis. Not representative workloads.
+ Not Playwright authenticated shell. Not NFR-012 viewport sign-off.
+Decision/ADR: ADR-006. HTTP GET /api/v1/redis/presets unchanged
+ (session + redis.read, no CSRF, no Redis, no audit, no custom row).
+Source characterization: existing Redgres NamedPresets() catalog;
+ redis-ui not copied. Create/Edit still do not GET /presets.
+Implementation files: web/src/features/redis/PresetsPage.tsx;
+ web/src/features/pages/Placeholders.tsx; web/src/api/redis.ts;
+ web/src/App.test.tsx; docs/UX.md; docs/UI_DESIGN_SYSTEM.md;
+ AGENTS.md current-truth.
+Unit tests: parent re-ran npm --prefix web run test:run on
+ integrated master `c48fac0` → Tests 363 passed (363);
+ npm --prefix web run build → tsc + vite 8.2.2. Writer claimed
+ the same on `d8a3ce4`. jsdom: catalog page, 401, malformed/empty/
+ unknown-only, placeholder gone, login/create/edit omit GET /presets,
+ no localStorage/sessionStorage.
+Integration tests: none. Security tests: no secrets persisted;
+ no CSRF on GET; no custom row; no Redis ERR.
+Known limitations: jsdom only; no viewport/zoom; no live Redis;
+ System and Documentation remain placeholders.
 Do not mark Complete.
 ```
 
