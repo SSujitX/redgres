@@ -3689,7 +3689,8 @@ Local commits: `c9d8e27` (freeze), `286b10f` (API), `21ca8fd` (UI),
  `f53d5f8` (merge API), `acc1999` (merge UI), this docs record.
  Not pushed.
 Reviewer/date: Security review (2026-08-25) on `4c06f91` Approve Partial;
- UI review (2026-08-25) on `4c06f91` Approve Partial; evidence/verifier pending.
+ UI review (2026-08-25) on `4c06f91` Approve Partial; evidence review
+ (2026-08-25) on `f6a2ee9` PASS Partial / reject-Complete; verifier pending.
  Keep Partial.
 Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial.
  Keep PG-005 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
@@ -3754,6 +3755,33 @@ Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
  Partial. Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
  Playwright 360×800 / 768×1024 / 1280×800 / 1600×1000 + 200% zoom, live
  PostgreSQL 17/18, Gate 4 remain Complete blockers.
+Not pushed.
+```
+
+## PG-006 POST rotate evidence pin (2026-08-25)
+
+```text
+Requirement: PG-006 Partial (POST /api/v1/postgres/databases/{db}/credentials/rotate
+ ALTER ROLE + vault upsert + Databases inspector Rotate). Keep PG-003 Partial.
+ Keep PG-004 Partial. Keep PG-005 Partial.
+Decision/ADR: ADR-004; freeze `c9d8e27`. AUTH-006 does not apply.
+Reviewer/date: Evidence review (2026-08-25) on `f6a2ee9` PASS Partial /
+ reject-Complete. Freeze criteria map to implementation and recorded tests
+ at `acc1999` (go test ./... ok; npm 287 passed). Status row PG-006 Partial;
+ AGENTS.md names POST rotate + inspector Rotate. Canonical freeze docs at
+ `c9d8e27`. Independent security Approve Partial on `4c06f91` (pin `8dea290`);
+ UI Approve Partial on `4c06f91` (pin `f6a2ee9`). This reviewer did not
+ re-run tests.
+ Over-mapped (non-blocking): capability test proves export denied not a
+ credentials-stripped owner; HTTP 409 untested at HTTP (domain lock test
+ exists); missing vault key / vault probe 503 are domain-only; dedicated
+ missing-flags hide / rotate-ticket dismiss tests remain UI-reviewer gaps.
+ Do not mark Complete.
+Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
+ Partial. Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Gate 4, live PostgreSQL 17/18, Playwright, POST /api/v1/auth/reauth,
+ ensure_vault, dual-secret ADR, production vault-secret probe remain Complete
+ blockers.
 Not pushed.
 ```
 
