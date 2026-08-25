@@ -43,7 +43,7 @@ Gate: Redis parity and all platform security tests pass; legacy Redact remains a
 - Add `pgxpool` direct admin adapter.
 - Port list/details/security/table/row-browse and masked URL metadata.
 - Compare API outputs against a safe clone of the current PostgreSQL cluster.
-- Do not reveal or mutate vault credentials yet. Masked `GET /api/v1/postgres/databases/{db}/connection` is PG-004/PG-005 Partial (existence + masked URLs only). POST reveal remains Phase 5.
+- Do not mutate vault credentials in Phase 3. Masked `GET /api/v1/postgres/databases/{db}/connection` is PG-004/PG-005 Partial (existence + masked URLs only). POST reveal is a later Partial secret-read slice (fixtures + stub catalog), not this clone-comparison gate.
 
 Gate: read-only parity, query bounds, permissions, and failure isolation pass.
 
@@ -58,7 +58,7 @@ Gate: every sampled/copied record decrypts correctly and no record is mutated.
 
 ## Phase 5 — port PostgreSQL mutations
 
-Order from lowest to highest risk:
+Order from lowest to highest risk (cutover Complete still follows this list). Redgres may implement **reveal as a Partial secret-read slice before create** because reveal does not mutate PostgreSQL or vault rows; PG-003 create remains the first cluster+vault write:
 
 1. Create role/database and one-time URLs.
 2. Reveal existing connection URL.
