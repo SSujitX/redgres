@@ -93,6 +93,25 @@ export async function revealPostgresConnection(name: string, csrf: string, init:
 
 export type PostgresCreatePayload = PostgresRevealPayload;
 
+export type PostgresRotatePayload = PostgresRevealPayload;
+
+export async function rotatePostgresCredentials(
+  name: string,
+  confirmation: string,
+  csrf: string,
+  init: RequestInit = {},
+) {
+  return apiRequest<PostgresRotatePayload & ApiErrorBody>(
+    `/api/v1/postgres/databases/${encodeURIComponent(name)}/credentials/rotate`,
+    {
+      ...init,
+      method: "POST",
+      csrf,
+      body: JSON.stringify({ confirmation }),
+    },
+  );
+}
+
 export async function createPostgresDatabase(
   database: string,
   owner: string,

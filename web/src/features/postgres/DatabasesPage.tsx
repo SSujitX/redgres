@@ -8,6 +8,7 @@ import {
   fetchPostgresRows,
   fetchPostgresTables,
   revealPostgresConnection,
+  rotatePostgresCredentials,
   type DatabaseDetails,
   type DatabaseListItem,
   type RowPage,
@@ -15,11 +16,14 @@ import {
 } from "../../api/postgres";
 import CredentialTicket, { type ShownCredential } from "../redis/CredentialTicket";
 import CreateDatabaseForm from "./CreateDatabaseForm";
+import RotatePasswordDialog from "./RotatePasswordDialog";
 import { displayText } from "../../text/displayText";
 
 const maxRowQueryRunes = 128;
 const sessionExpired = "Your session has expired. Sign in again to continue.";
 const postgresUnavailable = "PostgreSQL is unavailable";
+const vaultOutOfSyncCopy =
+  "The PostgreSQL password was changed but the vault could not be saved. Rotate again.";
 
 type ConnectionUrls = {
   savedCredentialStatus: string;
@@ -72,6 +76,17 @@ function parsePostgresCredential(raw: unknown): ShownCredential | null {
   return shown;
 }
 
+function rotationEligible(details: DatabaseDetails | null): boolean {
+  if (!details) {
+    return false;
+  }
+  const owner = details.owner ?? "";
+  if (owner === "") {
+    return false;
+  }
+  return details.security?.owner_can_login === true && details.security?.owner_is_superuser === false;
+}
+
 type SelectedTable = {
   schema: string;
   name: string;
@@ -109,13 +124,18 @@ export default function DatabasesPage({
   const [connectionError, setConnectionError] = useState("");
   const [loadingConnection, setLoadingConnection] = useState(false);
   const [ticket, setTicket] = useState<ShownCredential | null>(null);
+  const [ticketRotateWarning, setTicketRotateWarning] = useState(false);
   const [revealing, setRevealing] = useState(false);
   const [revealError, setRevealError] = useState("");
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [rotateError, setRotateError] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [pendingSelect, setPendingSelect] = useState<string | null>(null);
   const revealAbort = useRef<AbortController | null>(null);
+  const rotateAbort = useRef<AbortController | null>(null);
   const listAbort = useRef<AbortController | null>(null);
   const createOpened = useRef(false);
   const [tables, setTables] = useState<TableItem[] | null>(null);
@@ -174,6 +194,7 @@ export default function DatabasesPage({
       selectionAbort.current?.abort();
       rowsAbort.current?.abort();
       revealAbort.current?.abort();
+      rotateAbort.current?.abort();
     };
   }, []);
 
@@ -213,14 +234,19 @@ export default function DatabasesPage({
 
   function clearTicket() {
     setTicket(null);
+    setTicketRotateWarning(false);
     setRevealError("");
     setRevealing(false);
+    setRotateOpen(false);
+    setRotateError("");
+    setRotating(false);
   }
 
   function openDetails(name: string) {
     selectionAbort.current?.abort();
     rowsAbort.current?.abort();
     revealAbort.current?.abort();
+    rotateAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
     setSelected(name);
@@ -311,7 +337,7 @@ export default function DatabasesPage({
   }
 
   async function handleReveal() {
-    if (!selected || revealing || ticket) {
+    if (!selected || revealing || rotating || ticket) {
       return;
     }
     revealAbort.current?.abort();
@@ -341,6 +367,7 @@ export default function DatabasesPage({
           return;
         }
         setTicket(shown);
+        setTicketRotateWarning(false);
         setRevealError("");
         return;
       }
@@ -355,6 +382,83 @@ export default function DatabasesPage({
     } finally {
       if (!controller.signal.aborted) {
         setRevealing(false);
+      }
+    }
+  }
+
+  async function handleRotate(confirmation: string) {
+    if (!selected || rotating || revealing || creating || ticket) {
+      return;
+    }
+    rotateAbort.current?.abort();
+    const controller = new AbortController();
+    rotateAbort.current = controller;
+    setRotating(true);
+    setRotateError("");
+    try {
+      const result = await rotatePostgresCredentials(selected, confirmation, csrf, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 401) {
+        setRotateOpen(false);
+        setRotateError("");
+        setTicket(null);
+        setTicketRotateWarning(false);
+        setRevealError(sessionExpired);
+        return;
+      }
+      if (result.status === 400 || result.status === 403) {
+        setRotateError(
+          errorMessage(
+            result.body,
+            result.status === 403
+              ? "This PostgreSQL name is protected"
+              : "Type the database name exactly to confirm rotation",
+          ),
+        );
+        return;
+      }
+      if (result.status === 404) {
+        setRotateOpen(false);
+        setRotateError("");
+        setTicket(null);
+        setRevealError(errorMessage(result.body, "Not found"));
+        return;
+      }
+      if (result.status === 503) {
+        const copy = errorMessage(result.body, postgresUnavailable);
+        if (copy === vaultOutOfSyncCopy) {
+          setRotateError(vaultOutOfSyncCopy);
+          return;
+        }
+        setRotateOpen(false);
+        setRotateError("");
+        setTicket(null);
+        setRevealError(errorMessage(result.body, postgresUnavailable));
+        return;
+      }
+      if (result.status === 200) {
+        const shown = parsePostgresCredential(result.body.credential);
+        if (!shown) {
+          setRotateError(errorMessage(result.body, postgresUnavailable));
+          return;
+        }
+        setRotateOpen(false);
+        setRotateError("");
+        setTicketRotateWarning(true);
+        setTicket(shown);
+        return;
+      }
+      setRotateError(errorMessage(result.body, postgresUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setRotateError(postgresUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setRotating(false);
       }
     }
   }
@@ -404,6 +508,7 @@ export default function DatabasesPage({
             : database;
         setCreateOpen(false);
         setCreateError("");
+        setTicketRotateWarning(false);
         setTicket(shown);
         setPendingSelect(createdName);
         refreshList();
@@ -548,8 +653,10 @@ export default function DatabasesPage({
     !loadingConnection &&
     connectionError === "" &&
     connection?.savedCredentialStatus === "present";
+  const showRotate = !loadingDetails && rotationEligible(details);
   const showCreate = items !== null && listError === "";
-  const createDisabled = creating || ticket !== null;
+  const mutationBusy = creating || revealing || rotating || ticket !== null;
+  const createDisabled = mutationBusy;
 
   return (
     <article>
@@ -572,7 +679,14 @@ export default function DatabasesPage({
         </div>
         <p>Manageable project databases only. Passwords are not revealed.</p>
       </header>
-      {ticket ? <CredentialTicket kind="postgres" credential={ticket} onDismiss={dismissTicket} /> : null}
+      {ticket ? (
+        <CredentialTicket
+          kind="postgres"
+          credential={ticket}
+          rotateWarning={ticketRotateWarning}
+          onDismiss={dismissTicket}
+        />
+      ) : null}
       {createOpen ? (
         <CreateDatabaseForm
           error={createError}
@@ -585,6 +699,21 @@ export default function DatabasesPage({
             setCreateError("");
           }}
           onSubmit={(database, owner) => void handleCreate(database, owner)}
+        />
+      ) : null}
+      {rotateOpen && selected ? (
+        <RotatePasswordDialog
+          database={selected}
+          error={rotateError}
+          submitting={rotating}
+          onCancel={() => {
+            if (rotating) {
+              return;
+            }
+            setRotateOpen(false);
+            setRotateError("");
+          }}
+          onConfirm={(confirmation) => void handleRotate(confirmation)}
         />
       ) : null}
       {listError ? (
@@ -653,16 +782,31 @@ export default function DatabasesPage({
               {revealError}
             </p>
           ) : null}
-          {showReveal ? (
+          {showReveal || showRotate ? (
             <div className="form-actions">
-              <button
-                type="button"
-                className="text-button"
-                disabled={revealing || ticket !== null}
-                onClick={() => void handleReveal()}
-              >
-                Reveal
-              </button>
+              {showReveal ? (
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={mutationBusy}
+                  onClick={() => void handleReveal()}
+                >
+                  Reveal
+                </button>
+              ) : null}
+              {showRotate ? (
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={mutationBusy}
+                  onClick={() => {
+                    setRotateError("");
+                    setRotateOpen(true);
+                  }}
+                >
+                  Rotate
+                </button>
+              ) : null}
             </div>
           ) : null}
           <h3>Tables</h3>
