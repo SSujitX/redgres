@@ -3688,10 +3688,41 @@ Known limitations: in-process TryLock only; failure audit is nil-adapter +
 Local commits: `c9d8e27` (freeze), `286b10f` (API), `21ca8fd` (UI),
  `f53d5f8` (merge API), `acc1999` (merge UI), this docs record.
  Not pushed.
-Reviewer/date: pending parent/security/verifier. Keep Partial.
+Reviewer/date: Security review (2026-08-25) on `4c06f91` Approve Partial;
+ UI/evidence/verifier pending. Keep Partial.
 Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial.
  Keep PG-005 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
  Keep AUTH-006 Partial. Do not mark Complete.
+```
+
+## PG-006 POST rotate security pin (2026-08-25)
+
+```text
+Requirement: PG-006 Partial (POST /api/v1/postgres/databases/{db}/credentials/rotate
+ ALTER ROLE + vault upsert + Databases inspector Rotate). Keep PG-003 Partial.
+ Keep PG-004 Partial. Keep PG-005 Partial.
+Decision/ADR: ADR-004; ADR-005 (no operations table); freeze `c9d8e27`.
+ AUTH-006 does not apply.
+Reviewer/date: Security review (2026-08-25) on `4c06f91` Approve Partial;
+ no Critical/High/Medium. Freeze holds: session + postgres.credentials + CSRF
+ (requireMutation); not postgres.read / provision / destructive; protected /
+ ineligible 404 or 403 no ALTER; missing vault key and vault probe 503 before
+ ALTER; ALTER QuoteIdentifier + quoteStringLiteral CONNECTION LIMIT 20;
+ parameterized upsert ON CONFLICT; create INSERT still no ON CONFLICT;
+ vault-fail after ALTER VaultUnsynced 3 retries no password no re-ALTER;
+ 200 no-store one_time JSON false; audit postgres.credential.rotate metadata
+ database+owner only; audit-fail 503 no credential; no POST /api/v1/auth/reauth;
+ body {confirmation} only; pgx v5.10.0; go-redis v9.22.0; no fernet-go.
+ UI at that SHA: CSRF header; no setItem; Security overview never POSTs rotate.
+ Low L1 (non-blocking): HTTP capability test proves export denied, not a
+ credentials-stripped owner. Low L2 (accepted Partial): in-process per-owner
+ TryLock only; two processes could interleave ALTER and vault upsert.
+Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
+ Partial. Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Gate 4, live PostgreSQL 17/18, Playwright, POST /api/v1/auth/reauth,
+ ensure_vault, dual-secret ADR, production vault-secret probe, durable
+ cross-process lock remain Complete blockers.
+Not pushed.
 ```
 
 
