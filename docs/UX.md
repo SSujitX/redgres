@@ -62,7 +62,7 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 - Truncation is disclosed as an alert above the ledger. Painted identifiers use `displayText()` plus bidi isolate. The Redis service rail is wayfinding; healthy and limited states do not use danger red. Login never fetches or POSTs `/api/v1/redis/users`. List, inspector, and credential-ticket state stay in memory (no `localStorage` / `sessionStorage`) and clear on logout.
 - Create uses username, key prefix, and a named permission preset. The prefix is suggested from the username until the prefix field is edited. The preset select defaults to Cache read/write and also offers Read only and Queue/worker. Queue type (Lists, Streams, Sorted sets) is shown only for Queue/worker. There is no Custom option and no command editor. The POST body is `{ username, key_pattern, preset }` with CSRF; `queue_kind` is included only when preset is `queue-worker`. The body never includes a password, commands, categories, or enabled. Search remains inspect-only.
 - A successful create refreshes the list and opens a one-time Redis credential ticket. The new user is inspected only after the ticket is dismissed, so the password does not linger in inspect state. The ticket shows username, password, and URL copy only when `credential.urls.primary` is present; it does not auto-copy. Extra secret fields in the response are ignored.
-- Residual: other presets, queue-kind selection, custom allow-list editing, delete, Overview quick-create.
+- Residual: custom allow-list editing, delete, Overview quick-create.
 
 ## Audit history
 
