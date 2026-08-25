@@ -3,8 +3,9 @@ package postgresadmin
 import "context"
 
 type MemoryTable struct {
-	Columns []string
-	Rows    []map[string]any
+	Columns    []string
+	Rows       []map[string]any
+	PrimaryKey []string
 }
 
 type MemoryCatalog struct {
@@ -17,6 +18,14 @@ type MemoryCatalog struct {
 	TableData                     map[string]MemoryTable
 	RowsErr                       error
 	LastRowsKey                   string
+	PrimaryKeyErr                 error
+	LastPrimaryKeyKey             string
+	DeleteRowsCalls               int
+	DeleteRowsErr                 error
+	LastDeleteKey                 string
+	LastDeleteColumn              string
+	LastDeleteValues              []any
+	DeletedCount                  int64
 	Connections                   []ConnectionGroup
 	ConnectionsErr                error
 	SavedRoles                    []string
@@ -190,6 +199,66 @@ func (m *MemoryCatalog) ListRows(_ context.Context, database, schema, table, _ s
 		Offset:  offset,
 		Limit:   limit,
 	}, nil
+}
+
+func (m *MemoryCatalog) PrimaryKey(_ context.Context, database, schema, table string) ([]string, error) {
+	if err := ValidateIdentifier(database); err != nil {
+		return nil, err
+	}
+	if err := ValidateIdentifier(schema); err != nil {
+		return nil, err
+	}
+	if err := ValidateIdentifier(table); err != nil {
+		return nil, err
+	}
+	if catalogSchemaDenied(schema) {
+		return nil, ErrNotFound
+	}
+	key := memoryTableKey(database, schema, table)
+	m.LastPrimaryKeyKey = key
+	if m.PrimaryKeyErr != nil {
+		return nil, m.PrimaryKeyErr
+	}
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	data, ok := m.TableData[key]
+	if !ok || len(data.Columns) == 0 {
+		return nil, ErrNotFound
+	}
+	if data.PrimaryKey == nil {
+		return []string{}, nil
+	}
+	return append([]string{}, data.PrimaryKey...), nil
+}
+
+func (m *MemoryCatalog) DeleteRows(_ context.Context, database, schema, table, pkColumn string, values []any) (int64, error) {
+	if err := ValidateIdentifier(database); err != nil {
+		return 0, err
+	}
+	if err := ValidateIdentifier(schema); err != nil {
+		return 0, err
+	}
+	if err := ValidateIdentifier(table); err != nil {
+		return 0, err
+	}
+	if catalogSchemaDenied(schema) {
+		return 0, ErrNotFound
+	}
+	m.DeleteRowsCalls++
+	m.LastDeleteKey = memoryTableKey(database, schema, table)
+	m.LastDeleteColumn = pkColumn
+	m.LastDeleteValues = append([]any{}, values...)
+	if m.DeleteRowsErr != nil {
+		return 0, m.DeleteRowsErr
+	}
+	if m.Err != nil {
+		return 0, m.Err
+	}
+	if m.DeletedCount != 0 {
+		return m.DeletedCount, nil
+	}
+	return int64(len(values)), nil
 }
 
 func (m *MemoryCatalog) ListConnectionGroups(context.Context) ([]ConnectionGroup, error) {

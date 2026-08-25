@@ -17,6 +17,10 @@ import (
 const postgresCreateTimeout = 30 * time.Second
 const postgresRotateTimeout = 30 * time.Second
 const postgresDuplicateTimeout = 30 * time.Second
+const postgresRowsDeleteTimeout = 30 * time.Second
+const postgresRowsDeleteOffMessage = "Row delete is turned off."
+const postgresRowsDeleteConfirmMessage = "Type the exact table name to confirm deletion"
+const postgresRowsDeletePKValuesMessage = "Select between 1 and 500 primary key values."
 const postgresRotateConfirmMessage = "Type the database name exactly to confirm rotation"
 const postgresRotateInProgressMessage = "A password rotation is already in progress for this role."
 const postgresRotateVaultUnsyncedMessage = "The PostgreSQL password was changed but the vault could not be saved. Rotate again."
@@ -473,6 +477,142 @@ func (s *Server) handlePostgresRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, r, http.StatusOK, postgresRowsBody{RowPage: result, RequestID: requestID(r)})
+}
+
+type postgresPrimaryKeyBody struct {
+	PrimaryKey []string `json:"primary_key"`
+	RequestID  string   `json:"request_id"`
+}
+
+func (s *Server) handlePostgresPrimaryKey(w http.ResponseWriter, r *http.Request) {
+	database, err := decodePathIdentifier(chi.URLParam(r, "db"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid database name")
+		return
+	}
+	schema, err := decodePathIdentifier(chi.URLParam(r, "schema"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid schema name")
+		return
+	}
+	table, err := decodePathIdentifier(chi.URLParam(r, "table"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid table name")
+		return
+	}
+	if s.postgres == nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	cols, err := s.postgres.PrimaryKey(r.Context(), database, schema, table)
+	if err != nil {
+		s.writePostgresError(w, r, err)
+		return
+	}
+	if cols == nil {
+		cols = []string{}
+	}
+	s.writeJSON(w, r, http.StatusOK, postgresPrimaryKeyBody{PrimaryKey: cols, RequestID: requestID(r)})
+}
+
+type postgresRowsDeleteRequest struct {
+	TableConfirmation string `json:"table_confirmation"`
+	OwnerPassword     string `json:"owner_password"`
+	PrimaryKeyValues  []any  `json:"primary_key_values"`
+}
+
+type postgresRowsDeleteResponse struct {
+	Deleted   int64  `json:"deleted"`
+	RequestID string `json:"request_id"`
+}
+
+func (s *Server) handlePostgresRowsDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.FeaturePostgresRowDelete {
+		s.writeError(w, r, http.StatusForbidden, CodeForbidden, postgresRowsDeleteOffMessage)
+		return
+	}
+	database, err := decodePathIdentifier(chi.URLParam(r, "db"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid database name")
+		return
+	}
+	schema, err := decodePathIdentifier(chi.URLParam(r, "schema"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid schema name")
+		return
+	}
+	table, err := decodePathIdentifier(chi.URLParam(r, "table"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid table name")
+		return
+	}
+	var body postgresRowsDeleteRequest
+	if err := decodeJSON(r, &body); err != nil {
+		s.writeDecodeError(w, r, err)
+		return
+	}
+	if body.TableConfirmation != table {
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, postgresRowsDeleteConfirmMessage, map[string]string{"table_confirmation": "invalid"})
+		return
+	}
+	if !validRowDeletePKValues(body.PrimaryKeyValues) {
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, postgresRowsDeletePKValuesMessage, map[string]string{"primary_key_values": "invalid"})
+		return
+	}
+	sess := sessionFrom(r)
+	meta := postgresRowsDeleteMeta(database, schema, table)
+	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword); err != nil {
+		switch {
+		case errors.Is(err, auth.ErrReauthRequired):
+			_ = s.audit.Record(sess.Username, "postgres.rows.delete", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
+			return
+		case errors.Is(err, auth.ErrUnauthorized):
+			s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, authRequiredMessage)
+			return
+		default:
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), postgresRowsDeleteTimeout)
+	defer cancel()
+	if s.postgres == nil {
+		_ = s.audit.Record(sess.Username, "postgres.rows.delete", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	deleted, err := s.postgres.DeleteRows(ctx, database, schema, table, body.PrimaryKeyValues)
+	if err != nil {
+		_ = s.audit.Record(sess.Username, "postgres.rows.delete", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writePostgresError(w, r, err)
+		return
+	}
+	successMeta := postgresRowsDeleteMeta(database, schema, table)
+	successMeta["deleted"] = deleted
+	if err := s.audit.Record(sess.Username, "postgres.rows.delete", database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), successMeta); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, postgresRowsDeleteResponse{Deleted: deleted, RequestID: requestID(r)})
+}
+
+func postgresRowsDeleteMeta(database, schema, table string) map[string]any {
+	return map[string]any{"database": database, "schema": schema, "table": table}
+}
+
+func validRowDeletePKValues(values []any) bool {
+	if len(values) < 1 || len(values) > postgresadmin.MaxRowDeleteValues {
+		return false
+	}
+	for _, value := range values {
+		switch value.(type) {
+		case string, float64, bool:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handlePostgresSecurity(w http.ResponseWriter, r *http.Request) {

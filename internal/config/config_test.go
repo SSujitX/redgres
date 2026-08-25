@@ -57,6 +57,9 @@ func TestLoadDevelopmentDefaults(t *testing.T) {
 	if cfg.CookieSecure {
 		t.Fatal("CookieSecure should be false in development defaults")
 	}
+	if cfg.FeaturePostgresRowDelete {
+		t.Fatal("FeaturePostgresRowDelete should be false when unset")
+	}
 	if cfg.LogLevel != DefaultLogLevel {
 		t.Fatalf("LogLevel = %q", cfg.LogLevel)
 	}

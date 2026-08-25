@@ -144,3 +144,112 @@ func rowSearchClause(columns []columnMeta, q string) (string, []any) {
 	}
 	return " WHERE (" + strings.Join(ors, " OR ") + ")", args
 }
+
+const primaryKeySQL = `
+SELECT kcu.column_name
+FROM information_schema.table_constraints AS tc
+JOIN information_schema.key_column_usage AS kcu
+  ON tc.constraint_catalog = kcu.constraint_catalog
+ AND tc.constraint_schema = kcu.constraint_schema
+ AND tc.constraint_name = kcu.constraint_name
+ AND tc.table_schema = kcu.table_schema
+ AND tc.table_name = kcu.table_name
+WHERE tc.constraint_type = 'PRIMARY KEY'
+  AND tc.table_schema = $1
+  AND tc.table_name = $2
+ORDER BY kcu.ordinal_position
+`
+
+const missingSingleColumnPKMessage = "This table does not have a single-column primary key."
+
+func (c PoolCatalog) PrimaryKey(ctx context.Context, database, schema, table string) ([]string, error) {
+	if err := ValidateIdentifier(database); err != nil {
+		return nil, err
+	}
+	if err := ValidateIdentifier(schema); err != nil {
+		return nil, err
+	}
+	if err := ValidateIdentifier(table); err != nil {
+		return nil, err
+	}
+	if catalogSchemaDenied(schema) {
+		return nil, ErrNotFound
+	}
+	conn, connectCtx, closeConn, err := c.connectTarget(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	defer closeConn()
+	var exists int
+	if err := conn.QueryRow(connectCtx, confirmBaseTableSQL, schema, table).Scan(&exists); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, ErrUnavailable
+	}
+	rows, err := conn.Query(connectCtx, primaryKeySQL, schema, table)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	defer rows.Close()
+	out := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, ErrUnavailable
+		}
+		if _, err := QuoteCatalogIdentifier(name); err != nil {
+			return nil, ErrUnavailable
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, ErrUnavailable
+	}
+	return out, nil
+}
+
+func (c PoolCatalog) DeleteRows(ctx context.Context, database, schema, table, pkColumn string, values []any) (int64, error) {
+	if err := ValidateIdentifier(database); err != nil {
+		return 0, err
+	}
+	if err := ValidateIdentifier(schema); err != nil {
+		return 0, err
+	}
+	if err := ValidateIdentifier(table); err != nil {
+		return 0, err
+	}
+	if catalogSchemaDenied(schema) {
+		return 0, ErrNotFound
+	}
+	sql, err := formatDeleteRowsSQL(schema, table, pkColumn, len(values))
+	if err != nil {
+		return 0, err
+	}
+	conn, connectCtx, closeConn, err := c.connectTarget(ctx, database)
+	if err != nil {
+		return 0, err
+	}
+	defer closeConn()
+	tag, err := conn.Exec(connectCtx, sql, values...)
+	if err != nil {
+		return 0, ErrUnavailable
+	}
+	return tag.RowsAffected(), nil
+}
+
+func formatDeleteRowsSQL(schema, table, pkColumn string, n int) (string, error) {
+	if n < 1 || n > MaxRowDeleteValues {
+		return "", FieldError{Field: "primary_key_values", Message: "Select between 1 and 500 primary key values."}
+	}
+	quotedPK, err := QuoteCatalogIdentifier(pkColumn)
+	if err != nil {
+		return "", ErrUnavailable
+	}
+	placeholders := make([]string, n)
+	for i := 0; i < n; i++ {
+		placeholders[i] = "$" + strconv.Itoa(i+1)
+	}
+	relation := pgx.Identifier{schema, table}.Sanitize()
+	return "DELETE FROM " + relation + " WHERE " + quotedPK + " IN (" + strings.Join(placeholders, ", ") + ")", nil
+}

@@ -268,6 +268,82 @@ func (s *Service) Rows(ctx context.Context, database, schema, table, q string, o
 	return page, nil
 }
 
+func (s *Service) PrimaryKey(ctx context.Context, database, schema, table string) ([]string, error) {
+	if err := ValidateIdentifier(database); err != nil {
+		return nil, err
+	}
+	if err := ValidateIdentifier(schema); err != nil {
+		return nil, err
+	}
+	if err := ValidateIdentifier(table); err != nil {
+		return nil, err
+	}
+	if catalogSchemaDenied(schema) {
+		return nil, ErrNotFound
+	}
+	if s == nil || s.catalog == nil {
+		return nil, ErrUnavailable
+	}
+	if s.policy.DatabaseDenied(database) {
+		return nil, ErrNotFound
+	}
+	row, err := s.catalog.Lookup(ctx, database)
+	if err != nil {
+		return nil, mapCatalogError(err)
+	}
+	if !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate) {
+		return nil, ErrNotFound
+	}
+	cols, err := s.catalog.PrimaryKey(ctx, row.Name, schema, table)
+	if err != nil {
+		return nil, mapCatalogError(err)
+	}
+	if cols == nil {
+		cols = []string{}
+	}
+	return cols, nil
+}
+
+func (s *Service) DeleteRows(ctx context.Context, database, schema, table string, values []any) (int64, error) {
+	if err := ValidateIdentifier(database); err != nil {
+		return 0, err
+	}
+	if err := ValidateIdentifier(schema); err != nil {
+		return 0, err
+	}
+	if err := ValidateIdentifier(table); err != nil {
+		return 0, err
+	}
+	if catalogSchemaDenied(schema) {
+		return 0, ErrNotFound
+	}
+	if s == nil || s.catalog == nil {
+		return 0, ErrUnavailable
+	}
+	if s.policy.DatabaseDenied(database) {
+		return 0, ErrNotFound
+	}
+	row, err := s.catalog.Lookup(ctx, database)
+	if err != nil {
+		return 0, mapCatalogError(err)
+	}
+	if !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate) {
+		return 0, ErrNotFound
+	}
+	cols, err := s.catalog.PrimaryKey(ctx, row.Name, schema, table)
+	if err != nil {
+		return 0, mapCatalogError(err)
+	}
+	if len(cols) != 1 {
+		return 0, FieldError{Field: "primary_key", Message: missingSingleColumnPKMessage}
+	}
+	deleted, err := s.catalog.DeleteRows(ctx, row.Name, schema, table, cols[0], values)
+	if err != nil {
+		return 0, mapCatalogError(err)
+	}
+	return deleted, nil
+}
+
 func (s *Service) SecurityOverview(ctx context.Context) (SecurityOverview, error) {
 	if s == nil || s.catalog == nil {
 		return SecurityOverview{}, ErrUnavailable

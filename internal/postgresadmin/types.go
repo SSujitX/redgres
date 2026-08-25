@@ -29,6 +29,8 @@ type Catalog interface {
 	Lookup(ctx context.Context, name string) (CatalogRow, error)
 	ListTables(ctx context.Context, database string) ([]TableItem, error)
 	ListRows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
+	PrimaryKey(ctx context.Context, database, schema, table string) ([]string, error)
+	DeleteRows(ctx context.Context, database, schema, table, pkColumn string, values []any) (int64, error)
 	ListConnectionGroups(ctx context.Context) ([]ConnectionGroup, error)
 	SavedRoleNames(ctx context.Context, roles []string) (map[string]struct{}, error)
 	EncryptedPassword(ctx context.Context, role string) (string, error)
@@ -64,6 +66,8 @@ type Inventory interface {
 	Details(ctx context.Context, name string) (DatabaseDetails, error)
 	Tables(ctx context.Context, name string) (TableListResult, error)
 	Rows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
+	PrimaryKey(ctx context.Context, database, schema, table string) ([]string, error)
+	DeleteRows(ctx context.Context, database, schema, table string, values []any) (int64, error)
 	SecurityOverview(ctx context.Context) (SecurityOverview, error)
 	Connection(ctx context.Context, name string) (Connection, error)
 	Reveal(ctx context.Context, name string) (RevealedConnection, error)
@@ -150,8 +154,9 @@ type TableListResult struct {
 }
 
 const (
-	defaultRowLimit  = 50
-	MaxRowQueryRunes = 128
+	defaultRowLimit    = 50
+	MaxRowQueryRunes   = 128
+	MaxRowDeleteValues = 500
 )
 
 type RowPage struct {

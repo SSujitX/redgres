@@ -62,6 +62,8 @@ type Config struct {
 
 	PgAdminURL      string
 	RedisInsightURL string
+
+	FeaturePostgresRowDelete bool
 }
 
 func Load(args []string) (Config, error) {
@@ -128,6 +130,11 @@ func Load(args []string) (Config, error) {
 	}
 	if err := cfg.loadToolLinks(); err != nil {
 		return Config{}, err
+	}
+	if v, err := envBool("REDGRES_FEATURE_POSTGRES_ROW_DELETE"); err != nil {
+		return Config{}, err
+	} else if v != nil {
+		cfg.FeaturePostgresRowDelete = *v
 	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
