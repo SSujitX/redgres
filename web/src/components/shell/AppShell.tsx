@@ -1,20 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { navEntries, visibleNavEntries, type SectionId } from "../../nav";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
+import type { ToolLinks } from "../../api/auth";
 import Icon from "../icons";
 import NavigationSearch from "../search/NavigationSearch";
+import OverviewPage from "../../features/overview/OverviewPage";
 import { SectionPage } from "../../features/pages/Placeholders";
 
 type AppShellProps = {
   username: string;
   csrf: string;
+  toolLinks: ToolLinks;
   onLogout: () => void;
   loggingOut: boolean;
 };
 
 const NAV_GROUPS = ["Overview", "PostgreSQL", "Redis ACL", "Audit", "System", "Documentation"];
 
-export default function AppShell({ username, csrf, onLogout, loggingOut }: AppShellProps) {
+export default function AppShell({ username, csrf, toolLinks, onLogout, loggingOut }: AppShellProps) {
   const [section, setSection] = useState<SectionId>("overview");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [ownerOpen, setOwnerOpen] = useState(false);
@@ -196,13 +199,17 @@ export default function AppShell({ username, csrf, onLogout, loggingOut }: AppSh
             </div>
           </header>
           <main className="workspace">
-            <SectionPage
-              section={section}
-              csrf={csrf}
-              focusDatabase={focusDatabase}
-              focusUsername={focusUsername}
-              focusNonce={focusNonce}
-            />
+            {section === "overview" ? (
+              <OverviewPage toolLinks={toolLinks} />
+            ) : (
+              <SectionPage
+                section={section}
+                csrf={csrf}
+                focusDatabase={focusDatabase}
+                focusUsername={focusUsername}
+                focusNonce={focusNonce}
+              />
+            )}
           </main>
         </div>
       </div>

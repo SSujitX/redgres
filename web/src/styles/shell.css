@@ -222,6 +222,14 @@
   margin: 0;
 }
 
+.status-card a.text-button {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  margin-top: var(--space-3);
+  margin-inline-end: var(--space-2);
+}
+
 .status-ok {
   color: var(--success);
 }
