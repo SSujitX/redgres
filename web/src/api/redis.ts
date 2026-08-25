@@ -83,6 +83,7 @@ export type RedisAclQueueKind = "lists" | "streams" | "sorted-sets";
 export type RedisCreateUserOptions = {
   preset: RedisAclPreset;
   queueKind?: RedisAclQueueKind;
+  commands?: string[];
 };
 
 export async function createRedisUser(
@@ -97,6 +98,7 @@ export async function createRedisUser(
     key_pattern: string;
     preset: RedisAclPreset;
     queue_kind?: RedisAclQueueKind;
+    commands?: string[];
   } = {
     username,
     key_pattern: keyPattern,
@@ -104,6 +106,9 @@ export async function createRedisUser(
   };
   if (options.preset === "queue-worker") {
     body.queue_kind = options.queueKind ?? "lists";
+  }
+  if (options.preset === "custom") {
+    body.commands = options.commands ?? [];
   }
   return apiRequest<RedisCreateUserPayload & ApiErrorBody>("/api/v1/redis/users", {
     ...init,

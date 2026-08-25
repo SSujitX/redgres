@@ -3474,8 +3474,10 @@ describe("App session and login", () => {
     expect(within(dialog).getByLabelText("Permission preset")).toHaveDisplayValue("Cache read/write");
     expect(within(dialog).getByLabelText("Permission preset")).toHaveValue("cache-read-write");
     expect(within(dialog).queryByLabelText("Queue type")).not.toBeInTheDocument();
-    expect(within(dialog).queryByRole("option", { name: "Custom" })).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText("Commands")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("option", { name: "Custom" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("group", { name: "Commands" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isRedisCommandsUrl(String(call[0])))).toBe(true);
     fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
     await waitFor(() => {
       expect(fetch.mock.calls.some((call) => isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
@@ -3557,6 +3559,254 @@ describe("App session and login", () => {
     expect(createBodies[1]).not.toHaveProperty("password");
     expect(createBodies[1]).not.toHaveProperty("commands");
     expect(createBodies[1]).not.toHaveProperty("custom");
+  });
+
+  it("loads Custom from GET /commands without CSRF and disables Create until a command is checked", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-create-custom".padEnd(64, "0") });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return redisAclCreate201({
+          user: {
+            username: "project_a",
+            enabled: true,
+            key_pattern: "project_a:*",
+            preset: "custom",
+            protected: false,
+            rule_fidelity: "exact",
+          },
+        });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisCommandsUrl(url)) {
+        return redisAclCommandsOk(["echo", "get", "ping", "set"]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.change(within(dialog).getByLabelText("Permission preset"), { target: { value: "custom" } });
+    expect(within(dialog).queryByLabelText("Queue type")).not.toBeInTheDocument();
+    expect(await within(dialog).findByRole("checkbox", { name: "echo" })).not.toBeChecked();
+    expect(within(dialog).getByRole("group", { name: "Commands" })).toHaveClass("command-checklist");
+    expect(within(dialog).getByRole("checkbox", { name: "get" })).not.toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "ping" })).not.toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "set" })).not.toBeChecked();
+    expect(within(dialog).queryByRole("textbox", { name: "Commands" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
+    const commandsCall = fetch.mock.calls.find((call) => isRedisCommandsUrl(String(call[0])));
+    expect(commandsCall?.[0]).toBe("/api/v1/redis/commands");
+    expect(String(commandsCall?.[1]?.method ?? "GET").toUpperCase()).toBe("GET");
+    expect(new Headers(commandsCall?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+    expect(fetch.mock.calls.every((call) => !isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
+  });
+
+  it("POSTs Custom with CSRF, catalog commands, and no password or queue_kind, then shows the ticket", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-create-cmds".padEnd(64, "0") });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return redisAclCreate201({
+          user: {
+            username: "project_a",
+            enabled: true,
+            key_pattern: "project_a:*",
+            preset: "custom",
+            protected: false,
+            rule_fidelity: "exact",
+          },
+        });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisCommandsUrl(url)) {
+        return redisAclCommandsOk(["echo", "get", "ping", "set"]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.change(within(dialog).getByLabelText("Permission preset"), { target: { value: "custom" } });
+    fireEvent.click(await within(dialog).findByRole("checkbox", { name: "echo" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "get" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
+    });
+    const createCall = fetch.mock.calls.find((call) => isRedisUsersCreate(String(call[0]), call[1]));
+    expect(createCall?.[0]).toBe("/api/v1/redis/users");
+    expect(new Headers(createCall?.[1]?.headers).get("X-CSRF-Token")).toBe("acl-create-cmds".padEnd(64, "0"));
+    const body = JSON.parse(String(createCall?.[1]?.body));
+    expect(body).toEqual({
+      username: "project_a",
+      key_pattern: "project_a:*",
+      preset: "custom",
+      commands: ["echo", "get"],
+    });
+    expect(body).not.toHaveProperty("password");
+    expect(body).not.toHaveProperty("queue_kind");
+    expect(body).not.toHaveProperty("categories");
+    expect(body).not.toHaveProperty("enabled");
+    const ticket = await screen.findByRole("alertdialog", { name: /shown now/i });
+    expect(ticket).toHaveTextContent("canary-one-time-password-32chars!!");
+    expect(ticket).toHaveTextContent("project_a");
+  });
+
+  it("omits commands when switching from Custom back to a named preset", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-create-switch".padEnd(64, "0") });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return redisAclCreate201();
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisCommandsUrl(url)) {
+        return redisAclCommandsOk(["echo", "get", "ping"]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.change(within(dialog).getByLabelText("Permission preset"), { target: { value: "custom" } });
+    fireEvent.click(await within(dialog).findByRole("checkbox", { name: "get" }));
+    fireEvent.change(within(dialog).getByLabelText("Permission preset"), { target: { value: "read-only" } });
+    expect(within(dialog).queryByRole("group", { name: "Commands" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Queue type")).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
+    });
+    const body = JSON.parse(
+      String(fetch.mock.calls.find((call) => isRedisUsersCreate(String(call[0]), call[1]))?.[1]?.body),
+    );
+    expect(body).toEqual({ username: "project_a", key_pattern: "project_a:*", preset: "read-only" });
+    expect(body).not.toHaveProperty("commands");
+    expect(body).not.toHaveProperty("password");
+    expect(body).not.toHaveProperty("queue_kind");
+  });
+
+  it.each([
+    {
+      status: 401,
+      body: { error: { code: "unauthorized", message: "Authentication required" } },
+      copy: "Your session has expired. Sign in again to continue.",
+    },
+    {
+      status: 503,
+      body: { error: { code: "dependency_unavailable", message: "Redis is unavailable." } },
+      copy: "Redis is unavailable.",
+    },
+  ] as const)(
+    "disables Create and invents no commands when create GET /commands is $status",
+    async ({ status, body, copy }) => {
+      const fetch = stubFetch((url, init) => {
+        if (url.includes("/api/v1/session")) {
+          return jsonResponse(200, {
+            owner: { username: "admin" },
+            csrf_token: `acl-create-cmds-${status}`.padEnd(64, "0"),
+          });
+        }
+        if (isRedisUsersCreate(url, init)) {
+          return redisAclCreate201();
+        }
+        if (isRedisUsersListUrl(url)) {
+          return redisAclListOk([redisAclListItem()]);
+        }
+        if (isRedisCommandsUrl(url)) {
+          return jsonResponse(status, body);
+        }
+        return unknownApi(url);
+      });
+      render(<App />);
+      expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+      goToAclUsers();
+      fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+      const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+      fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+      fireEvent.change(within(dialog).getByLabelText("Permission preset"), { target: { value: "custom" } });
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(copy);
+      expect(within(dialog).getByLabelText("Key prefix")).not.toHaveAttribute("aria-invalid");
+      expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
+      expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+      expect(within(dialog).queryByRole("checkbox", { name: "get" })).not.toBeInTheDocument();
+      expect(within(dialog).queryByRole("checkbox", { name: "set" })).not.toBeInTheDocument();
+      expect(fetch.mock.calls.some((call) => isRedisCommandsUrl(String(call[0])))).toBe(true);
+      expect(fetch.mock.calls.every((call) => !isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
+    },
+  );
+
+  it("aborts create GET /commands when leaving Custom", async () => {
+    let releaseCommands: () => void = () => {};
+    const blockedCommands = new Promise<void>((resolve) => {
+      releaseCommands = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-create-abort".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisCommandsUrl(url)) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedCommands.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            if (init?.signal?.aborted) {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+              return;
+            }
+            resolve();
+          });
+        });
+        return redisAclCommandsOk(["stale-create-cmd"]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Permission preset"), { target: { value: "custom" } });
+    expect(await within(dialog).findByText("Loading commands.")).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Permission preset"), { target: { value: "cache-read-write" } });
+    expect(within(dialog).queryByRole("group", { name: "Commands" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+    releaseCommands();
+    await waitFor(() => {
+      expect(within(dialog).queryByText("stale-create-cmd")).not.toBeInTheDocument();
+    });
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Create" })).not.toBeDisabled();
   });
 
   it("shows the one-time ticket password after 201 and ignores extra secret fields", async () => {

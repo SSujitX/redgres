@@ -381,11 +381,17 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     keyPattern: string,
     preset: RedisAclPreset,
     queueKind?: RedisAclQueueKind,
+    commands?: string[],
   ) {
     setCreating(true);
     setCreateError("");
     try {
-      const result = await createRedisUser(username, keyPattern, csrf, { preset, queueKind });
+      const result = await createRedisUser(
+        username,
+        keyPattern,
+        csrf,
+        preset === "custom" ? { preset, commands: commands ?? [] } : { preset, queueKind },
+      );
       if (result.status === 401) {
         clearTicket();
         setCreateOpen(false);
@@ -651,7 +657,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             </button>
           ) : null}
         </div>
-        <p>Create an ACL user with a named permission preset and a project key prefix, inspect modeled rules, edit named or custom allow-list permissions, or rotate a non-protected password. Delete is not available in this slice.</p>
+        <p>Create an ACL user with a named permission preset or custom allow-list and a project key prefix, inspect modeled rules, edit named or custom allow-list permissions, or rotate a non-protected password. Delete is not available in this slice.</p>
       </header>
       {ticket ? <CredentialTicket credential={ticket} onDismiss={dismissTicket} /> : null}
       {createOpen ? (
@@ -662,8 +668,8 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             setCreateOpen(false);
             setCreateError("");
           }}
-          onSubmit={(username, keyPattern, preset, queueKind) =>
-            void handleCreate(username, keyPattern, preset, queueKind)
+          onSubmit={(username, keyPattern, preset, queueKind, commands) =>
+            void handleCreate(username, keyPattern, preset, queueKind, commands)
           }
         />
       ) : null}
