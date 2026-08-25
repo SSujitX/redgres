@@ -5367,7 +5367,10 @@ Security tests: canary env/config not printed; --release not
  unknown --config/--mode). Independent redgres-evidence-reviewer
  Approve Partial / reject Complete on `8bbbdbe` (63 pass()
  sites; required correction: TRACEABILITY must not claim the
- target tree dropped deploy/update.sh).
+ target tree dropped deploy/update.sh). Independent
+ redgres-verifier Approve Partial / reject Complete on
+ `43353a7`; this-run Git Bash deploy/tests/run.sh → 63 passed,
+ 0 failed.
 Limitations: result=partial is required so exit 0 is not Complete.
  Live update/rollback without --dry-run remain exit 2. OPS-004
  backup remains Planned (exit 2). bash argv cannot carry NUL.
