@@ -405,7 +405,7 @@ Still forbidden on this GET: passwords, URLs, hashes, role OIDs, raw `datacl`, S
 
 **UI copy (frozen with this contract):** Keep the Security overview header: “All non-template databases, including protected names. Passwords are not revealed. Rotation is not available.” Add ledger/stack column **Rotation eligible** as the **last** column (after Connections). Values Yes / No / — (missing). No Rotate, Reveal, or Create controls.
 
-PG-012 stays Partial: existence GET, `missing_password_count` (when the vault query succeeds), and read-only `rotation_eligible` are this freeze; POST rotate, POST reveal, Gate 4 copied production ciphertext, `REDGRES_LEGACY_VAULT_SECRET_FILE`, live PostgreSQL 17/18, and viewport evidence remain outstanding. Do not mark Complete.
+PG-012 stays Partial: existence GET, `missing_password_count` (when the vault query succeeds), and read-only `rotation_eligible` are this freeze. POST rotate, Gate 4 copied production ciphertext, live PostgreSQL 17/18, and viewport evidence remain outstanding. POST reveal is Databases inspector only (PG-005 Partial); Security overview has no Reveal; `REDGRES_LEGACY_VAULT_SECRET_FILE` is POST-reveal `Open`, not this GET. Do not mark Complete.
 
 ## Redis endpoints
 
