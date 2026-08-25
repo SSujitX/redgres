@@ -66,7 +66,7 @@ func TestStatusDefaultPostgresNotConfigured(t *testing.T) {
 	want := []struct{ id, state string }{
 		{"redgres_state", "ok"},
 		{"postgres_direct", "not_configured"},
-		{"pgbouncer", "not_implemented"},
+		{"pgbouncer", "not_configured"},
 		{"redis", "not_configured"},
 		{"tool_links", "not_configured"},
 	}
@@ -207,6 +207,57 @@ func TestStatusOmitsCanarySecrets(t *testing.T) {
 	raw := rec.Body.String()
 	if strings.Contains(raw, "canary-secret") || strings.Contains(raw, "10.0.0.1") || strings.Contains(raw, "password=") {
 		t.Fatalf("leaked canary: %s", raw)
+	}
+}
+
+func TestStatusOmitsPgBouncerVersionString(t *testing.T) {
+	const version = "PgBouncer 1.24.1"
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		PooledConfigured: true,
+		PingPooledErr:    errors.New("password=canary-secret host=10.0.0.1 " + version),
+	}, postgresadmin.NewPolicy(config.Config{}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/status", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	raw := rec.Body.String()
+	if strings.Contains(raw, version) || strings.Contains(raw, "canary-secret") || strings.Contains(raw, "10.0.0.1") {
+		t.Fatalf("leaked version/canary: %s", raw)
+	}
+	got := decodeStatus(t, rec)
+	if got["pgbouncer"].state != "unavailable" || got["pgbouncer"].reason != "unreachable" {
+		t.Fatalf("pgbouncer = %#v", got["pgbouncer"])
+	}
+	if got["postgres_direct"].state != "ok" {
+		t.Fatalf("postgres = %#v", got["postgres_direct"])
+	}
+}
+
+func TestStatusPostgresUnavailableKeepsPgbouncerOK(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		PingErr:          postgresadmin.ErrUnavailable,
+		PooledConfigured: true,
+	}, postgresadmin.NewPolicy(config.Config{}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/status", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeStatus(t, rec)
+	if got["postgres_direct"].state != "unavailable" || got["postgres_direct"].reason != "unreachable" {
+		t.Fatalf("postgres = %#v", got["postgres_direct"])
+	}
+	if got["pgbouncer"].state != "ok" || got["pgbouncer"].reason != "" {
+		t.Fatalf("pgbouncer = %#v", got["pgbouncer"])
 	}
 }
 

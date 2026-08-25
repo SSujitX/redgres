@@ -26,6 +26,16 @@ func (s *Service) Ping(ctx context.Context) error {
 	return nil
 }
 
+func (s *Service) PingPooled(ctx context.Context) error {
+	if s == nil || s.catalog == nil {
+		return ErrNotConfigured
+	}
+	if err := s.catalog.PingPooled(ctx); err != nil {
+		return mapCatalogError(err)
+	}
+	return nil
+}
+
 func (s *Service) List(ctx context.Context) (ListResult, error) {
 	if s == nil || s.catalog == nil {
 		return ListResult{}, ErrUnavailable

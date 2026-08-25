@@ -50,6 +50,7 @@ type Config struct {
 	PostgresExpectedMajor      int
 	PostgresProtectedDatabases []string
 	PostgresProtectedRoles     []string
+	PostgresPooledPort         string
 
 	RedisAdminURLFile   string
 	RedisAllowPlaintext bool

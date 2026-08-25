@@ -16,6 +16,7 @@ func (c *Config) loadPostgres() error {
 	c.PostgresPasswordFile = strings.TrimSpace(envOr("REDGRES_POSTGRES_PASSWORD_FILE", ""))
 	c.PostgresSSLMode = strings.ToLower(strings.TrimSpace(envOr("REDGRES_POSTGRES_SSLMODE", "")))
 	c.PostgresSSLRootCert = strings.TrimSpace(envOr("REDGRES_POSTGRES_SSLROOTCERT", ""))
+	c.PostgresPooledPort = strings.TrimSpace(envOr("REDGRES_POSTGRES_POOLED_PORT", ""))
 	if err := parseExpectedMajor(envOr("REDGRES_POSTGRES_EXPECTED_MAJOR", ""), &c.PostgresExpectedMajor); err != nil {
 		return err
 	}
@@ -35,7 +36,8 @@ func (c Config) PostgresConfigured() bool {
 
 func (c Config) postgresAnySet() bool {
 	return c.PostgresHost != "" || c.PostgresPort != "" || c.PostgresDatabase != "" || c.PostgresUser != "" ||
-		c.PostgresPasswordFile != "" || c.PostgresSSLMode != "" || c.PostgresSSLRootCert != "" || c.PostgresExpectedMajor != 0
+		c.PostgresPasswordFile != "" || c.PostgresSSLMode != "" || c.PostgresSSLRootCert != "" || c.PostgresExpectedMajor != 0 ||
+		c.PostgresPooledPort != ""
 }
 
 func (c *Config) validatePostgres() error {
@@ -91,6 +93,20 @@ func (c *Config) validatePostgres() error {
 	}
 	if c.PostgresSSLRootCert != "" && (containsCertPathUnsafe(c.PostgresSSLRootCert) || strings.ContainsAny(c.PostgresSSLRootCert, "?#")) {
 		return errors.New("REDGRES_POSTGRES_SSLROOTCERT: invalid value")
+	}
+	if err := validatePostgresPooledPort(c.PostgresPooledPort); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePostgresPooledPort(port string) error {
+	if port == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return errors.New("REDGRES_POSTGRES_POOLED_PORT: invalid value")
 	}
 	return nil
 }
