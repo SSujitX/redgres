@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 import {
   createPostgresDatabase,
   deletePostgresRows,
+  dropPostgresDatabase,
   duplicatePostgresDatabase,
   errorMessage,
   fetchPostgresConnection,
@@ -21,6 +22,7 @@ import {
 import CredentialTicket, { type ShownCredential } from "../redis/CredentialTicket";
 import CreateDatabaseForm from "./CreateDatabaseForm";
 import DeleteSelectedRowsDialog from "./DeleteSelectedRowsDialog";
+import DropDatabaseDialog from "./DropDatabaseDialog";
 import DuplicateDatabaseForm from "./DuplicateDatabaseForm";
 import RotatePasswordDialog from "./RotatePasswordDialog";
 import TruncateProjectDataDialog from "./TruncateProjectDataDialog";
@@ -185,10 +187,16 @@ export default function DatabasesPage({
   const [truncatePassword, setTruncatePassword] = useState("");
   const [truncateError, setTruncateError] = useState("");
   const [truncating, setTruncating] = useState(false);
+  const [dropOpen, setDropOpen] = useState(false);
+  const [dropConfirmation, setDropConfirmation] = useState("");
+  const [dropPassword, setDropPassword] = useState("");
+  const [dropError, setDropError] = useState("");
+  const [dropping, setDropping] = useState(false);
   const selectionAbort = useRef<AbortController | null>(null);
   const rowsAbort = useRef<AbortController | null>(null);
   const deleteAbort = useRef<AbortController | null>(null);
   const truncateAbort = useRef<AbortController | null>(null);
+  const dropAbort = useRef<AbortController | null>(null);
   const rowsRegionRef = useRef<HTMLElement | null>(null);
 
   async function loadList(controller: AbortController) {
@@ -236,6 +244,7 @@ export default function DatabasesPage({
       duplicateAbort.current?.abort();
       deleteAbort.current?.abort();
       truncateAbort.current?.abort();
+      dropAbort.current?.abort();
     };
   }, []);
 
@@ -279,6 +288,14 @@ export default function DatabasesPage({
     setTruncating(false);
   }
 
+  function clearDropSecrets() {
+    setDropOpen(false);
+    setDropConfirmation("");
+    setDropPassword("");
+    setDropError("");
+    setDropping(false);
+  }
+
   function clearRowSelection() {
     setSelectedPks(new Map());
     clearDeleteSecrets();
@@ -317,6 +334,7 @@ export default function DatabasesPage({
     duplicateAbort.current?.abort();
     deleteAbort.current?.abort();
     truncateAbort.current?.abort();
+    dropAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
     setSelected(name);
@@ -333,6 +351,7 @@ export default function DatabasesPage({
     setPendingSelect(null);
     clearTicket();
     clearTruncateSecrets();
+    clearDropSecrets();
     clearRowState();
     void loadDetails(name, controller);
     void loadConnection(name, controller);
@@ -408,7 +427,7 @@ export default function DatabasesPage({
   }
 
   async function handleReveal() {
-    if (!selected || revealing || rotating || creating || duplicating || truncating || ticket) {
+    if (!selected || revealing || rotating || creating || duplicating || truncating || dropping || ticket) {
       return;
     }
     revealAbort.current?.abort();
@@ -458,7 +477,7 @@ export default function DatabasesPage({
   }
 
   async function handleRotate(confirmation: string) {
-    if (!selected || rotating || revealing || creating || duplicating || truncating || ticket) {
+    if (!selected || rotating || revealing || creating || duplicating || truncating || dropping || ticket) {
       return;
     }
     rotateAbort.current?.abort();
@@ -551,7 +570,7 @@ export default function DatabasesPage({
   }
 
   async function handleCreate(database: string, owner: string) {
-    if (ticket !== null || duplicating || truncating) {
+    if (ticket !== null || duplicating || truncating || dropping) {
       return;
     }
     setCreating(true);
@@ -594,7 +613,7 @@ export default function DatabasesPage({
   }
 
   async function handleDuplicate(database: string, owner: string) {
-    if (!selected || duplicating || revealing || rotating || creating || truncating || ticket) {
+    if (!selected || duplicating || revealing || rotating || creating || truncating || dropping || ticket) {
       return;
     }
     duplicateAbort.current?.abort();
@@ -733,6 +752,7 @@ export default function DatabasesPage({
     rowsAbort.current?.abort();
     deleteAbort.current?.abort();
     clearTruncateSecrets();
+    clearDropSecrets();
     clearRowState();
   }
 
@@ -840,7 +860,7 @@ export default function DatabasesPage({
   }
 
   async function handleDeleteRows() {
-    if (!selected || !selectedTable || deleting || truncating || ticket !== null || selectedPks.size === 0) {
+    if (!selected || !selectedTable || deleting || truncating || dropping || ticket !== null || selectedPks.size === 0) {
       return;
     }
     if (deleteConfirmation !== selectedTable.name || deletePassword.length === 0) {
@@ -943,7 +963,7 @@ export default function DatabasesPage({
   }
 
   async function handleTruncate() {
-    if (!selected || truncating || revealing || rotating || creating || duplicating || deleting || ticket) {
+    if (!selected || truncating || dropping || revealing || rotating || creating || duplicating || deleting || ticket) {
       return;
     }
     if (truncateConfirmation !== selected || truncatePassword.length === 0) {
@@ -1040,6 +1060,109 @@ export default function DatabasesPage({
     }
   }
 
+  async function handleDrop() {
+    if (!selected || dropping || truncating || revealing || rotating || creating || duplicating || deleting || ticket) {
+      return;
+    }
+    if (dropConfirmation !== selected || dropPassword.length === 0) {
+      return;
+    }
+    const db = selected;
+    const databaseConfirmation = dropConfirmation;
+    const ownerPassword = dropPassword;
+    dropAbort.current?.abort();
+    const controller = new AbortController();
+    dropAbort.current = controller;
+    setDropping(true);
+    setDropError("");
+    try {
+      const result = await dropPostgresDatabase(db, databaseConfirmation, ownerPassword, csrf, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 401) {
+        setDropOpen(false);
+        setDropConfirmation("");
+        setDropPassword("");
+        setDropError(sessionExpired);
+        clearTicket();
+        return;
+      }
+      if (result.status === 403) {
+        if (result.body.error?.code === "reauth_required") {
+          setDropError(errorMessage(result.body, "Owner password is incorrect"));
+          setDropPassword("");
+          return;
+        }
+        setDropError(errorMessage(result.body, "Drop is turned off."));
+        return;
+      }
+      if (result.status === 409) {
+        setDropError(errorMessage(result.body, postgresUnavailable));
+        return;
+      }
+      if (result.status === 400) {
+        setDropError(errorMessage(result.body, "Type the exact database name to confirm drop"));
+        return;
+      }
+      if (result.status === 404) {
+        setDropOpen(false);
+        setDropConfirmation("");
+        setDropPassword("");
+        setDropError(errorMessage(result.body, "Not found"));
+        return;
+      }
+      if (result.status === 503) {
+        setDropOpen(false);
+        setDropConfirmation("");
+        setDropPassword("");
+        setDropError(errorMessage(result.body, postgresUnavailable));
+        return;
+      }
+      if (result.status === 200) {
+        setDropOpen(false);
+        setDropConfirmation("");
+        setDropPassword("");
+        setDropError("");
+        selectionAbort.current?.abort();
+        rowsAbort.current?.abort();
+        revealAbort.current?.abort();
+        rotateAbort.current?.abort();
+        duplicateAbort.current?.abort();
+        deleteAbort.current?.abort();
+        truncateAbort.current?.abort();
+        setSelected(null);
+        setDetails(null);
+        setDetailsError("");
+        setLoadingDetails(false);
+        setConnection(null);
+        setConnectionError("");
+        setLoadingConnection(false);
+        setTables(null);
+        setTablesError("");
+        setTablesTruncated(false);
+        setLoadingTables(false);
+        clearTicket();
+        clearTruncateSecrets();
+        clearRowState();
+        refreshList();
+        return;
+      }
+      setDropError(errorMessage(result.body, postgresUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setDropError(postgresUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setDropping(false);
+      }
+    }
+  }
+
   const showReveal =
     !loadingDetails &&
     !loadingConnection &&
@@ -1048,10 +1171,12 @@ export default function DatabasesPage({
   const showRotate = !loadingDetails && rotationEligible(details);
   const showDuplicate = !loadingDetails && rotationEligible(details);
   const showTruncate = !loadingDetails && details !== null;
+  const showDrop = !loadingDetails && details !== null;
   const showCreate = items !== null && listError === "";
-  const mutationBusy = creating || revealing || rotating || duplicating || truncating || ticket !== null;
+  const mutationBusy = creating || revealing || rotating || duplicating || truncating || dropping || ticket !== null;
   const createDisabled = mutationBusy;
   const truncateDisabled = mutationBusy || deleting;
+  const dropDisabled = mutationBusy || deleting;
 
   return (
     <article>
@@ -1171,6 +1296,27 @@ export default function DatabasesPage({
           onConfirm={() => void handleTruncate()}
         />
       ) : null}
+      {dropOpen && selected ? (
+        <DropDatabaseDialog
+          database={selected}
+          confirmation={dropConfirmation}
+          password={dropPassword}
+          error={dropError}
+          submitting={dropping}
+          onConfirmationChange={setDropConfirmation}
+          onPasswordChange={setDropPassword}
+          onCancel={() => {
+            if (dropping) {
+              return;
+            }
+            setDropOpen(false);
+            setDropError("");
+            setDropConfirmation("");
+            setDropPassword("");
+          }}
+          onConfirm={() => void handleDrop()}
+        />
+      ) : null}
       {listError ? (
         <p className="form-warning" role="alert">
           {listError}
@@ -1277,24 +1423,44 @@ export default function DatabasesPage({
               ) : null}
             </div>
           ) : null}
-          {showTruncate ? (
+          {showTruncate || showDrop ? (
             <div className="form-actions">
-              <button
-                type="button"
-                className="danger-button"
-                disabled={truncateDisabled}
-                onClick={() => {
-                  setTruncateError("");
-                  setTruncateOpen(true);
-                }}
-              >
-                Truncate
-              </button>
+              {showTruncate ? (
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={truncateDisabled}
+                  onClick={() => {
+                    setTruncateError("");
+                    setTruncateOpen(true);
+                  }}
+                >
+                  Truncate
+                </button>
+              ) : null}
+              {showDrop ? (
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={dropDisabled}
+                  onClick={() => {
+                    setDropError("");
+                    setDropOpen(true);
+                  }}
+                >
+                  Drop
+                </button>
+              ) : null}
             </div>
           ) : null}
           {!truncateOpen && truncateError ? (
             <p className="form-warning" role="alert">
               {truncateError}
+            </p>
+          ) : null}
+          {!dropOpen && dropError ? (
+            <p className="form-warning" role="alert">
+              {dropError}
             </p>
           ) : null}
           <h3>Tables</h3>

@@ -43,7 +43,10 @@ function isPostgresRowsDelete(
   return (url === path || url.startsWith(`${path}?`)) && String(init?.method ?? "").toUpperCase() === "DELETE";
 }
 
-function isDetailsUrl(url: string, name: string): boolean {
+function isDetailsUrl(url: string, name: string, init?: RequestInit): boolean {
+  if (String(init?.method ?? "").toUpperCase() === "DELETE") {
+    return false;
+  }
   const prefix = `/api/v1/postgres/databases/${encodeURIComponent(name)}`;
   return (
     url.includes(prefix) &&
@@ -154,6 +157,25 @@ function isPostgresDatabaseTruncate(url: string, name?: string, init?: RequestIn
     return url === `/api/v1/postgres/databases/${encodeURIComponent(name)}/truncate` && isPost;
   }
   return url.includes("/api/v1/postgres/databases/") && url.includes("/truncate") && isPost;
+}
+
+function isPostgresDatabaseDrop(url: string, name?: string, init?: RequestInit): boolean {
+  const isDelete = String(init?.method ?? "").toUpperCase() === "DELETE";
+  if (!isDelete) {
+    return false;
+  }
+  if (name !== undefined) {
+    return url === `/api/v1/postgres/databases/${encodeURIComponent(name)}`;
+  }
+  if (!url.includes("/api/v1/postgres/databases/")) {
+    return false;
+  }
+  return (
+    !url.includes("/truncate") &&
+    !url.includes("/duplicate") &&
+    !url.includes("/connection") &&
+    !url.includes("/tables")
+  );
 }
 
 const rotatedDirectUrl =
@@ -621,6 +643,10 @@ function fillTruncateDialog(dialog: HTMLElement, database = "project_a", passwor
   fireEvent.change(within(dialog).getByLabelText("Owner password"), { target: { value: password } });
 }
 
+function fillDropDialog(dialog: HTMLElement, database = "project_a", password = "owner-secret-15") {
+  fillTruncateDialog(dialog, database, password);
+}
+
 function postgresRowPage(extra: Record<string, unknown> = {}) {
   return {
     columns: ["id", "name"],
@@ -652,6 +678,9 @@ function postgresRowDeleteInspectorFetch(
     truncate?: (
       init?: RequestInit,
     ) => ReturnType<typeof jsonResponse> | Promise<ReturnType<typeof jsonResponse>>;
+    drop?: (
+      init?: RequestInit,
+    ) => ReturnType<typeof jsonResponse> | Promise<ReturnType<typeof jsonResponse>>;
   } = {},
 ) {
   const databases = extras.databases ?? [{ name: "project_a", owner: "owner_a" }];
@@ -667,13 +696,16 @@ function postgresRowDeleteInspectorFetch(
       return jsonResponse(200, { databases, truncated: false });
     }
     for (const item of databases) {
+      if (isPostgresDatabaseDrop(url, item.name, init) && extras.drop) {
+        return extras.drop(init);
+      }
       if (isPostgresDatabaseTruncate(url, item.name, init) && extras.truncate) {
         return extras.truncate(init);
       }
       if (isTablesUrl(url, item.name)) {
         return jsonResponse(200, { tables, truncated: false });
       }
-      if (isDetailsUrl(url, item.name)) {
+      if (isDetailsUrl(url, item.name, init)) {
         return jsonResponse(200, {
           database: extras.details ?? { name: item.name, owner: item.owner },
         });
@@ -1908,6 +1940,35 @@ describe("App session and login", () => {
         method: "POST",
       }),
     ).toBe(true);
+    expect(
+      isPostgresDatabaseDrop("/api/v1/postgres/databases/project_a", "project_a", { method: "DELETE" }),
+    ).toBe(true);
+    expect(
+      isPostgresDatabaseDrop("/api/v1/postgres/databases/project_a/truncate", "project_a", {
+        method: "DELETE",
+      }),
+    ).toBe(false);
+    expect(
+      isPostgresDatabaseDrop("/api/v1/postgres/databases/project_a/duplicate", "project_a", {
+        method: "DELETE",
+      }),
+    ).toBe(false);
+    expect(
+      isPostgresDatabaseDrop("/api/v1/postgres/databases/project_a/connection", "project_a", {
+        method: "DELETE",
+      }),
+    ).toBe(false);
+    expect(
+      isPostgresDatabaseDrop("/api/v1/postgres/databases/project_a/tables", "project_a", {
+        method: "DELETE",
+      }),
+    ).toBe(false);
+    expect(
+      isPostgresDatabaseDrop("/api/v1/postgres/databases/project_a", "project_a", { method: "POST" }),
+    ).toBe(false);
+    expect(isDetailsUrl("/api/v1/postgres/databases/project_a", "project_a", { method: "DELETE" })).toBe(
+      false,
+    );
   });
 
   it("shows copy-safe Direct URL and Pooled URL from the connection GET", async () => {
@@ -5618,6 +5679,473 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.every((call) => !isPostgresDatabaseTruncate(String(call[0]), undefined, call[1]))).toBe(
       true,
     );
+  });
+
+  it("shows inspector Drop as a danger control when details are loaded, including when rotation is ineligible", async () => {
+    stubFetch(postgresRowDeleteInspectorFetch("pg-drop-show".padEnd(64, "0")));
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    const drop = await within(details).findByRole("button", { name: "Drop" });
+    expect(drop).toHaveClass("danger-button");
+    expect(drop.className).not.toMatch(/postgres/);
+    expect(globalsCss).toMatch(/\.danger-button\s*\{[^}]*background:\s*var\(--danger\)/s);
+    expect(globalsCss).not.toMatch(/\.danger-button\s*\{[^}]*var\(--postgres\)/s);
+    expect(within(details).getByRole("button", { name: "Truncate" })).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Rotate" })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Duplicate" })).not.toBeInTheDocument();
+    expect(within(databasesHeader()).queryByRole("button", { name: "Drop" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+  });
+
+  it("hides Drop while details are loading", async () => {
+    let releaseDetails: () => void = () => {};
+    const blockedDetails = new Promise<void>((resolve) => {
+      releaseDetails = resolve;
+    });
+    stubFetch(async (url, init) => {
+      const base = postgresRowDeleteInspectorFetch("pg-drop-load".padEnd(64, "0"));
+      if (isDetailsUrl(url, "project_a", init)) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedDetails.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+      }
+      return base(url, init);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Loading details.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Drop" })).not.toBeInTheDocument();
+    releaseDetails();
+    expect(await screen.findByRole("button", { name: "Drop" })).toBeInTheDocument();
+  });
+
+  it("keeps Drop database distinct from Truncate project data", async () => {
+    stubFetch(postgresRowDeleteInspectorFetch("pg-drop-titles".padEnd(64, "0")));
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Drop" }));
+    const dropDialog = await screen.findByRole("dialog", { name: "Drop database" });
+    expect(dropDialog).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Truncate project data" })).not.toBeInTheDocument();
+    fireEvent.click(within(dropDialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(details).getByRole("button", { name: "Truncate" }));
+    const truncateDialog = await screen.findByRole("dialog", { name: "Truncate project data" });
+    expect(truncateDialog).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Drop database" })).not.toBeInTheDocument();
+  });
+
+  it("opens a Drop database dialog with typed database confirmation, owner password, and frozen copy", async () => {
+    const fetch = stubFetch(postgresRowDeleteInspectorFetch("pg-drop-dialog".padEnd(64, "0")));
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Drop" }));
+    const dialog = await screen.findByRole("dialog", { name: "Drop database" });
+    expect(dialog).toHaveTextContent(/type the exact database name and owner password/i);
+    expect(dialog).toHaveTextContent("project_a");
+    expect(dialog).toHaveTextContent(/permanently deletes/i);
+    expect(dialog).toHaveTextContent(/active connections are terminated/i);
+    expect(dialog).toHaveTextContent(/only if it owns no other database/i);
+    expect(dialog).toHaveTextContent(/cannot be undone/i);
+    expect(dialog).toHaveTextContent("Recovery requires a valid external backup.");
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+    const confirmDatabase = within(dialog).getByLabelText("Confirm database name");
+    const ownerPassword = within(dialog).getByLabelText("Owner password");
+    expect(confirmDatabase).toHaveAttribute("autocomplete", "off");
+    expect(ownerPassword).toHaveAttribute("type", "password");
+    expect(ownerPassword).toHaveAttribute("autocomplete", "current-password");
+    const confirm = within(dialog).getByRole("button", { name: "Confirm Drop" });
+    expect(confirm).toHaveClass("danger-button");
+    expect(confirm).toBeDisabled();
+    fireEvent.change(confirmDatabase, { target: { value: "project_b" } });
+    fireEvent.change(ownerPassword, { target: { value: "owner-secret-15" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(confirmDatabase, { target: { value: "project_a" } });
+    fireEvent.change(ownerPassword, { target: { value: "" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(ownerPassword, { target: { value: "owner-secret-15" } });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Drop database" })).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabaseDrop(String(call[0]), "project_a", call[1]))).toBe(true);
+  });
+
+  it("DELETEs drop with CSRF, encodeURIComponent, and only the two frozen body fields", async () => {
+    const encodedDb = "project/a";
+    const fetch = stubFetch(
+      postgresRowDeleteInspectorFetch("pg-drop-csrf".padEnd(64, "0"), {
+        databases: [{ name: encodedDb, owner: "owner_a" }],
+        drop: () =>
+          jsonResponse(200, {
+            dropped: encodedDb,
+            request_id: "ffffffffffffffffffffffffffffffff",
+          }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project\/a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Drop" }));
+    const dialog = await screen.findByRole("dialog", { name: "Drop database" });
+    fillDropDialog(dialog, encodedDb);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Drop" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isPostgresDatabaseDrop(String(call[0]), encodedDb, call[1]))).toBe(true);
+    });
+    const dropCall = fetch.mock.calls.find((call) => isPostgresDatabaseDrop(String(call[0]), encodedDb, call[1]));
+    expect(dropCall?.[0]).toBe(`/api/v1/postgres/databases/${encodeURIComponent(encodedDb)}`);
+    expect(dropCall?.[0]).not.toMatch(/\/truncate$/);
+    expect(new Headers(dropCall?.[1]?.headers).get("X-CSRF-Token")).toBe("pg-drop-csrf".padEnd(64, "0"));
+    const body = JSON.parse(String(dropCall?.[1]?.body));
+    expect(Object.keys(body).sort()).toEqual(["database_confirmation", "owner_password"]);
+    expect(body).toEqual({
+      database_confirmation: encodedDb,
+      owner_password: "owner-secret-15",
+    });
+  });
+
+  it("closes the dialog on drop 200, refreshes the list, and clears inspector selection", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    let dropped = false;
+    const fetch = stubFetch((url, init) => {
+      if (url.endsWith("/api/v1/postgres/databases") && String(init?.method ?? "GET").toUpperCase() !== "DELETE") {
+        return jsonResponse(200, {
+          databases: dropped
+            ? [{ name: "project_b", owner: "owner_b" }]
+            : [
+                { name: "project_a", owner: "owner_a" },
+                { name: "project_b", owner: "owner_b" },
+              ],
+          truncated: false,
+        });
+      }
+      return postgresRowDeleteInspectorFetch("pg-drop-200".padEnd(64, "0"), {
+        databases: [
+          { name: "project_a", owner: "owner_a" },
+          { name: "project_b", owner: "owner_b" },
+        ],
+        drop: () => {
+          dropped = true;
+          return jsonResponse(200, {
+            dropped: "project_a",
+            request_id: "11111111111111111111111111111111",
+          });
+        },
+      })(url, init);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Drop" }));
+    fillDropDialog(await screen.findByRole("dialog", { name: "Drop database" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Drop database" })).getByRole("button", {
+        name: "Confirm Drop",
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Drop database" })).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "Database details" })).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /project_a/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /project_b/ })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    const listGets = fetch.mock.calls.filter(
+      (call) =>
+        String(call[0]).endsWith("/api/v1/postgres/databases") &&
+        String(call[1]?.method ?? "GET").toUpperCase() !== "DELETE",
+    );
+    expect(listGets.length).toBeGreaterThan(1);
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("stays on the drop dialog for reauth_required, announces the error, and clears only the password", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-drop-reauth".padEnd(64, "0"), {
+        drop: () =>
+          jsonResponse(403, { error: { code: "reauth_required", message: "Owner password is incorrect" } }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Drop" }));
+    const dialog = await screen.findByRole("dialog", { name: "Drop database" });
+    fillDropDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Drop" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Owner password is incorrect");
+    expect(screen.getByRole("dialog", { name: "Drop database" })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Confirm database name")).toHaveValue("project_a");
+    expect(within(dialog).getByLabelText("Owner password")).toHaveValue("");
+    expect(within(dialog).getByRole("button", { name: "Confirm Drop" })).toBeDisabled();
+  });
+
+  it("shows session-expired copy on drop 401 and leaves no leftover password", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-drop-401".padEnd(64, "0"), {
+        drop: () => jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Drop" }));
+    fillDropDialog(await screen.findByRole("dialog", { name: "Drop database" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Drop database" })).getByRole("button", {
+        name: "Confirm Drop",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("dialog", { name: "Drop database" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+  });
+
+  it("still shows Drop when the flag is off and announces Drop is turned off on 403", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-drop-flag".padEnd(64, "0"), {
+        drop: () => jsonResponse(403, { error: { code: "forbidden", message: "Drop is turned off." } }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const drop = await screen.findByRole("button", { name: "Drop" });
+    expect(drop).toBeInTheDocument();
+    fireEvent.click(drop);
+    const dialog = await screen.findByRole("dialog", { name: "Drop database" });
+    fillDropDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Drop" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Drop is turned off.");
+    expect(screen.getByRole("dialog", { name: "Drop database" })).toBeInTheDocument();
+  });
+
+  it("keeps drop in-progress 409 errors on the dialog", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-drop-409".padEnd(64, "0"), {
+        drop: () =>
+          jsonResponse(409, {
+            error: { code: "operation_in_progress", message: "A drop is already in progress." },
+          }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Drop" }));
+    const dialog = await screen.findByRole("dialog", { name: "Drop database" });
+    fillDropDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Drop" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("A drop is already in progress.");
+    expect(screen.getByRole("dialog", { name: "Drop database" })).toBeInTheDocument();
+  });
+
+  it("disables Truncate while drop is in flight and Drop while truncate is in flight or a credential ticket is open", async () => {
+    let releaseDrop: () => void = () => {};
+    const blockedDrop = new Promise<void>((resolve) => {
+      releaseDrop = resolve;
+    });
+    let releaseTruncate: () => void = () => {};
+    const blockedTruncate = new Promise<void>((resolve) => {
+      releaseTruncate = resolve;
+    });
+    stubFetch(async (url, init) => {
+      const base = postgresRowDeleteInspectorFetch("pg-drop-busy".padEnd(64, "0"), {
+        connection: postgresConnectionPresent(),
+        details: postgresRotateEligibleDatabase(),
+        drop: async () => {
+          await blockedDrop;
+          return jsonResponse(409, {
+            error: { code: "operation_in_progress", message: "A drop is already in progress." },
+          });
+        },
+        truncate: async () => {
+          await blockedTruncate;
+          return jsonResponse(200, {
+            truncated: 0,
+            failed: [],
+            total_tables: 0,
+            request_id: "22222222222222222222222222222222",
+          });
+        },
+      });
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        return postgresReveal200();
+      }
+      return base(url, init);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Drop" }));
+    fillDropDialog(await screen.findByRole("dialog", { name: "Drop database" }));
+    const confirmDrop = within(screen.getByRole("dialog", { name: "Drop database" })).getByRole("button", {
+      name: "Confirm Drop",
+    });
+    fireEvent.click(confirmDrop);
+    await waitFor(() => {
+      expect(confirmDrop).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Drop" })).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Truncate" })).toBeDisabled();
+    });
+    releaseDrop();
+    await waitFor(() => {
+      expect(within(screen.getByRole("dialog", { name: "Drop database" })).getByRole("alert")).toHaveTextContent(
+        "A drop is already in progress.",
+      );
+    });
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Drop database" })).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(details).getByRole("button", { name: "Truncate" }));
+    fillTruncateDialog(await screen.findByRole("dialog", { name: "Truncate project data" }));
+    const confirmTruncate = within(screen.getByRole("dialog", { name: "Truncate project data" })).getByRole(
+      "button",
+      { name: "Confirm Truncate" },
+    );
+    fireEvent.click(confirmTruncate);
+    await waitFor(() => {
+      expect(confirmTruncate).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Truncate" })).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Drop" })).toBeDisabled();
+    });
+    releaseTruncate();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Truncate project data" })).not.toBeInTheDocument();
+    });
+    fireEvent.click(await within(details).findByRole("button", { name: "Reveal" }));
+    expect(await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." })).toBeInTheDocument();
+    expect(within(details).getByRole("button", { name: "Drop" })).toBeDisabled();
+    expect(within(details).getByRole("button", { name: "Truncate" })).toBeDisabled();
+  });
+
+  it("clears drop secrets on database change, Back, and logout without storage", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-drop-clear".padEnd(64, "0"), {
+        databases: [
+          { name: "project_a", owner: "owner_a" },
+          { name: "project_b", owner: "owner_b" },
+        ],
+      }),
+    );
+    render(<App />);
+    await openProjectAItems();
+    fireEvent.click(screen.getByRole("button", { name: "Drop" }));
+    fillDropDialog(await screen.findByRole("dialog", { name: "Drop database" }));
+    fireEvent.click(screen.getByRole("button", { name: /project_b/ }));
+    expect(await screen.findByRole("heading", { name: "project_b" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Drop database" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Drop" }));
+    fillDropDialog(await screen.findByRole("dialog", { name: "Drop database" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to tables" }));
+    expect(screen.queryByRole("dialog", { name: "Drop database" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Drop" }));
+    fillDropDialog(await screen.findByRole("dialog", { name: "Drop database" }));
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Drop database" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("never DELETEs a postgres database from the login route", async () => {
+    let authed = false;
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-drop-login".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/login")) {
+        authed = true;
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-drop-login".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabaseDrop(String(call[0]), undefined, call[1]))).toBe(true);
+    expect(screen.queryByRole("button", { name: "Drop" })).not.toBeInTheDocument();
+  });
+
+  it("never DELETEs a postgres database from Security overview", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-drop-sec".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("heading", { name: "Security overview" })).toBeInTheDocument();
+    const article = screen.getByRole("heading", { name: "Security overview" }).closest("article");
+    expect(article).not.toBeNull();
+    expect(within(article as HTMLElement).queryByRole("button", { name: "Drop" })).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabaseDrop(String(call[0]), undefined, call[1]))).toBe(true);
+  });
+
+  it("never DELETEs a postgres database from search results", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-drop-search".padEnd(64, "0") });
+      }
+      if (isSearchUrl(url)) {
+        return postgresHitSearch();
+      }
+      return postgresRowDeleteInspectorFetch("pg-drop-search".padEnd(64, "0"))(url, init);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
+    const dialog = await screen.findByRole("dialog", { name: "Search" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("region", { name: "Database details" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabaseDrop(String(call[0]), undefined, call[1]))).toBe(true);
   });
 
   it("shows the Security overview page instead of the placeholder", async () => {

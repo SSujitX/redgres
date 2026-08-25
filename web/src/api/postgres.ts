@@ -266,6 +266,33 @@ export async function truncatePostgresDatabase(
   );
 }
 
+export type PostgresDropPayload = {
+  dropped?: string;
+  dropped_role?: string;
+  request_id?: string;
+};
+
+export async function dropPostgresDatabase(
+  name: string,
+  databaseConfirmation: string,
+  ownerPassword: string,
+  csrf: string,
+  init: RequestInit = {},
+) {
+  return apiRequest<PostgresDropPayload & ApiErrorBody>(
+    `/api/v1/postgres/databases/${encodeURIComponent(name)}`,
+    {
+      ...init,
+      method: "DELETE",
+      csrf,
+      body: JSON.stringify({
+        database_confirmation: databaseConfirmation,
+        owner_password: ownerPassword,
+      }),
+    },
+  );
+}
+
 export type PostgresSecuritySummary = {
   database_count?: number;
   public_connect_count?: number;
