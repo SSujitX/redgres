@@ -38,4 +38,4 @@ Partial. `deploy/install.sh update --non-interactive --dry-run --release PATH` a
 
 ### REDIS-004 Permission presets catalog UI (2026-08-26)
 
-Partial. Nested Permission presets consumes GET `/api/v1/redis/presets` (no CSRF, no Redis). HTTP unchanged. Parent `npm --prefix web run test:run` 363 passed on `c48fac0`. UI/security/evidence Approve Partial on `fa733ea` / `89ea7e2`. Not viewport/live Redis/§6. Not Complete.
+Partial. Nested Permission presets consumes GET `/api/v1/redis/presets` (no CSRF, no Redis). HTTP unchanged. Parent `npm --prefix web run test:run` 363 passed on `c48fac0`. UI/security/evidence Approve Partial on `fa733ea` / `89ea7e2`. Independent verifier Approve Partial / reject Complete on `5474720` (this-run `npm --prefix web run test:run` 363 passed; `npm --prefix web run build` succeeded). Not viewport/live Redis/§6. Not Complete.
