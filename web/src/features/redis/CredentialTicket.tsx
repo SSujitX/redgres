@@ -13,6 +13,7 @@ type CredentialTicketProps = {
   credential: ShownCredential;
   onDismiss: () => void;
   kind?: "redis" | "postgres";
+  rotateWarning?: boolean;
 };
 
 async function copyText(value: string) {
@@ -21,7 +22,12 @@ async function copyText(value: string) {
   }
 }
 
-export default function CredentialTicket({ credential, onDismiss, kind = "redis" }: CredentialTicketProps) {
+export default function CredentialTicket({
+  credential,
+  onDismiss,
+  kind = "redis",
+  rotateWarning = false,
+}: CredentialTicketProps) {
   const titleId = useId();
   const postgres = kind === "postgres";
 
@@ -35,6 +41,11 @@ export default function CredentialTicket({ credential, onDismiss, kind = "redis"
           ? "Redgres can show this password again from the encrypted vault. It is not a one-time Redis credential."
           : "This is a one-time Redis credential. Redgres cannot show the password again after you dismiss this ticket."}
       </p>
+      {rotateWarning ? (
+        <p className="form-warning">
+          Update every application using this project user. The previous password stops working.
+        </p>
+      ) : null}
       <dl className="fact-list">
         <div>
           <dt>Username</dt>

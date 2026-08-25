@@ -30,7 +30,12 @@ function isRowsUrl(url: string, db: string, schema: string, table: string): bool
 
 function isDetailsUrl(url: string, name: string): boolean {
   const prefix = `/api/v1/postgres/databases/${encodeURIComponent(name)}`;
-  return url.includes(prefix) && !url.includes("/tables") && !url.includes("/connection");
+  return (
+    url.includes(prefix) &&
+    !url.includes("/tables") &&
+    !url.includes("/connection") &&
+    !url.includes("/credentials")
+  );
 }
 
 function isConnectionUrl(url: string, name?: string): boolean {
@@ -108,6 +113,88 @@ function isPostgresDatabasesCreate(url: string, init?: RequestInit): boolean {
     (url === "/api/v1/postgres/databases" || url.endsWith("/api/v1/postgres/databases")) &&
     String(init?.method ?? "").toUpperCase() === "POST"
   );
+}
+
+function isPostgresCredentialsRotate(url: string, name?: string, init?: RequestInit): boolean {
+  const isPost = String(init?.method ?? "").toUpperCase() === "POST";
+  if (name !== undefined) {
+    return url === `/api/v1/postgres/databases/${encodeURIComponent(name)}/credentials/rotate` && isPost;
+  }
+  return url.includes("/api/v1/postgres/databases/") && url.includes("/credentials/rotate") && isPost;
+}
+
+const rotatedDirectUrl =
+  "postgresql://project_a_role:canary-pg-rotate-password-32chars!!@db.example.com:5432/project_a?sslmode=require";
+const rotatedPooledUrl =
+  "postgresql://project_a_role:canary-pg-rotate-password-32chars!!@db.example.com:6432/project_a?sslmode=require";
+const vaultOutOfSyncCopy =
+  "The PostgreSQL password was changed but the vault could not be saved. Rotate again.";
+
+function postgresRotateEligibleDatabase(extra: Record<string, unknown> = {}) {
+  return {
+    name: "project_a",
+    owner: "project_a_role",
+    security: {
+      public_can_connect: false,
+      owner_is_superuser: false,
+      owner_can_login: true,
+      owner_createdb: false,
+      owner_createrole: false,
+      owner_replication: false,
+    },
+    saved_credential: { status: "present", reason: "" },
+    ...extra,
+  };
+}
+
+function postgresRotate200(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    resource: { type: "postgres_database", name: "project_a" },
+    credential: {
+      username: "project_a_role",
+      password: "canary-pg-rotate-password-32chars!!",
+      one_time: false,
+      urls: {
+        direct: rotatedDirectUrl,
+        pooled: rotatedPooledUrl,
+      },
+    },
+    request_id: "ffffffffffffaaaaaaaaaaaaaaaaaaaa",
+    ...extra,
+  });
+}
+
+function postgresRotateInspectorFetch(
+  csrf: string,
+  extras: {
+    details?: Record<string, unknown>;
+    connection?: ReturnType<typeof postgresConnectionPresent>;
+    rotate?: (
+      init?: RequestInit,
+    ) => ReturnType<typeof jsonResponse> | Promise<ReturnType<typeof jsonResponse>>;
+  } = {},
+) {
+  return (url: string, init?: RequestInit) => {
+    if (url.includes("/api/v1/session")) {
+      return jsonResponse(200, { owner: { username: "admin" }, csrf_token: csrf });
+    }
+    if (url.endsWith("/api/v1/postgres/databases")) {
+      return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+    }
+    if (isTablesUrl(url, "project_a")) {
+      return jsonResponse(200, { tables: [], truncated: false });
+    }
+    if (isConnectionUrl(url, "project_a")) {
+      return extras.connection ?? postgresConnectionPresent();
+    }
+    if (isDetailsUrl(url, "project_a")) {
+      return jsonResponse(200, { database: extras.details ?? postgresRotateEligibleDatabase() });
+    }
+    if (isPostgresCredentialsRotate(url, "project_a", init) && extras.rotate) {
+      return extras.rotate(init);
+    }
+    return unknownApi(url);
+  };
 }
 
 function postgresCreate201(extra: Record<string, unknown> = {}) {
@@ -687,6 +774,9 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.every((call) => !isConnectionUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/connection/reveal"))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isPostgresDatabasesCreate(String(call[0]), call[1]))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isPostgresCredentialsRotate(String(call[0]), undefined, call[1]))).toBe(
+      true,
+    );
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
   });
@@ -932,6 +1022,9 @@ describe("App session and login", () => {
     ).toBe(true);
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/connection/reveal"))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isPostgresDatabasesCreate(String(call[0]), call[1]))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isPostgresCredentialsRotate(String(call[0]), undefined, call[1]))).toBe(
+      true,
+    );
   });
 
   it("clears stale postgres hits as soon as the query changes", async () => {
@@ -1487,6 +1580,7 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/rows"))).toBe(true);
     const details = screen.getByRole("region", { name: "Database details" });
     expect(within(details).queryByRole("button", { name: "Reveal" })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
   });
 
   it("shows details saved-credential Not saved without reason codes", async () => {
@@ -1568,11 +1662,17 @@ describe("App session and login", () => {
     expect(isDetailsUrl("/api/v1/postgres/databases/project_a", "project_a")).toBe(true);
     expect(isDetailsUrl("/api/v1/postgres/databases/project_a/tables", "project_a")).toBe(false);
     expect(isDetailsUrl("/api/v1/postgres/databases/project_a/connection", "project_a")).toBe(false);
+    expect(isDetailsUrl("/api/v1/postgres/databases/project_a/credentials/rotate", "project_a")).toBe(false);
     expect(isConnectionUrl("/api/v1/postgres/databases/project_a/connection", "project_a")).toBe(true);
     expect(isConnectionUrl("/api/v1/postgres/databases/project_a/connection/reveal", "project_a")).toBe(false);
     expect(isConnectionRevealUrl("/api/v1/postgres/databases/project_a/connection/reveal", "project_a", { method: "POST" })).toBe(
       true,
     );
+    expect(
+      isPostgresCredentialsRotate("/api/v1/postgres/databases/project_a/credentials/rotate", "project_a", {
+        method: "POST",
+      }),
+    ).toBe(true);
   });
 
   it("shows copy-safe Direct URL and Pooled URL from the connection GET", async () => {
@@ -1893,6 +1993,9 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.every((call) => !isConnectionUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/connection/reveal"))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isPostgresDatabasesCreate(String(call[0]), call[1]))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isPostgresCredentialsRotate(String(call[0]), undefined, call[1]))).toBe(
+      true,
+    );
   });
 
   it("hides Reveal while details are loading", async () => {
@@ -2081,6 +2184,9 @@ describe("App session and login", () => {
     expect(ticket).toHaveTextContent("It is not a one-time Redis credential.");
     expect(ticket).not.toHaveTextContent(/shown now/i);
     expect(ticket).not.toHaveTextContent(/cannot show the password again/i);
+    expect(ticket).not.toHaveTextContent(
+      "Update every application using this project user. The previous password stops working.",
+    );
     expect(ticket).toHaveTextContent("canary-pg-reveal-password-32chars!!");
     expect(ticket).toHaveTextContent("project_a_role");
     expect(within(ticket).getByRole("button", { name: "Copy username" })).toBeInTheDocument();
@@ -2376,6 +2482,444 @@ describe("App session and login", () => {
     expect(await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." })).toBeInTheDocument();
   });
 
+  it("shows inspector Rotate when security flags are eligible", async () => {
+    stubFetch(postgresRotateInspectorFetch("pg-rotate-show".padEnd(64, "0")));
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    const rotate = await within(details).findByRole("button", { name: "Rotate" });
+    expect(rotate).toHaveClass("text-button");
+    expect(rotate).not.toHaveClass("danger-button");
+    expect(rotate.className).not.toMatch(/danger/);
+    expect(rotate).toBeEnabled();
+  });
+
+  it("shows Rotate when saved credential is missing if security flags are eligible", async () => {
+    stubFetch(
+      postgresRotateInspectorFetch("pg-rotate-missing".padEnd(64, "0"), {
+        details: postgresRotateEligibleDatabase({ saved_credential: { status: "missing", reason: "" } }),
+        connection: postgresConnectionAbsent(),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    expect(await within(details).findByRole("button", { name: "Rotate" })).toBeEnabled();
+    expect(within(details).queryByRole("button", { name: "Reveal" })).not.toBeInTheDocument();
+  });
+
+  it("hides Rotate when the owner is a superuser", async () => {
+    stubFetch(
+      postgresRotateInspectorFetch("pg-rotate-super".padEnd(64, "0"), {
+        details: postgresRotateEligibleDatabase({
+          security: {
+            public_can_connect: false,
+            owner_is_superuser: true,
+            owner_can_login: true,
+            owner_createdb: false,
+            owner_createrole: false,
+            owner_replication: false,
+          },
+        }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    expect(await within(details).findByText("Saved credential")).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
+  });
+
+  it("hides Rotate when the owner cannot log in", async () => {
+    stubFetch(
+      postgresRotateInspectorFetch("pg-rotate-nologin".padEnd(64, "0"), {
+        details: postgresRotateEligibleDatabase({
+          security: {
+            public_can_connect: false,
+            owner_is_superuser: false,
+            owner_can_login: false,
+            owner_createdb: false,
+            owner_createrole: false,
+            owner_replication: false,
+          },
+        }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    expect(await within(details).findByText("Saved credential")).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
+  });
+
+  it("hides Rotate when the owner is empty", async () => {
+    stubFetch(
+      postgresRotateInspectorFetch("pg-rotate-noowner".padEnd(64, "0"), {
+        details: postgresRotateEligibleDatabase({ owner: "" }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    expect(await within(details).findByText("Saved credential")).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
+  });
+
+  it("hides Rotate while details are loading", async () => {
+    let releaseDetails: () => void = () => {};
+    const blockedDetails = new Promise<void>((resolve) => {
+      releaseDetails = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-rotate-load-d".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedDetails.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return jsonResponse(200, { database: postgresRotateEligibleDatabase() });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Loading details.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rotate" })).not.toBeInTheDocument();
+    releaseDetails();
+    expect(await screen.findByRole("button", { name: "Rotate" })).toBeInTheDocument();
+  });
+
+  it("does not POST rotate until the typed database name matches and Rotate now is clicked", async () => {
+    const fetch = stubFetch(postgresRotateInspectorFetch("pg-rotate-typed".padEnd(64, "0")));
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    expect(dialog).toHaveTextContent(/stop working/i);
+    expect(dialog).toHaveTextContent(/saved in the encrypted vault/i);
+    expect(dialog).toHaveTextContent(/update every application/i);
+    expect(dialog).not.toHaveTextContent(/cannot be recovered/i);
+    expect(dialog.querySelector("input[type=password]")).toBeNull();
+    const rotateNow = within(dialog).getByRole("button", { name: "Rotate now" });
+    expect(rotateNow).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Confirm database name"), { target: { value: "project" } });
+    expect(rotateNow).toBeDisabled();
+    fireEvent.click(rotateNow);
+    expect(fetch.mock.calls.every((call) => !isPostgresCredentialsRotate(String(call[0]), "project_a", call[1]))).toBe(
+      true,
+    );
+    fireEvent.change(within(dialog).getByLabelText("Confirm database name"), { target: { value: "project_a" } });
+    expect(rotateNow).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Rotate password?" })).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresCredentialsRotate(String(call[0]), "project_a", call[1]))).toBe(
+      true,
+    );
+  });
+
+  it("POSTs rotate with CSRF, encoded path, and JSON confirmation only", async () => {
+    const fetch = stubFetch(
+      postgresRotateInspectorFetch("pg-rotate-csrf".padEnd(64, "0"), {
+        rotate: () => postgresRotate200(),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    fireEvent.change(within(dialog).getByLabelText("Confirm database name"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rotate now" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isPostgresCredentialsRotate(String(call[0]), "project_a", call[1]))).toBe(
+        true,
+      );
+    });
+    const rotateCall = fetch.mock.calls.find((call) =>
+      isPostgresCredentialsRotate(String(call[0]), "project_a", call[1]),
+    );
+    expect(rotateCall?.[0]).toBe("/api/v1/postgres/databases/project_a/credentials/rotate");
+    expect(rotateCall?.[0]).toBe(
+      `/api/v1/postgres/databases/${encodeURIComponent("project_a")}/credentials/rotate`,
+    );
+    expect(new Headers(rotateCall?.[1]?.headers).get("X-CSRF-Token")).toBe("pg-rotate-csrf".padEnd(64, "0"));
+    expect(JSON.parse(String(rotateCall?.[1]?.body))).toEqual({ confirmation: "project_a" });
+    const body = JSON.parse(String(rotateCall?.[1]?.body));
+    expect(body).not.toHaveProperty("password");
+    expect(body).not.toHaveProperty("owner_password");
+    expect(body).not.toHaveProperty("role_password");
+  });
+
+  it("opens a vault-repeatable PostgreSQL ticket with rotate warning on HTTP 200", async () => {
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch(
+      postgresRotateInspectorFetch("pg-rotate-200".padEnd(64, "0"), {
+        rotate: () =>
+          postgresRotate200({
+            credential: {
+              username: "project_a_role",
+              password: "canary-pg-rotate-password-32chars!!",
+              one_time: false,
+              extra_secret: "should-not-render-rotate",
+              urls: {
+                direct: rotatedDirectUrl,
+                pooled: rotatedPooledUrl,
+              },
+            },
+          }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    fireEvent.change(within(dialog).getByLabelText("Confirm database name"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rotate now" }));
+    expect(await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Rotate password?" })).not.toBeInTheDocument();
+    const ticket = screen.getByRole("alertdialog", { name: "This PostgreSQL password is still saved." });
+    expect(ticket).toHaveTextContent("Redgres can show this password again from the encrypted vault.");
+    expect(ticket).not.toHaveTextContent(/shown now/i);
+    expect(ticket).not.toHaveTextContent(/cannot show the password again/i);
+    expect(ticket).toHaveTextContent(
+      "Update every application using this project user. The previous password stops working.",
+    );
+    expect(ticket.querySelector(".form-warning")).not.toBeNull();
+    expect(ticket).toHaveTextContent("canary-pg-rotate-password-32chars!!");
+    expect(document.body.textContent).not.toContain("should-not-render-rotate");
+    expect(localSet).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Rotate" })).toBeDisabled();
+    localSet.mockRestore();
+  });
+
+  it("clears secrets on rotate 401 and does not leave a leftover password", async () => {
+    stubFetch(
+      postgresRotateInspectorFetch("pg-rotate-401".padEnd(64, "0"), {
+        rotate: () =>
+          jsonResponse(401, {
+            error: { code: "unauthorized", message: "Authentication required" },
+            credential: { username: "project_a_role", password: "should-not-render-rotate-401" },
+          }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    fireEvent.change(within(dialog).getByLabelText("Confirm database name"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rotate now" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your session has expired. Sign in again to continue.",
+    );
+    expect(screen.queryByRole("dialog", { name: "Rotate password?" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render-rotate-401");
+  });
+
+  it.each([
+    [400, "Type the database name exactly to confirm rotation"],
+    [403, "This PostgreSQL name is protected"],
+  ] as const)("stays on the rotate dialog for HTTP %s", async (status, message) => {
+    stubFetch(
+      postgresRotateInspectorFetch(`pg-rotate-${status}`.padEnd(64, "0"), {
+        rotate: () => jsonResponse(status, { error: { message } }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    fireEvent.change(within(dialog).getByLabelText("Confirm database name"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rotate now" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("dialog", { name: "Rotate password?" })).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("shows not-found copy on rotate 404 and does not open a ticket", async () => {
+    stubFetch(
+      postgresRotateInspectorFetch("pg-rotate-404".padEnd(64, "0"), {
+        rotate: () =>
+          jsonResponse(404, {
+            error: { code: "not_found", message: "Not found" },
+            credential: { password: "should-not-render-rotate-404" },
+          }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    fireEvent.change(within(dialog).getByLabelText("Confirm database name"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rotate now" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not found");
+    expect(screen.queryByRole("dialog", { name: "Rotate password?" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render-rotate-404");
+  });
+
+  it("shows PostgreSQL is unavailable on rotate 503 and does not open a ticket", async () => {
+    stubFetch(
+      postgresRotateInspectorFetch("pg-rotate-503".padEnd(64, "0"), {
+        rotate: () =>
+          jsonResponse(503, {
+            error: { code: "dependency_unavailable", message: "PostgreSQL is unavailable" },
+            credential: { password: "should-not-render-rotate-503" },
+          }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    fireEvent.change(within(dialog).getByLabelText("Confirm database name"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rotate now" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("PostgreSQL is unavailable");
+    expect(screen.queryByRole("dialog", { name: "Rotate password?" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render-rotate-503");
+  });
+
+  it("shows vault-out-of-sync copy on rotate 503 when the vault could not be saved", async () => {
+    stubFetch(
+      postgresRotateInspectorFetch("pg-rotate-vault".padEnd(64, "0"), {
+        rotate: () =>
+          jsonResponse(503, {
+            error: { code: "dependency_unavailable", message: vaultOutOfSyncCopy },
+            credential: { password: "should-not-render-rotate-vault" },
+          }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    fireEvent.change(within(dialog).getByLabelText("Confirm database name"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rotate now" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(vaultOutOfSyncCopy);
+    expect(screen.getByRole("dialog", { name: "Rotate password?" })).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render-rotate-vault");
+  });
+
+  it("disables Rotate while rotate is in flight", async () => {
+    let releaseRotate: () => void = () => {};
+    const blockedRotate = new Promise<void>((resolve) => {
+      releaseRotate = resolve;
+    });
+    stubFetch(async (url, init) => {
+      const base = postgresRotateInspectorFetch("pg-rotate-flight".padEnd(64, "0"), {
+        rotate: async () => {
+          await blockedRotate;
+          return postgresRotate200();
+        },
+      });
+      return base(url, init);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    fireEvent.change(within(dialog).getByLabelText("Confirm database name"), { target: { value: "project_a" } });
+    const rotateNow = within(dialog).getByRole("button", { name: "Rotate now" });
+    fireEvent.click(rotateNow);
+    await waitFor(() => {
+      expect(rotateNow).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Rotate" })).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Reveal" })).toBeDisabled();
+    });
+    releaseRotate();
+    expect(await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." })).toBeInTheDocument();
+  });
+
+  it("never POSTs postgres rotate from the login route", async () => {
+    let authed = false;
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-rotate-login".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/login")) {
+        authed = true;
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-rotate-login".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresCredentialsRotate(String(call[0]), undefined, call[1]))).toBe(
+      true,
+    );
+    expect(screen.queryByRole("button", { name: "Rotate" })).not.toBeInTheDocument();
+  });
+
+  it("never POSTs postgres rotate from Security overview", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-rotate-sec".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("heading", { name: "Security overview" })).toBeInTheDocument();
+    const article = screen.getByRole("heading", { name: "Security overview" }).closest("article");
+    expect(article).not.toBeNull();
+    expect(within(article as HTMLElement).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresCredentialsRotate(String(call[0]), undefined, call[1]))).toBe(
+      true,
+    );
+  });
+
   it("shows Create database in the Databases header, not the topbar, including an empty list", async () => {
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
@@ -2541,6 +3085,9 @@ describe("App session and login", () => {
     expect(ticket).toHaveTextContent("Redgres can show this password again from the encrypted vault.");
     expect(ticket).toHaveTextContent("It is not a one-time Redis credential.");
     expect(ticket).not.toHaveTextContent(/shown now/i);
+    expect(ticket).not.toHaveTextContent(
+      "Update every application using this project user. The previous password stops working.",
+    );
     expect(ticket).toHaveTextContent("canary-pg-create-password-32chars!!");
     expect(ticket).toHaveTextContent("app_project_a");
     expect(within(ticket).getByRole("button", { name: "Copy Direct URL" })).toBeInTheDocument();
