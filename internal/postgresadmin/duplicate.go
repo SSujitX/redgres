@@ -109,6 +109,7 @@ JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
 LEFT JOIN pg_catalog.pg_roles r ON r.oid = p.proowner
 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
   AND pg_catalog.pg_get_userbyid(p.proowner) <> $1
+  AND NOT p.prosecdef
   AND NOT EXISTS (
     SELECT 1
     FROM pg_catalog.pg_depend d
@@ -116,6 +117,16 @@ WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND d.objid = p.oid
       AND d.deptype = 'e'
   )
+`
+
+const cloneRoleAccessSQL = `
+SELECT
+	session_user = $1,
+	COALESCE(r.rolsuper, false),
+	pg_catalog.pg_has_role(session_user, $2, 'MEMBER'),
+	pg_catalog.pg_has_role(session_user, $2, 'USAGE')
+FROM pg_catalog.pg_roles r
+WHERE r.rolname = session_user
 `
 
 func formatCreateDatabaseTemplate(database, source, owner string) (string, error) {
@@ -202,22 +213,6 @@ func formatAlterRoutineOwner(prokind, schema, name, identityArgs, newOwner strin
 	return kind + " " + quotedSchema + "." + quotedName + "(" + identityArgs + ") OWNER TO " + quotedOwner, nil
 }
 
-func formatGrantAllOnPublic(newOwner string) ([]string, error) {
-	quotedOwner, err := QuoteIdentifier(newOwner)
-	if err != nil {
-		return nil, err
-	}
-	return []string{
-		"GRANT ALL ON SCHEMA public TO " + quotedOwner,
-		"GRANT ALL ON ALL TABLES IN SCHEMA public TO " + quotedOwner,
-		"GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO " + quotedOwner,
-		"GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO " + quotedOwner,
-		"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO " + quotedOwner,
-		"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO " + quotedOwner,
-		"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO " + quotedOwner,
-	}, nil
-}
-
 var cloneRelationKindSQL = map[string]string{
 	"r": "ALTER TABLE",
 	"p": "ALTER TABLE",
@@ -247,7 +242,7 @@ func skipCloneTransferOwner(skipOwner func(string) bool, owner string, ownerIsSu
 	return skipOwner != nil && skipOwner(owner)
 }
 
-func formatGrantCatalogRole(owner, admin string) (string, error) {
+func formatGrantTemporaryCatalogRole(owner, admin string) (string, error) {
 	quotedOwner, err := QuoteCatalogIdentifier(owner)
 	if err != nil {
 		return "", err
@@ -256,7 +251,110 @@ func formatGrantCatalogRole(owner, admin string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "GRANT " + quotedOwner + " TO " + quotedAdmin + " WITH INHERIT TRUE, SET TRUE", nil
+	return "GRANT " + quotedOwner + " TO " + quotedAdmin + " WITH INHERIT TRUE, SET FALSE", nil
+}
+
+func formatRevokeCatalogRole(owner, admin string) (string, error) {
+	quotedOwner, err := QuoteCatalogIdentifier(owner)
+	if err != nil {
+		return "", err
+	}
+	quotedAdmin, err := QuoteIdentifier(admin)
+	if err != nil {
+		return "", err
+	}
+	return "REVOKE " + quotedOwner + " FROM " + quotedAdmin, nil
+}
+
+type cloneRoleExecutor interface {
+	QueryRoleAccess(ctx context.Context, admin, owner string) (sessionMatches, superuser, member, usage bool, err error)
+	Exec(ctx context.Context, sql string) error
+}
+
+type pgxCloneRoleExecutor struct {
+	tx pgx.Tx
+}
+
+func (e pgxCloneRoleExecutor) QueryRoleAccess(ctx context.Context, admin, owner string) (bool, bool, bool, bool, error) {
+	var sessionMatches, superuser, member, usage bool
+	err := e.tx.QueryRow(ctx, cloneRoleAccessSQL, admin, owner).Scan(
+		&sessionMatches,
+		&superuser,
+		&member,
+		&usage,
+	)
+	return sessionMatches, superuser, member, usage, err
+}
+
+func (e pgxCloneRoleExecutor) Exec(ctx context.Context, sql string) error {
+	_, err := e.tx.Exec(ctx, sql)
+	return err
+}
+
+type cloneMembershipManager struct {
+	exec      cloneRoleExecutor
+	admin     string
+	resolved  map[string]struct{}
+	temporary []string
+}
+
+func newCloneMembershipManager(exec cloneRoleExecutor, admin string) *cloneMembershipManager {
+	return &cloneMembershipManager{
+		exec:     exec,
+		admin:    admin,
+		resolved: make(map[string]struct{}),
+	}
+}
+
+func (m *cloneMembershipManager) ensure(ctx context.Context, owner string) error {
+	if m == nil || m.exec == nil {
+		return ErrUnavailable
+	}
+	if _, ok := m.resolved[owner]; ok {
+		return nil
+	}
+	sessionMatches, superuser, member, usage, err := m.exec.QueryRoleAccess(ctx, m.admin, owner)
+	if err != nil || !sessionMatches {
+		return ErrUnavailable
+	}
+	if superuser || usage {
+		m.resolved[owner] = struct{}{}
+		return nil
+	}
+	if member {
+		return ErrUnavailable
+	}
+	grant, err := formatGrantTemporaryCatalogRole(owner, m.admin)
+	if err != nil {
+		return err
+	}
+	if err := m.exec.Exec(ctx, grant); err != nil {
+		return ErrUnavailable
+	}
+	m.resolved[owner] = struct{}{}
+	m.temporary = append(m.temporary, owner)
+	return nil
+}
+
+func (m *cloneMembershipManager) release(ctx context.Context) error {
+	if m == nil || m.exec == nil {
+		return ErrUnavailable
+	}
+	var failed bool
+	for i := len(m.temporary) - 1; i >= 0; i-- {
+		revoke, err := formatRevokeCatalogRole(m.temporary[i], m.admin)
+		if err != nil {
+			failed = true
+			continue
+		}
+		if err := m.exec.Exec(ctx, revoke); err != nil {
+			failed = true
+		}
+	}
+	if failed {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 func (s *Service) Duplicate(ctx context.Context, source, database, owner string) (CreatedDatabase, error) {
@@ -495,37 +593,32 @@ func (c PoolCatalog) TransferCloneOwnership(ctx context.Context, database, newOw
 	}
 	defer closeConn()
 
-	if !skipGrantSetRole(admin, newOwner) {
-		grant, grantErr := formatGrantSetRole(newOwner, admin)
-		if grantErr != nil {
-			return grantErr
-		}
-		if _, err := conn.Exec(queryCtx, grant); err != nil {
-			return ErrUnavailable
-		}
-	}
-
-	if err := c.transferCloneNamespaces(queryCtx, conn, newOwner, admin, skipOwner); err != nil {
-		return err
-	}
-	if err := c.transferCloneRelations(queryCtx, conn, newOwner, admin, skipOwner); err != nil {
-		return err
-	}
-	if err := c.transferCloneTypes(queryCtx, conn, newOwner, admin, skipOwner); err != nil {
-		return err
-	}
-	if err := c.transferCloneRoutines(queryCtx, conn, newOwner, admin, skipOwner); err != nil {
-		return err
-	}
-
-	grants, err := formatGrantAllOnPublic(newOwner)
+	tx, err := conn.Begin(queryCtx)
 	if err != nil {
+		return ErrUnavailable
+	}
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+	memberships := newCloneMembershipManager(pgxCloneRoleExecutor{tx: tx}, admin)
+
+	if err := c.transferCloneNamespaces(queryCtx, tx, newOwner, memberships, skipOwner); err != nil {
 		return err
 	}
-	for _, sql := range grants {
-		if _, err := conn.Exec(queryCtx, sql); err != nil {
-			return ErrUnavailable
-		}
+	if err := c.transferCloneRelations(queryCtx, tx, newOwner, memberships, skipOwner); err != nil {
+		return err
+	}
+	if err := c.transferCloneTypes(queryCtx, tx, newOwner, memberships, skipOwner); err != nil {
+		return err
+	}
+	if err := c.transferCloneRoutines(queryCtx, tx, newOwner, memberships, skipOwner); err != nil {
+		return err
+	}
+	if err := memberships.release(queryCtx); err != nil {
+		return err
+	}
+	if err := tx.Commit(queryCtx); err != nil {
+		return ErrUnavailable
 	}
 	return nil
 }
@@ -534,143 +627,191 @@ func (c PoolCatalog) connectClone(ctx context.Context, database string) (*pgx.Co
 	return c.connectTarget(ctx, database)
 }
 
-func (c PoolCatalog) alterCloneOwner(ctx context.Context, conn *pgx.Conn, currentOwner, admin, statement string, skipOwner func(string) bool) error {
-	if skipOwner(currentOwner) {
-		return nil
+func (c PoolCatalog) alterCloneOwner(ctx context.Context, tx pgx.Tx, currentOwner, statement string, memberships *cloneMembershipManager) error {
+	if err := memberships.ensure(ctx, currentOwner); err != nil {
+		return err
 	}
-	if !skipGrantSetRole(admin, currentOwner) {
-		grant, err := formatGrantCatalogRole(currentOwner, admin)
-		if err != nil {
-			return err
-		}
-		if _, err := conn.Exec(ctx, grant); err != nil {
-			return ErrUnavailable
-		}
-	}
-	if _, err := conn.Exec(ctx, statement); err != nil {
+	if _, err := tx.Exec(ctx, statement); err != nil {
 		return ErrUnavailable
 	}
 	return nil
 }
 
-func (c PoolCatalog) transferCloneNamespaces(ctx context.Context, conn *pgx.Conn, newOwner, admin string, skipOwner func(string) bool) error {
-	rows, err := conn.Query(ctx, cloneNamespaceSQL, newOwner)
+type cloneNamespace struct {
+	schema           string
+	owner            string
+	ownerIsSuperuser bool
+}
+
+func (c PoolCatalog) transferCloneNamespaces(ctx context.Context, tx pgx.Tx, newOwner string, memberships *cloneMembershipManager, skipOwner func(string) bool) error {
+	rows, err := tx.Query(ctx, cloneNamespaceSQL, newOwner)
 	if err != nil {
 		return ErrUnavailable
 	}
-	defer rows.Close()
+	var objects []cloneNamespace
 	for rows.Next() {
-		var schema, oldOwner string
-		var ownerIsSuperuser bool
-		if err := rows.Scan(&schema, &oldOwner, &ownerIsSuperuser); err != nil {
+		var object cloneNamespace
+		if err := rows.Scan(&object.schema, &object.owner, &object.ownerIsSuperuser); err != nil {
+			rows.Close()
 			return ErrUnavailable
 		}
-		if skipCloneTransferOwner(skipOwner, oldOwner, ownerIsSuperuser) {
+		objects = append(objects, object)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return ErrUnavailable
+	}
+	rows.Close()
+	for _, object := range objects {
+		if skipCloneTransferOwner(skipOwner, object.owner, object.ownerIsSuperuser) {
 			continue
 		}
-		sql, err := formatAlterSchemaOwner(schema, newOwner)
+		sql, err := formatAlterSchemaOwner(object.schema, newOwner)
 		if err != nil {
 			return err
 		}
-		if err := c.alterCloneOwner(ctx, conn, oldOwner, admin, sql, skipOwner); err != nil {
+		if err := c.alterCloneOwner(ctx, tx, object.owner, sql, memberships); err != nil {
 			return err
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return ErrUnavailable
 	}
 	return nil
 }
 
-func (c PoolCatalog) transferCloneRelations(ctx context.Context, conn *pgx.Conn, newOwner, admin string, skipOwner func(string) bool) error {
-	rows, err := conn.Query(ctx, cloneRelationSQL, newOwner)
+type cloneRelation struct {
+	schema           string
+	name             string
+	kind             string
+	owner            string
+	ownerIsSuperuser bool
+}
+
+func (c PoolCatalog) transferCloneRelations(ctx context.Context, tx pgx.Tx, newOwner string, memberships *cloneMembershipManager, skipOwner func(string) bool) error {
+	rows, err := tx.Query(ctx, cloneRelationSQL, newOwner)
 	if err != nil {
 		return ErrUnavailable
 	}
-	defer rows.Close()
+	var objects []cloneRelation
 	for rows.Next() {
-		var schema, name, relkind, oldOwner string
-		var ownerIsSuperuser bool
-		if err := rows.Scan(&schema, &name, &relkind, &oldOwner, &ownerIsSuperuser); err != nil {
+		var object cloneRelation
+		if err := rows.Scan(&object.schema, &object.name, &object.kind, &object.owner, &object.ownerIsSuperuser); err != nil {
+			rows.Close()
 			return ErrUnavailable
 		}
-		if skipCloneTransferOwner(skipOwner, oldOwner, ownerIsSuperuser) {
+		objects = append(objects, object)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return ErrUnavailable
+	}
+	rows.Close()
+	for _, object := range objects {
+		if skipCloneTransferOwner(skipOwner, object.owner, object.ownerIsSuperuser) {
 			continue
 		}
-		if len(relkind) != 1 {
+		if len(object.kind) != 1 {
 			return ErrUnavailable
 		}
-		sql, err := formatAlterRelationOwner(relkind, schema, name, newOwner)
+		sql, err := formatAlterRelationOwner(object.kind, object.schema, object.name, newOwner)
 		if err != nil {
 			return err
 		}
-		if err := c.alterCloneOwner(ctx, conn, oldOwner, admin, sql, skipOwner); err != nil {
+		if err := c.alterCloneOwner(ctx, tx, object.owner, sql, memberships); err != nil {
 			return err
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return ErrUnavailable
 	}
 	return nil
 }
 
-func (c PoolCatalog) transferCloneTypes(ctx context.Context, conn *pgx.Conn, newOwner, admin string, skipOwner func(string) bool) error {
-	rows, err := conn.Query(ctx, cloneTypeSQL, newOwner)
+type cloneType struct {
+	schema           string
+	name             string
+	owner            string
+	ownerIsSuperuser bool
+}
+
+func (c PoolCatalog) transferCloneTypes(ctx context.Context, tx pgx.Tx, newOwner string, memberships *cloneMembershipManager, skipOwner func(string) bool) error {
+	rows, err := tx.Query(ctx, cloneTypeSQL, newOwner)
 	if err != nil {
 		return ErrUnavailable
 	}
-	defer rows.Close()
+	var objects []cloneType
 	for rows.Next() {
-		var schema, name, oldOwner string
-		var ownerIsSuperuser bool
-		if err := rows.Scan(&schema, &name, &oldOwner, &ownerIsSuperuser); err != nil {
+		var object cloneType
+		if err := rows.Scan(&object.schema, &object.name, &object.owner, &object.ownerIsSuperuser); err != nil {
+			rows.Close()
 			return ErrUnavailable
 		}
-		if skipCloneTransferOwner(skipOwner, oldOwner, ownerIsSuperuser) {
+		objects = append(objects, object)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return ErrUnavailable
+	}
+	rows.Close()
+	for _, object := range objects {
+		if skipCloneTransferOwner(skipOwner, object.owner, object.ownerIsSuperuser) {
 			continue
 		}
-		sql, err := formatAlterTypeOwner(schema, name, newOwner)
+		sql, err := formatAlterTypeOwner(object.schema, object.name, newOwner)
 		if err != nil {
 			return err
 		}
-		if err := c.alterCloneOwner(ctx, conn, oldOwner, admin, sql, skipOwner); err != nil {
+		if err := c.alterCloneOwner(ctx, tx, object.owner, sql, memberships); err != nil {
 			return err
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return ErrUnavailable
 	}
 	return nil
 }
 
-func (c PoolCatalog) transferCloneRoutines(ctx context.Context, conn *pgx.Conn, newOwner, admin string, skipOwner func(string) bool) error {
-	rows, err := conn.Query(ctx, cloneProcSQL, newOwner)
+type cloneRoutine struct {
+	schema           string
+	name             string
+	identityArgs     string
+	kind             string
+	owner            string
+	ownerIsSuperuser bool
+}
+
+func (c PoolCatalog) transferCloneRoutines(ctx context.Context, tx pgx.Tx, newOwner string, memberships *cloneMembershipManager, skipOwner func(string) bool) error {
+	rows, err := tx.Query(ctx, cloneProcSQL, newOwner)
 	if err != nil {
 		return ErrUnavailable
 	}
-	defer rows.Close()
+	var objects []cloneRoutine
 	for rows.Next() {
-		var schema, name, identityArgs, prokind, oldOwner string
-		var ownerIsSuperuser bool
-		if err := rows.Scan(&schema, &name, &identityArgs, &prokind, &oldOwner, &ownerIsSuperuser); err != nil {
+		var object cloneRoutine
+		if err := rows.Scan(
+			&object.schema,
+			&object.name,
+			&object.identityArgs,
+			&object.kind,
+			&object.owner,
+			&object.ownerIsSuperuser,
+		); err != nil {
+			rows.Close()
 			return ErrUnavailable
 		}
-		if skipCloneTransferOwner(skipOwner, oldOwner, ownerIsSuperuser) {
+		objects = append(objects, object)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return ErrUnavailable
+	}
+	rows.Close()
+	for _, object := range objects {
+		if skipCloneTransferOwner(skipOwner, object.owner, object.ownerIsSuperuser) {
 			continue
 		}
-		if len(prokind) != 1 {
+		if len(object.kind) != 1 {
 			return ErrUnavailable
 		}
-		sql, err := formatAlterRoutineOwner(prokind, schema, name, identityArgs, newOwner)
+		sql, err := formatAlterRoutineOwner(object.kind, object.schema, object.name, object.identityArgs, newOwner)
 		if err != nil {
 			return err
 		}
-		if err := c.alterCloneOwner(ctx, conn, oldOwner, admin, sql, skipOwner); err != nil {
+		if err := c.alterCloneOwner(ctx, tx, object.owner, sql, memberships); err != nil {
 			return err
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return ErrUnavailable
 	}
 	return nil
 }

@@ -57,6 +57,7 @@ The resulting 32 bytes are URL-safe base64 encoded and used as a Fernet key. Sto
 - Static environment credentials and signed client-side session state are weaker than the Redis app’s Argon2id/server-side session model.
 - Brute-force delay uses blocking `time.sleep(1)` and no durable per-IP/username rate-limit state.
 - Destructive confirmation is inconsistent; the unified system must require target confirmation and reauthentication.
+- Duplicate finishes ownership transfer with blanket `GRANT ALL` / `ALTER DEFAULT PRIVILEGES` in `public` and does not remove old-owner memberships added for transfer. Redgres must preserve ACLs on skipped protected/superuser, extension-owned, and `SECURITY DEFINER` objects and keep any necessary transfer membership transaction-scoped.
 - Truncation loops and continues after errors, allowing partial success without a strong transaction/result contract.
 - Large server-rendered templates and external styling assets make CSP, maintenance, and offline builds harder.
 - Password rotation changes PostgreSQL then writes the vault; the two stores are not one atomic transaction. Redgres needs an explicit recoverable state machine/compensation behavior.

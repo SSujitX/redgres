@@ -45,7 +45,7 @@ func TestTerminateSessionsSQLIsParameterizedOnDatname(t *testing.T) {
 	}
 }
 
-func TestDuplicatePackageNeverUsesReassignOwnedOrSetRole(t *testing.T) {
+func TestDuplicatePackageNeverExpandsPrivilegesOrUsesRoleSwitching(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +63,12 @@ func TestDuplicatePackageNeverUsesReassignOwnedOrSetRole(t *testing.T) {
 		if strings.Contains(upper, "REASSIGN OWNED") {
 			t.Fatalf("%s contains REASSIGN OWNED", entry.Name())
 		}
+		if strings.Contains(upper, "GRANT ALL") {
+			t.Fatalf("%s contains blanket GRANT ALL", entry.Name())
+		}
+		if strings.Contains(upper, "ALTER DEFAULT PRIVILEGES") {
+			t.Fatalf("%s expands default privileges", entry.Name())
+		}
 		if strings.Contains(src, "SET ROLE") {
 			t.Fatalf("%s contains SET ROLE", entry.Name())
 		}
@@ -76,6 +82,19 @@ func TestDuplicatePackageNeverUsesReassignOwnedOrSetRole(t *testing.T) {
 	}
 	if !strings.Contains(cloneNamespaceSQL, "nspname !~") || !strings.Contains(cloneRelationSQL, "nspname !~") {
 		t.Fatal("transfer SQL must use nspname !~")
+	}
+	for name, query := range map[string]string{
+		"namespace": cloneNamespaceSQL,
+		"relation":  cloneRelationSQL,
+		"type":      cloneTypeSQL,
+		"routine":   cloneProcSQL,
+	} {
+		if !strings.Contains(query, "d.deptype = 'e'") {
+			t.Fatalf("%s transfer must skip extension-owned objects", name)
+		}
+	}
+	if !strings.Contains(cloneProcSQL, "NOT p.prosecdef") {
+		t.Fatal("routine transfer must skip SECURITY DEFINER routines")
 	}
 }
 
@@ -421,16 +440,162 @@ func TestFormatAlterRelationOwnerQuotesCatalogNames(t *testing.T) {
 	}
 }
 
-func TestFormatGrantCatalogRoleQuotesOwner(t *testing.T) {
-	got, err := formatGrantCatalogRole("Order", "redgres_console")
+func TestFormatTemporaryCatalogMembershipQuotesRolesAndLimitsOptions(t *testing.T) {
+	got, err := formatGrantTemporaryCatalogRole("Order", "redgres_console")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != `GRANT "Order" TO "redgres_console" WITH INHERIT TRUE, SET TRUE` {
+	if got != `GRANT "Order" TO "redgres_console" WITH INHERIT TRUE, SET FALSE` {
 		t.Fatalf("sql = %s", got)
 	}
-	if _, err := formatGrantCatalogRole("", "redgres_console"); err == nil {
+	revoke, err := formatRevokeCatalogRole("Order", "redgres_console")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoke != `REVOKE "Order" FROM "redgres_console"` {
+		t.Fatalf("sql = %s", revoke)
+	}
+	if _, err := formatGrantTemporaryCatalogRole("", "redgres_console"); err == nil {
 		t.Fatal("empty catalog owner must fail closed")
+	}
+	if _, err := formatRevokeCatalogRole("Order", "a\x00b"); err == nil {
+		t.Fatal("NUL admin must fail closed")
+	}
+}
+
+func TestCloneRoleAccessSQLUsesPostgres17And18RoleChecks(t *testing.T) {
+	for _, want := range []string{
+		"session_user = $1",
+		"pg_catalog.pg_has_role(session_user, $2, 'MEMBER')",
+		"pg_catalog.pg_has_role(session_user, $2, 'USAGE')",
+	} {
+		if !strings.Contains(cloneRoleAccessSQL, want) {
+			t.Fatalf("role access SQL missing %q", want)
+		}
+	}
+}
+
+type cloneRoleExecutorStub struct {
+	sessionMatches bool
+	superuser      bool
+	member         bool
+	usage          bool
+	rowErr         error
+	execErr        error
+	statements     []string
+	queryCalls     int
+}
+
+func (s *cloneRoleExecutorStub) QueryRoleAccess(_ context.Context, _, _ string) (bool, bool, bool, bool, error) {
+	s.queryCalls++
+	return s.sessionMatches, s.superuser, s.member, s.usage, s.rowErr
+}
+
+func (s *cloneRoleExecutorStub) Exec(_ context.Context, sql string) error {
+	s.statements = append(s.statements, sql)
+	return s.execErr
+}
+
+func TestCloneMembershipManagerGrantsAndRevokesOnlyTemporaryMembership(t *testing.T) {
+	exec := &cloneRoleExecutorStub{sessionMatches: true}
+	memberships := newCloneMembershipManager(exec, "redgres_console")
+	if err := memberships.ensure(context.Background(), "app_object_owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := memberships.ensure(context.Background(), "app_object_owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := memberships.release(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`GRANT "app_object_owner" TO "redgres_console" WITH INHERIT TRUE, SET FALSE`,
+		`REVOKE "app_object_owner" FROM "redgres_console"`,
+	}
+	if strings.Join(exec.statements, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("statements = %#v", exec.statements)
+	}
+	if exec.queryCalls != 1 {
+		t.Fatalf("role access queries = %d", exec.queryCalls)
+	}
+}
+
+func TestCloneMembershipManagerPreservesExistingAndSuperuserAccess(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		superuser bool
+		member    bool
+		usage     bool
+	}{
+		{name: "existing inherited membership", member: true, usage: true},
+		{name: "superuser", superuser: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			exec := &cloneRoleExecutorStub{
+				sessionMatches: true,
+				superuser:      tc.superuser,
+				member:         tc.member,
+				usage:          tc.usage,
+			}
+			memberships := newCloneMembershipManager(exec, "redgres_console")
+			if err := memberships.ensure(context.Background(), "app_object_owner"); err != nil {
+				t.Fatal(err)
+			}
+			if err := memberships.release(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(exec.statements) != 0 {
+				t.Fatalf("existing access changed: %#v", exec.statements)
+			}
+		})
+	}
+}
+
+func TestCloneMembershipManagerFailsClosedWithoutUsableExistingMembership(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		sessionMatches bool
+		member         bool
+		usage          bool
+	}{
+		{name: "configured admin mismatch", member: false, usage: false},
+		{name: "non-inheriting membership", sessionMatches: true, member: true, usage: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			exec := &cloneRoleExecutorStub{
+				sessionMatches: tc.sessionMatches,
+				member:         tc.member,
+				usage:          tc.usage,
+			}
+			memberships := newCloneMembershipManager(exec, "redgres_console")
+			if err := memberships.ensure(context.Background(), "app_object_owner"); !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("err = %v", err)
+			}
+			if len(exec.statements) != 0 {
+				t.Fatalf("unsafe membership mutation: %#v", exec.statements)
+			}
+		})
+	}
+}
+
+func TestCloneMembershipManagerFailsClosedOnGrantOrRevokeError(t *testing.T) {
+	grantFailure := &cloneRoleExecutorStub{
+		sessionMatches: true,
+		execErr:        errors.New("grant failed"),
+	}
+	memberships := newCloneMembershipManager(grantFailure, "redgres_console")
+	if err := memberships.ensure(context.Background(), "app_object_owner"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("grant err = %v", err)
+	}
+
+	revokeFailure := &cloneRoleExecutorStub{sessionMatches: true}
+	memberships = newCloneMembershipManager(revokeFailure, "redgres_console")
+	if err := memberships.ensure(context.Background(), "app_object_owner"); err != nil {
+		t.Fatal(err)
+	}
+	revokeFailure.execErr = errors.New("revoke failed")
+	if err := memberships.release(context.Background()); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("revoke err = %v", err)
 	}
 }
 
