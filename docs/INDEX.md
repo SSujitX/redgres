@@ -22,7 +22,7 @@ For day-to-day Cursor commands, start at [../CURSOR_CODING.md](../CURSOR_CODING.
 - [DATA_AND_SECRETS.md](DATA_AND_SECRETS.md)
 - [DOMAIN_AND_NETWORK.md](DOMAIN_AND_NETWORK.md)
 - [COMPATIBILITY.md](COMPATIBILITY.md)
-- [TRACEABILITY.md](TRACEABILITY.md)
+- [TRACEABILITY.md](TRACEABILITY.md) — current status matrix only; historical slice records are `git show 5474720:docs/TRACEABILITY.md`.
 - [ACCEPTANCE_CHECKLIST.md](ACCEPTANCE_CHECKLIST.md)
 - [GLOSSARY.md](GLOSSARY.md)
 - [REFERENCES.md](REFERENCES.md)

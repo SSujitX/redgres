@@ -62,7 +62,7 @@ Local paths are development references only. Production Redgres must not import,
 
 ## Documentation ownership
 
-Update only the canonical owner for the change; link instead of duplicating policy. Every implementation change updates `docs/TRACEABILITY.md` with exact files and executed evidence.
+Update only the canonical owner for the change; link instead of duplicating policy. Every implementation change updates `docs/TRACEABILITY.md` (current matrix plus one current-slice block). Historical slice ledgers stay in Git (`git show 5474720:docs/TRACEABILITY.md`), not in this file.
 
 | Change | Canonical documentation |
 |---|---|
