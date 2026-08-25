@@ -2521,8 +2521,8 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
   go list -m github.com/jackc/pgx/v5 → v5.10.0
   go list -m github.com/redis/go-redis/v9 → v9.22.0
 Local commits: `2bd4e40` (freeze), `1268dbf` (impl), `cec6587` (docs
- record), `cf29328` (security pin). Evidence pin this commit. Verifier pending.
- Not pushed.
+ record), `cf29328` (security pin), `e859af6` (evidence pin), this
+ verifier record. Not pushed.
 Keep PG-005 Partial. Keep PLAT-001 Partial. Keep PG-012 Partial.
  Keep REDIS-005 Partial. Do not mark Complete.
 ```
@@ -2562,7 +2562,42 @@ Reviewer/date: Evidence review (2026-08-25) on `cec6587` keep-Partial /
  wording; matrix Planned implementation includes internal/secrets; R-001
  retitled; SECURITY.md current-state note; local-commits include cec6587
  and cf29328.
-Keep PG-005 Partial. Verifier pending. Not pushed.
+Keep PG-005 Partial. Verifier PASS Partial recorded below. Not pushed.
+```
+
+## PG-005 Fernet/KDF verifier PASS Partial (2026-08-25)
+
+```text
+Requirement: PG-005 Partial (in-process Fernet/KDF decrypt gate only)
+Decision/ADR: ADR-004; freeze `2bd4e40`
+Reviewer/date: Verifier (2026-08-25) PASS Partial on master `e859af6`.
+ Independent re-runs go1.27.0 windows/amd64:
+  gofmt -l internal/secrets → empty
+  go test -count=1 ./internal/secrets → ok 0.574s
+  go test -race -count=1 ./internal/secrets → ok 1.584s
+  go test -count=1 ./... → ok (httpapi 19.330s; secrets 0.488s)
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/jackc/pgx/v5 → v5.10.0
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+ Security review (2026-08-25) on `cec6587` approve Partial; no
+ Critical/High/Medium/Low.
+ Evidence review (2026-08-25) on `cec6587` keep-Partial / reject-Complete;
+ corrections landed in `e859af6`.
+KDF independently recomputed to fixture key
+ u5Qxug06sp24rfxkW82bVJCnEYp9qu-Fb9PoFDVnAOQ=. Old-timestamp token
+ version 0x80 and timestamp 1262304000 verified from token bytes.
+ Testdata is fake canary. go.mod unchanged. No postgresadmin/httpapi/
+ config/web/cmd vault SQL or reveal. Sibling database-app clean at 1c3e8e2.
+Not executed: live Python 49.0.0; Gate 2 encrypt; Gate 4 copied production
+ ciphertext; full go test -race ./...; npm; COMPATIBILITY.md §6; HTTP
+ reveal canaries.
+Non-blocking nits: SOURCE_BASELINE.md Redgres row still says vault not
+ started (stale snapshot; not refreshed here); ROADMAP M4 Fernet gates
+ remain upcoming for create/reveal/rotate.
+Keep PG-005 Partial. Do not mark Complete.
+Local commits: `2bd4e40`, `1268dbf`, `cec6587`, `cf29328`, `e859af6`,
+ this verifier record. Not pushed.
 ```
 
 
