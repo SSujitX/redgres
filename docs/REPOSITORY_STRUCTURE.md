@@ -110,6 +110,7 @@ Redgres/
 │   ├── update.sh
 │   ├── lib/
 │   │   ├── common.sh
+│   │   ├── inventory.sh
 │   │   ├── checks.sh
 │   │   ├── logging.sh
 │   │   ├── secrets.sh
