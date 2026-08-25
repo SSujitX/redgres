@@ -2157,7 +2157,7 @@ Reviewer/date: Security review (2026-08-25) on `f9457de` approve Partial;
  Keep REDIS-005 Partial.
 ```
 
-## PostgreSQL cluster security overview API (2026-08-25)
+## PostgreSQL cluster security overview (2026-08-25)
 
 ```text
 Requirement: PG-012 Partial (cluster GET + Security overview UI; no vault entries, rotation, or create)
@@ -2207,8 +2207,16 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
   npm --prefix web run test:run → Tests 196 passed (196)
  Not run: race, live PostgreSQL 17/18, CI, COMPATIBILITY.md §6, viewport/zoom
 Local commits: `9507111` (API FF), `5d2f258` (API docs), `18c467f` (UI),
- `7bfc3a3` (merge UI onto master). Not pushed.
-Reviewer/date: pending security/UI/evidence/verifier
+ `7bfc3a3` (merge UI onto master), `b594502` (UI docs). Not pushed.
+Reviewer/date: Security review (2026-08-25) on `9507111` approve Partial;
+ no Critical/High/Medium/Low this-slice; session + postgres.read; no CSRF
+ or audit; no-store; vault stub without project_credentials; static
+ pg_stat_activity grouping with no query text; canary → 503; list/details
+ still 404 protected names. Questions (not defects): postgres.read is
+ owner-static; application_name is client-controlled (source 1c3e8e2
+ same); GET audit-row pin absent; live pgx error text unproven. UI
+ security residual pending UI review. Keep PG-012 Partial.
+ UI/evidence/verifier pending.
  Keep PG-012 Partial. Keep REDIS-005 Partial. Not pushed.
 ```
 
