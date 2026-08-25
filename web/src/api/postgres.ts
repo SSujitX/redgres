@@ -128,6 +128,7 @@ export type PostgresSecurityDatabase = {
   owner_createrole?: boolean;
   owner_replication?: boolean;
   active_connections?: number;
+  rotation_eligible?: boolean;
 };
 
 export type PostgresSecurityConnection = {
