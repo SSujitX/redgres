@@ -128,4 +128,21 @@ postgres:18.6@sha256:1957b2ff3137e4ef7f3bc813e74fff50b1e1ffddc85c8b9d6f14ade972b
 redis:8.8.2@sha256:c514823c0ec1a40764df434efc2dc4ab5ec669c71c1cb00e4f7b1a694cee9fc3
 ```
 
+Remaining matrix cells (skippable live-test pins only; not production support; not §6 Complete):
+
+| Service | Pin | Forbidden |
+|---|---|---|
+| PostgreSQL 17 | `postgres:17.11` | `postgres:latest`, floating `postgres:17` |
+| Redis Open Source 8.2 | `redis:8.2.9` | `redis:latest`, `redis:8.10.1`, floating `redis:8.2` |
+| PgBouncer | omitted | any third-party Hub `pgbouncer` image |
+
+Sources (retrieved 2026-08-26, no `docker pull`): PostgreSQL 17.11 [news](https://www.postgresql.org/about/news/postgresql-186-1711-1615-1519-1424-and-19-beta-3-released-3365/) and [release notes](https://www.postgresql.org/docs/release/17.11/); [versioning](https://www.postgresql.org/support/versioning/); [Docker Official Image `postgres`](https://hub.docker.com/_/postgres). Redis 8.2 [00-RELEASENOTES](https://github.com/redis/redis/blob/8.2/00-RELEASENOTES) (8.2.9 SECURITY, 2026-08-17); [OSS version-mgmt](https://redis.io/docs/latest/operate/oss_and_stack/install/version-mgmt/) (Extended, EOL 2030-09-01); [Docker Official Image `redis`](https://hub.docker.com/_/redis). Hub `latest` remains grouped with **8.10.1**; do not add 8.10. PgBouncer: still no Official Image (`library/pgbouncer` 404).
+
+Hub v2 index digest snapshot (same caveats as the first-cell snapshot; not pull evidence):
+
+```text
+postgres:17.11@sha256:0b657ff48d7f76a1e907f381b1693eb4f2bf54c1d2df4feb6743d7dc601768dd
+redis:8.2.9@sha256:7d1e4ce8b9395088377ab382d1f6cfdbd13b3690795198a0399ab8d683064d6d
+```
+
 Authoritative freeze is `RepoDigests` from the first successful `docker pull`, plus runtime `SHOW server_version` / `SHOW server_version_num` and Redis `INFO server` `redis_version`. If pull digests differ from the snapshot, freeze the pull digest. A green job on floating `latest` is not evidence.
