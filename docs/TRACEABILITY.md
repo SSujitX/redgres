@@ -4299,3 +4299,46 @@ Reviewer/date: security review (2026-08-26) on 47dfa4d
 Not pushed.
 ```
 
+## PG-008 row delete evidence pin (2026-08-26)
+
+```text
+Requirement: PG-008 Partial + AUTH-006 Partial (GET
+ /api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key
+ + flagged DELETE …/rows + inspector single-column PK checkboxes
+ and danger Delete selected dialog). Keep AUTH-006 Partial (Redis
+ DELETE /api/v1/redis/users/{username} plus this DELETE). Keep
+ PG-010 Partial. Keep PG-007 row-browse. Do not mark Complete.
+ Gate 4 does not apply. Playwright is Complete-only.
+Decision/ADR: freeze a05da3d. In-handler Reauthenticate. No POST
+ /api/v1/auth/reauth. REDGRES_FEATURE_POSTGRES_ROW_DELETE via envBool.
+Reviewer/date: Evidence review (2026-08-26) on product tree HEAD
+ 96ff6ff (96ff6ff3024f0ada1fece035b16bea1c0b399275). Diff
+ a05da3d..96ff6ff. PASS Partial / reject-Complete.
+ Freeze criteria map to implementation and recorded tests: GET
+ primary-key session + postgres.read no CSRF no flag; DELETE
+ session + postgres.destructive + CSRF; flag off 403 before JSON
+ decode; envBool unset false; DisallowUnknownFields; AUTH-006
+ in-handler; inspector checkboxes only when primary_key.length===1;
+ danger Delete selected dialog. Status rows AUTH-006 / PG-001..012
+ Partial. This reviewer did not re-run tests.
+ Parent Go evidence at 0e9f6fa (TRACEABILITY 4157–4166): gofmt
+ empty; go test ./internal/config ./internal/postgresadmin
+ ./internal/httpapi ok (httpapi 37.844s); go test ./... all ok
+ (httpapi 39.949s); go vet clean; go build success; go1.27.0
+ windows/amd64.
+ Parent UI evidence at dad0c9f (TRACEABILITY 4201–4206): npm
+ test:run 324 passed (324), 53.18s; npm run build success; Node
+ v25.3.0 not web/.nvmrc 24.19.0.
+ Independent UI Approve Partial b7e826c on dad0c9f / 47dfa4d;
+ security Approve Partial 96ff6ff on 47dfa4d; Critical/High/Medium
+ none; L1/L2 freeze-aligned. No freeze defects. No secret/runtime
+ artifacts. Stale “UI not landed” only in historical Go pin 4156.
+ Unexecuted Complete blockers: live PostgreSQL 17/18,
+ COMPATIBILITY.md §6, Playwright viewports, go test -race, CI,
+ Node 24.19.0, Gate 4 (N/A), POST /api/v1/auth/reauth,
+ truncate/drop flags, gitleaks, govulncheck.
+Keep PG-008 Partial. Keep AUTH-006 Partial. Keep PG-010 Partial.
+ Keep PG-007 row-browse. Do not mark Complete.
+Not pushed.
+```
+
