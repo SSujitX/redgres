@@ -39,6 +39,10 @@ Cloudflare, the VPS provider, OS root, and backup administrator are privileged t
 
 `rediss` administrator URLs that set go-redis `skip_verify` so TLS `InsecureSkipVerify` is true are rejected in every environment; the error names `REDGRES_REDIS_ADMIN_URL_FILE` and never includes the URL or password.
 
+## 3.1 Legacy Fernet vault (PG-005 Partial)
+
+`internal/secrets` decrypts committed Python `cryptography==49.0.0` fixtures with the sibling KDF (`database-console-vault-v1:` + secret, SHA-256, URL-safe Base64) and no Fernet TTL. Invalid, tampered, malformed, and wrong-key tokens fail as a single `ErrInvalidToken` and must not echo the key, token, or plaintext. The package does not read env, query PostgreSQL, or expose HTTP. Copied production ciphertext (Gate 4), GET masked metadata, POST reveal, vault SQL, and `REDGRES_LEGACY_VAULT_SECRET_FILE` are not implemented. HTTP `saved_credential` remains `vault_not_implemented`. See [DATA_AND_SECRETS.md](DATA_AND_SECRETS.md).
+
 ## 4. Authorization model
 
 Migration release has one owner role. Authorization remains capability-based internally so future roles do not require rewriting handlers:

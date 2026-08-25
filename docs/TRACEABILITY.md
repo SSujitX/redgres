@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page (no vault/rotation); PG-005 Partial: in-process Fernet/KDF fixtures in `internal/secrets` (no HTTP reveal/vault SQL); PG-003/004/006/008–011 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page (no vault/rotation); PG-005 Partial: in-process Fernet/KDF fixtures in `internal/secrets` (no HTTP reveal/vault SQL); PG-003/004/006/008–011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete); REDIS-008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -2488,7 +2488,9 @@ Unit tests: ASCII/Unicode decrypt; KDF exact vs Python 49; wrong-key; flipped
  ciphertext bit; truncated; invalid Base64; wrong version; 2010 timestamp
  succeeds; canary SESSION_SECRET/key/token/plaintext absent from err.Error()
 Integration tests: none — no vault SQL/HTTP; go test does not invoke Python
-Security tests: single ErrInvalidToken; constant-time HMAC; PKCS#7 fail-closed
+Security tests: ErrInvalidToken + canary SESSION_SECRET/key/token/plaintext
+ absent from err.Error() (tested). HMAC uses subtle.ConstantTimeCompare and
+ PKCS#7 fail-closed only after HMAC (implementation, not isolated tests).
 Deployment/migration impact: none. No env, config, PostgreSQL, or HTTP.
  go.mod unchanged (pgx v5.10.0, go-redis v9.22.0).
 Known limitations: Gate 2 Go-encrypt→Python not this slice; Gate 4 copied
@@ -2519,7 +2521,8 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
   go list -m github.com/jackc/pgx/v5 → v5.10.0
   go list -m github.com/redis/go-redis/v9 → v9.22.0
 Local commits: `2bd4e40` (freeze), `1268dbf` (impl), `cec6587` (docs
- record). Security pin this commit. Evidence/verifier pending. Not pushed.
+ record), `cf29328` (security pin). Evidence pin this commit. Verifier pending.
+ Not pushed.
 Keep PG-005 Partial. Keep PLAT-001 Partial. Keep PG-012 Partial.
  Keep REDIS-005 Partial. Do not mark Complete.
 ```
@@ -2540,7 +2543,26 @@ Reviewer/date: Security review (2026-08-25) on `cec6587` approve Partial;
 Keep PG-005 Partial. Gate 4 copied production ciphertext, GET masked
  metadata, POST reveal, vault SQL, and REDGRES_LEGACY_VAULT_SECRET_FILE
  remain Complete blockers, not defects of this gate.
-Evidence/verifier pending. Not pushed.
+Not pushed.
+```
+
+## PG-005 Fernet/KDF evidence pin (2026-08-25)
+
+```text
+Requirement: PG-005 Partial (in-process Fernet/KDF decrypt gate only)
+Decision/ADR: ADR-004; freeze `2bd4e40`
+Reviewer/date: Evidence review (2026-08-25) on `cec6587` keep-Partial /
+ reject-Complete. Fixture decrypt in internal/secrets is present; go.mod has
+ no fernet-go; testdata is fake canary; TRACEABILITY does not mark Complete.
+ Full PRD GET masked metadata / POST reveal / vault SQL / Gate 4 remain
+ outstanding. Reviewer did not run tests (sandbox blocked git). Parent
+ broader Go set at `cec6587` is recorded in `cf29328` (not visible to the
+ evidence reviewer, who froze `cec6587`).
+ Required corrections applied in this commit: TRACEABILITY Security tests
+ wording; matrix Planned implementation includes internal/secrets; R-001
+ retitled; SECURITY.md current-state note; local-commits include cec6587
+ and cf29328.
+Keep PG-005 Partial. Verifier pending. Not pushed.
 ```
 
 

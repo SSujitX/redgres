@@ -2,7 +2,7 @@
 
 | ID | Risk | Likelihood/impact | Mitigation | Exit evidence |
 |---|---|---|---|---|
-| R-001 | Legacy vault cannot decrypt in Go | Medium/Critical | Exact KDF/Fernet vectors, copied-record dry run, immutable secret backup | 100% sampled records decrypt read-only |
+| R-001 | Copied production Fernet records not proven decryptable in Go | Medium/Critical | In-process fixture decrypt exists in `internal/secrets` (Python `cryptography==49.0.0`); Gate 4 copied-record dry run and immutable secret backup remain | 100% sampled production records decrypt read-only |
 | R-002 | PostgreSQL destructive policy targets system/shared data | Medium/Critical | Central protected policy, re-read, confirmations, integration/fault tests | Protected matrix passes with flags enabled |
 | R-003 | Redis custom commands grant escalation or break apps | Medium/High | Explicit versioned allow-list + representative workloads | Supported Redis-series integration matrix |
 | R-004 | One owner/login increases blast radius | Medium/High | Access outer layer, Argon2id, server sessions, reauth, audit, future capabilities | Security test/review |
