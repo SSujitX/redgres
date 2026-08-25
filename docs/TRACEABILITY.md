@@ -5172,5 +5172,26 @@ Known limitations: no host preflight/packages; no Ubuntu staging;
  Playwright browsers not installed on this Windows host; remaining
  matrix cells wait for PG 17 / Redis 8.2 official patch pins; no
  production secrets/DNS/Cloudflare.
-Do not mark Complete. Not pushed.
+Do not mark Complete.
+Pushed `a4295d7` to origin/master (run 32897889759). Disposable CI:
+ installer, integration, playwright, frontend, embedded-build,
+ secret-scan, vulnerability, cross-compile passed; backend failed
+ on `go test -race` (go-redis SetLogger vs leftover pool dial).
+ Local follow-up after operator Playwright install: `npx playwright
+ test` in web/ → 6 passed (14.5s); vite preview still proxies
+ /api/v1 to 127.0.0.1:8790 (ECONNREFUSED; login page still renders).
+```
+
+## go-redis SetLogger race (2026-08-26)
+
+```text
+Requirement: NFR race CI for REDIS Open. Keep REDIS/OPS Partial.
+ Do not mark Complete.
+Decision: call redis.SetLogger once from redisadmin init, not Open.
+Evidence: GHA run 32897889759 backend failed go test -race
+ (SetLogger write vs pool.dialConn read). Local:
+ go test -race -count=10 ./internal/redisadmin → ok 11.456s.
+Implementation files: internal/redisadmin/adapter.go;
+ docs/ARCHITECTURE.md (SetLogger at init).
+Do not mark Complete.
 ```
