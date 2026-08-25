@@ -2131,9 +2131,29 @@ Reviewer/date: Security review (2026-08-25) on `f9457de` approve Partial;
  Evidence review (2026-08-25) on `f9457de` keep-Partial; nine mapped
  claims supported; no required corrections. PRD category expansion
  still out of slice.
- Verifier pending on this pin.
+ Verifier (2026-08-25) PASS Partial on master `feaba38`. Independent
+ re-runs go1.27.0 windows/amd64, Node v25.3.0 (not web/.nvmrc 24.19.0):
+  gofmt -l touched Go → empty
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 2.602s; httpapi 18.731s
+  go test -count=1 ./... → ok (re-run after npm build dist settled;
+  first ./... and vet collided with hashed embed)
+  go test -race -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 3.144s; httpapi 26.823s
+  go vet ./... → no findings (after dist settled)
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+  npm --prefix web run test:run → Tests 184 passed (184)
+  npm --prefix web run build → tsc + vite 8.2.2 (dist gitignored)
+ go.mod/go.sum unchanged vs `ed3c682`. Forbidden paths empty (18 files;
+ no siblings, secrets, .env).
+ Not executed: live Redis, §6, representative workloads, viewport/
+ Playwright, gitleaks, govulncheck, CI, Node 24.19.0, categories,
+ REDIS-008, AUTH-006.
  Local commits: `c333c00` (API), `0f947d2` (UI), `e2a494b` (merge UI),
- `f9457de` (docs record), this review pin. Not pushed.
+ `f9457de` (docs record), `feaba38` (review pin), this verifier record.
+ Not pushed.
+ Keep REDIS-005 Partial. Not pushed.
  Keep REDIS-005 Partial.
 ```
 
