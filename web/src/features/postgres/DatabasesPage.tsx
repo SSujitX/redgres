@@ -6,11 +6,13 @@ import {
   fetchPostgresDatabases,
   fetchPostgresRows,
   fetchPostgresTables,
+  revealPostgresConnection,
   type DatabaseDetails,
   type DatabaseListItem,
   type RowPage,
   type TableItem,
 } from "../../api/postgres";
+import CredentialTicket, { type ShownCredential } from "../redis/CredentialTicket";
 import { displayText } from "../../text/displayText";
 
 const maxRowQueryRunes = 128;
@@ -18,6 +20,7 @@ const sessionExpired = "Your session has expired. Sign in again to continue.";
 const postgresUnavailable = "PostgreSQL is unavailable";
 
 type ConnectionUrls = {
+  savedCredentialStatus: string;
   maskedDirectUrl: string | null;
   maskedPooledUrl: string | null;
 };
@@ -30,6 +33,41 @@ async function copyText(value: string) {
 
 function presentUrl(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function stringField(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
+}
+
+function parsePostgresCredential(raw: unknown): ShownCredential | null {
+  const record = asRecord(raw);
+  if (!record) {
+    return null;
+  }
+  const username = stringField(record, "username");
+  const password = stringField(record, "password");
+  if (username === "" || password === "") {
+    return null;
+  }
+  const urls = asRecord(record.urls);
+  const directUrl = urls ? stringField(urls, "direct") : "";
+  const pooledUrl = urls ? stringField(urls, "pooled") : "";
+  const shown: ShownCredential = { username, password };
+  if (directUrl !== "") {
+    shown.directUrl = directUrl;
+  }
+  if (pooledUrl !== "") {
+    shown.pooledUrl = pooledUrl;
+  }
+  return shown;
 }
 
 type SelectedTable = {
@@ -46,11 +84,12 @@ function queryRuneCount(value: string): number {
 }
 
 type DatabasesPageProps = {
+  csrf?: string;
   focusDatabase?: string | null;
   focusNonce?: number;
 };
 
-export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: DatabasesPageProps) {
+export default function DatabasesPage({ csrf = "", focusDatabase = null, focusNonce = 0 }: DatabasesPageProps) {
   const [items, setItems] = useState<DatabaseListItem[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [listError, setListError] = useState("");
@@ -61,6 +100,10 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
   const [connection, setConnection] = useState<ConnectionUrls | null>(null);
   const [connectionError, setConnectionError] = useState("");
   const [loadingConnection, setLoadingConnection] = useState(false);
+  const [ticket, setTicket] = useState<ShownCredential | null>(null);
+  const [revealing, setRevealing] = useState(false);
+  const [revealError, setRevealError] = useState("");
+  const revealAbort = useRef<AbortController | null>(null);
   const [tables, setTables] = useState<TableItem[] | null>(null);
   const [tablesError, setTablesError] = useState("");
   const [tablesTruncated, setTablesTruncated] = useState(false);
@@ -103,6 +146,7 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
       controller.abort();
       selectionAbort.current?.abort();
       rowsAbort.current?.abort();
+      revealAbort.current?.abort();
     };
   }, []);
 
@@ -126,9 +170,16 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
     setLoadingRows(false);
   }
 
+  function clearTicket() {
+    setTicket(null);
+    setRevealError("");
+    setRevealing(false);
+  }
+
   function openDetails(name: string) {
     selectionAbort.current?.abort();
     rowsAbort.current?.abort();
+    revealAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
     setSelected(name);
@@ -142,6 +193,7 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
     setTablesError("");
     setTablesTruncated(false);
     setLoadingTables(true);
+    clearTicket();
     clearRowState();
     void loadDetails(name, controller);
     void loadConnection(name, controller);
@@ -194,6 +246,7 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
       }
       if (result.status === 200) {
         setConnection({
+          savedCredentialStatus: result.body.saved_credential?.status ?? "",
           maskedDirectUrl: presentUrl(result.body.masked_direct_url),
           maskedPooledUrl: presentUrl(result.body.masked_pooled_url),
         });
@@ -211,6 +264,55 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
     } finally {
       if (!controller.signal.aborted) {
         setLoadingConnection(false);
+      }
+    }
+  }
+
+  async function handleReveal() {
+    if (!selected || revealing || ticket) {
+      return;
+    }
+    revealAbort.current?.abort();
+    const controller = new AbortController();
+    revealAbort.current = controller;
+    setRevealing(true);
+    setRevealError("");
+    try {
+      const result = await revealPostgresConnection(selected, csrf, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 401) {
+        setTicket(null);
+        setRevealError(sessionExpired);
+        return;
+      }
+      if (result.status === 404) {
+        setTicket(null);
+        setRevealError(errorMessage(result.body, "Not found"));
+        return;
+      }
+      if (result.status === 200) {
+        const shown = parsePostgresCredential(result.body.credential);
+        if (!shown) {
+          setRevealError(errorMessage(result.body, postgresUnavailable));
+          return;
+        }
+        setTicket(shown);
+        setRevealError("");
+        return;
+      }
+      setTicket(null);
+      setRevealError(errorMessage(result.body, postgresUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setTicket(null);
+      setRevealError(postgresUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setRevealing(false);
       }
     }
   }
@@ -341,12 +443,19 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
     }
   }
 
+  const showReveal =
+    !loadingDetails &&
+    !loadingConnection &&
+    connectionError === "" &&
+    connection?.savedCredentialStatus === "present";
+
   return (
     <article>
       <header className="page-header">
         <h1>Databases</h1>
         <p>Manageable project databases only. Passwords are not revealed.</p>
       </header>
+      {ticket ? <CredentialTicket kind="postgres" credential={ticket} onDismiss={clearTicket} /> : null}
       {listError ? (
         <p className="form-warning" role="alert">
           {listError}
@@ -408,6 +517,23 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
             </p>
           ) : null}
           {connection ? <ConnectionFacts urls={connection} /> : null}
+          {revealError ? (
+            <p className="form-warning" role="alert">
+              {revealError}
+            </p>
+          ) : null}
+          {showReveal ? (
+            <div className="form-actions">
+              <button
+                type="button"
+                className="text-button"
+                disabled={revealing || ticket !== null}
+                onClick={() => void handleReveal()}
+              >
+                Reveal
+              </button>
+            </div>
+          ) : null}
           <h3>Tables</h3>
           {loadingTables ? (
             <p className="muted-copy" role="status">

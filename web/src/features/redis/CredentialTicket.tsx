@@ -5,11 +5,14 @@ export type ShownCredential = {
   username: string;
   password: string;
   url?: string;
+  directUrl?: string;
+  pooledUrl?: string;
 };
 
 type CredentialTicketProps = {
   credential: ShownCredential;
   onDismiss: () => void;
+  kind?: "redis" | "postgres";
 };
 
 async function copyText(value: string) {
@@ -18,14 +21,19 @@ async function copyText(value: string) {
   }
 }
 
-export default function CredentialTicket({ credential, onDismiss }: CredentialTicketProps) {
+export default function CredentialTicket({ credential, onDismiss, kind = "redis" }: CredentialTicketProps) {
   const titleId = useId();
+  const postgres = kind === "postgres";
 
   return (
     <section className="credential-ticket" role="alertdialog" aria-labelledby={titleId} aria-modal="true">
-      <h2 id={titleId}>This Redis password is shown now.</h2>
+      <h2 id={titleId}>
+        {postgres ? "This PostgreSQL password is still saved." : "This Redis password is shown now."}
+      </h2>
       <p className="muted-copy">
-        This is a one-time Redis credential. Redgres cannot show the password again after you dismiss this ticket.
+        {postgres
+          ? "Redgres can show this password again from the encrypted vault. It is not a one-time Redis credential."
+          : "This is a one-time Redis credential. Redgres cannot show the password again after you dismiss this ticket."}
       </p>
       <dl className="fact-list">
         <div>
@@ -42,7 +50,28 @@ export default function CredentialTicket({ credential, onDismiss }: CredentialTi
             Copy password
           </button>
         </div>
-        {credential.url ? (
+        {postgres ? (
+          <>
+            {credential.directUrl ? (
+              <div>
+                <dt>Direct URL</dt>
+                <dd className="bidi-isolate identifier">{displayText(credential.directUrl)}</dd>
+                <button type="button" className="text-button" onClick={() => void copyText(credential.directUrl ?? "")}>
+                  Copy Direct URL
+                </button>
+              </div>
+            ) : null}
+            {credential.pooledUrl ? (
+              <div>
+                <dt>Pooled URL</dt>
+                <dd className="bidi-isolate identifier">{displayText(credential.pooledUrl)}</dd>
+                <button type="button" className="text-button" onClick={() => void copyText(credential.pooledUrl ?? "")}>
+                  Copy Pooled URL
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : credential.url ? (
           <div>
             <dt>URL</dt>
             <dd className="bidi-isolate identifier">{displayText(credential.url)}</dd>
