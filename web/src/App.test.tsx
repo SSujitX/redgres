@@ -2561,6 +2561,65 @@ describe("App session and login", () => {
     localSet.mockRestore();
   });
 
+  it("does not open Create from nav while a credential ticket is open", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-nav-ticket".padEnd(64, "0") });
+      }
+      if (isPostgresDatabasesCreate(url, init)) {
+        return postgresCreate201();
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const dialog = await openCreateDatabaseDialog();
+    fireEvent.change(within(dialog).getByLabelText("Database name"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    expect(await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." })).toBeInTheDocument();
+    const postsBeforeNav = fetch.mock.calls.filter((call) => isPostgresDatabasesCreate(String(call[0]), call[1])).length;
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Create database" }),
+    );
+    expect(screen.queryByRole("dialog", { name: "Create database" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", { name: "This PostgreSQL password is still saved." })).toBeInTheDocument();
+    expect(screen.getByText("canary-pg-create-password-32chars!!")).toBeInTheDocument();
+    expect(fetch.mock.calls.filter((call) => isPostgresDatabasesCreate(String(call[0]), call[1])).length).toBe(
+      postsBeforeNav,
+    );
+  });
+
+  it("clears the create ticket when the post-create list GET is 401", async () => {
+    let created = false;
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-list-401".padEnd(64, "0") });
+      }
+      if (isPostgresDatabasesCreate(url, init)) {
+        created = true;
+        return postgresCreate201();
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        if (created) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const dialog = await openCreateDatabaseDialog();
+    fireEvent.change(within(dialog).getByLabelText("Database name"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("dialog", { name: "Create database" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("canary-pg-create-password-32chars!!")).not.toBeInTheDocument();
+  });
+
   it("shows session-expired on create 401 and clears secrets", async () => {
     stubFetch((url, init) => {
       if (url.includes("/api/v1/session")) {

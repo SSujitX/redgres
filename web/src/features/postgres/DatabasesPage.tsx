@@ -139,6 +139,15 @@ export default function DatabasesPage({
       if (controller.signal.aborted) {
         return;
       }
+      if (result.status === 401) {
+        clearTicket();
+        setPendingSelect(null);
+        setCreateOpen(false);
+        setCreateError("");
+        setItems(null);
+        setListError(sessionExpired);
+        return;
+      }
       if (result.status === 200 && Array.isArray(result.body.databases)) {
         setItems(result.body.databases);
         setTruncated(result.body.truncated === true);
@@ -176,11 +185,11 @@ export default function DatabasesPage({
     if (createOpened.current) {
       return;
     }
-    if (items !== null && listError === "") {
+    if (items !== null && listError === "" && ticket === null) {
       setCreateOpen(true);
       createOpened.current = true;
     }
-  }, [openCreate, items, listError]);
+  }, [openCreate, items, listError, ticket]);
 
   useEffect(() => {
     if (!selectedTable) {
@@ -367,6 +376,9 @@ export default function DatabasesPage({
   }
 
   async function handleCreate(database: string, owner: string) {
+    if (ticket !== null) {
+      return;
+    }
     setCreating(true);
     setCreateError("");
     try {
