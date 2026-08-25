@@ -5262,7 +5262,9 @@ Security tests: canary env/config not printed; --config not
  `aedcc8e` (no Critical/High/Medium; Low globbing corrected
  before verifier). Independent redgres-evidence-reviewer
  Approve Partial / reject Complete on `aedcc8e` (41 pass()
- sites then; 42 after Low fix).
+ sites then; 42 after Low fix). Independent redgres-verifier
+ Approve Partial / reject Complete on `ddd0581`; this-run
+ Git Bash deploy/tests/run.sh → 42 passed, 0 failed.
 Deployment/migration impact: none deployed. Dry-run only.
 Known limitations: PATH-only; binary ≠ running cluster; no
  SHOW/INFO; no backup; no cluster identity/listeners/datadir;
@@ -5270,5 +5272,5 @@ Known limitations: PATH-only; binary ≠ running cluster; no
  PgBouncer recorded without a support allow-list.
 Do not mark Complete.
 Local commits: cherry-pick `868b3a0` of writer `a04b2e8`;
- pushed through `aedcc8e`; Low fix follows on master.
+ pushed through `ddd0581`.
 ```
