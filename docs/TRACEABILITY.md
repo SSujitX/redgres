@@ -5,7 +5,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
-| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
+| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page (no vault/rotation); PG-003–006/008–011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete); REDIS-008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
@@ -2265,6 +2265,68 @@ Reviewer/date: Security review (2026-08-25) on `9507111` approve Partial;
  (UI review pin), `2a82329` (evidence pin), this verifier record.
  Not pushed.
  Keep PG-012 Partial. Keep REDIS-005 Partial. Not pushed.
+```
+
+## PgBouncer health on GET /status (2026-08-25)
+
+```text
+Requirement: PLAT-001 Partial (PgBouncer SHOW VERSION on GET /api/v1/status +
+ Overview card; no live PgBouncer, no COMPATIBILITY.md §6, no viewport)
+Decision/ADR: ADR-001, ADR-009 (admin path stays 5432)
+Source characterization: official pgbouncer.org/usage.html console db pgbouncer
+ SHOW VERSION; admin_users or stats_users; simple query protocol only.
+ pgx v5.10.0 ConnConfig.DefaultQueryExecMode=QueryExecModeSimpleProtocol
+ (not QueryExecModeExec); do not pgxpool.Ping (-- ping rejected); Exec
+ SHOW VERSION no Scan. Sibling 1c3e8e2 runbook only (SHOW POOLS), not copied.
+Implementation files: internal/config/{config.go,postgres.go};
+ internal/postgresadmin/{types,memory,service,adapter}.go;
+ internal/platform/status.go; internal/httpapi/status_routes.go;
+ web/src/App.test.tsx
+Unit tests: config pooled-port valid/invalid/partial/production-optional;
+ postgresadmin PingPooled nil/canary/catalog-still-5432/simple-protocol/
+ ShouldPing false/SHOW VERSION SQL; platform five ids mixed ok/unavailable/
+ nil not_configured/canary omitted; httpapi default not_configured, 401 no
+ components, 405, healthz unchanged, version string absent;
+ App.test.tsx default Not configured, Reachable/Unavailable independent rails,
+ leftover not_implemented Not connected, login never /status
+Integration tests: none run (no live PgBouncer claimed)
+Security tests: canary host/password/version omitted from Collect and HTTP;
+ 401 omits components; no-store; no second password file; GET not audited
+Deployment/migration impact: production serve still boots without pooled
+ port. go.mod pgx v5.10.0 unchanged. 001_initial.sql unchanged.
+Known limitations: live PgBouncer unproven; NewWithConfig construction
+ failure still fails Open; no SHOW POOLS/CLIENTS; no /pgbouncer/status;
+ no viewport/zoom
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
+ Writer API feat/plat-001-pgbouncer-api `df8a9c2`:
+  gofmt -l touched Go → empty
+  go test -count=1 ./internal/config ./internal/postgresadmin
+   ./internal/platform ./internal/httpapi
+   → ok config 0.595s; postgresadmin 0.792s; platform 0.395s; httpapi 20.663s
+  go test -count=1 ./... → ok; go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/jackc/pgx/v5 → v5.10.0
+ Parent review of API then merge `1966cf4`:
+  gofmt -l touched Go → empty
+  go test -count=1 ./internal/config ./internal/postgresadmin
+   ./internal/platform ./internal/httpapi
+   → ok config 0.515s; postgresadmin 0.780s; platform 0.392s; httpapi 18.783s
+ Writer UI feat/plat-001-pgbouncer-ui `d37f299` (Node v25.3.0, not
+ web/.nvmrc 24.19.0):
+  npm --prefix web run test:run → Tests 201 passed (201)
+  npm --prefix web run build → tsc + vite 8.2.2 (dist gitignored)
+ Parent after UI merge `4ab1f03`:
+  go test -count=1 ./internal/config ./internal/postgresadmin
+   ./internal/platform ./internal/httpapi
+   → ok config 0.848s; postgresadmin 0.937s; platform 0.531s; httpapi 25.249s
+  npm --prefix web run test:run → Tests 201 passed (201)
+ Not run: race, live PgBouncer, COMPATIBILITY.md §6, CI, viewport/zoom
+Local commits: `87b6914` (freeze), `b554b1b` (anti-patterns), `df8a9c2`
+ (API), `1966cf4` (merge API), `d37f299` (UI), `4ab1f03` (merge UI).
+ Not pushed.
+Reviewer/date: pending security/UI/evidence/verifier
+ Keep PLAT-001 Partial. Keep PG-012 Partial. Keep REDIS-005 Partial.
+ Not pushed.
 ```
 
 
