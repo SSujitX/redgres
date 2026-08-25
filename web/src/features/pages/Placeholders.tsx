@@ -2,6 +2,7 @@ import { sectionTitle, type SectionId } from "../../nav";
 import AuditPage from "../audit/AuditPage";
 import OverviewPage from "../overview/OverviewPage";
 import DatabasesPage from "../postgres/DatabasesPage";
+import SecurityOverview from "../postgres/SecurityOverview";
 import AclUsersPage from "../redis/AclUsersPage";
 
 type PageProps = {
@@ -26,6 +27,10 @@ export function SectionPage({
 
   if (section === "postgres") {
     return <DatabasesPage focusDatabase={focusDatabase} focusNonce={focusNonce} />;
+  }
+
+  if (section === "postgres-security") {
+    return <SecurityOverview />;
   }
 
   if (section === "audit") {
