@@ -1,6 +1,6 @@
 # Configuration reference
 
-Core keys, the PostgreSQL administrative connection keys, the Redis URL-file / plaintext-override / optional public host-port keys, and the optional expert tool-link hrefs listed as implemented below are loaded by `internal/config`. Remaining Redis expected-series, feature-gate, URL-generation, and vault-secret keys remain target. Machine-checked reference generation from the config struct is still outstanding.
+Core keys, the PostgreSQL administrative connection keys, the optional legacy vault secret file, the Redis URL-file / plaintext-override / optional public host-port keys, and the optional expert tool-link hrefs listed as implemented below are loaded by `internal/config`. Remaining Redis expected-series, feature-gate, and URL-generation keys remain target. Production startup that fails when vault rows exist and the vault secret file is missing remains outstanding. Machine-checked reference generation from the config struct is still outstanding.
 
 ## Core
 
