@@ -203,9 +203,20 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		"owner":        map[string]any{"username": sess.Username},
 		"csrf_token":   raw,
 		"capabilities": defaultCapabilities,
-		"tool_links":   map[string]any{},
+		"tool_links":   s.sessionToolLinks(),
 		"request_id":   requestID(r),
 	})
+}
+
+func (s *Server) sessionToolLinks() map[string]string {
+	links := map[string]string{}
+	if s.cfg.PgAdminURL != "" {
+		links["pgadmin"] = s.cfg.PgAdminURL
+	}
+	if s.cfg.RedisInsightURL != "" {
+		links["redisinsight"] = s.cfg.RedisInsightURL
+	}
+	return links
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, raw string, expires time.Time) {

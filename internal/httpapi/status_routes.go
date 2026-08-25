@@ -16,7 +16,7 @@ type statusBody struct {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	components := platform.Collect(r.Context(), s.pingState, s.postgresPing, s.pgbouncerPing, s.redisPing)
+	components := platform.Collect(r.Context(), s.pingState, s.postgresPing, s.pgbouncerPing, s.redisPing, s.cfg.ToolLinksConfigured())
 	s.writeJSON(w, r, http.StatusOK, statusBody{Components: components, RequestID: requestID(r)})
 }
 

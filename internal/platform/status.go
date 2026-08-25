@@ -18,13 +18,17 @@ type Component struct {
 
 type PingFunc func(ctx context.Context) error
 
-func Collect(ctx context.Context, statePing, postgresPing, pgbouncerPing, redisPing PingFunc) []Component {
+func Collect(ctx context.Context, statePing, postgresPing, pgbouncerPing, redisPing PingFunc, toolLinksConfigured bool) []Component {
+	toolLinks := Component{ID: "tool_links", State: "not_configured"}
+	if toolLinksConfigured {
+		toolLinks.State = "ok"
+	}
 	return []Component{
 		pingResult(ctx, "redgres_state", statePing),
 		optionalPingResult(ctx, "postgres_direct", postgresPing),
 		optionalPingResult(ctx, "pgbouncer", pgbouncerPing),
 		optionalPingResult(ctx, "redis", redisPing),
-		{ID: "tool_links", State: "not_configured"},
+		toolLinks,
 	}
 }
 

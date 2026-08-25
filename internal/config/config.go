@@ -56,6 +56,9 @@ type Config struct {
 	RedisAllowPlaintext bool
 	RedisPublicHost     string
 	RedisPublicPort     string
+
+	PgAdminURL      string
+	RedisInsightURL string
 }
 
 func Load(args []string) (Config, error) {
@@ -118,6 +121,9 @@ func Load(args []string) (Config, error) {
 		return Config{}, err
 	}
 	if err := cfg.loadRedis(); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.loadToolLinks(); err != nil {
 		return Config{}, err
 	}
 	if err := cfg.validate(); err != nil {

@@ -85,6 +85,9 @@ func TestLoginSetsCookieFlags(t *testing.T) {
 	if _, ok := body["csrf_token"].(string); !ok {
 		t.Fatal("missing csrf_token")
 	}
+	if _, ok := body["tool_links"]; ok {
+		t.Fatal("login included tool_links")
+	}
 	found := false
 	for _, c := range rec.Result().Cookies() {
 		if c.Name != sessionCookieName {
@@ -350,5 +353,132 @@ func TestLoginInvalidUsernameIsGenericAndNotAuditedRaw(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("invalid username incremented lockout: %d", n)
+	}
+}
+
+func TestSessionToolLinksDefaultEmptyObject(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, _ := login(t, h)
+
+	var before int
+	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM audit_events`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie})
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("session cache")
+	}
+	var sess map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
+		t.Fatal(err)
+	}
+	links, ok := sess["tool_links"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool_links = %#v", sess["tool_links"])
+	}
+	if len(links) != 0 {
+		t.Fatalf("tool_links = %#v", links)
+	}
+
+	var after int
+	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM audit_events`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("GET session wrote audit: %d -> %d", before, after)
+	}
+}
+
+func TestSessionToolLinksOmitsEmptyKeys(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	srv.cfg.PgAdminURL = "https://pgadmin.example.com/browser"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, _ := login(t, h)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie})
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session %d %s", rec.Code, rec.Body.String())
+	}
+	var sess map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
+		t.Fatal(err)
+	}
+	links, _ := sess["tool_links"].(map[string]any)
+	if links["pgadmin"] != "https://pgadmin.example.com/browser" {
+		t.Fatalf("pgadmin = %#v", links["pgadmin"])
+	}
+	if _, ok := links["redisinsight"]; ok {
+		t.Fatalf("empty redisinsight present: %#v", links)
+	}
+	if links["pgadmin"] == "" || links["pgadmin"] == nil {
+		t.Fatal("pgadmin empty or null")
+	}
+}
+
+func TestSessionToolLinksBothHrefs(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	srv.cfg.PgAdminURL = "https://pgadmin.example.com"
+	srv.cfg.RedisInsightURL = "https://redis-insight.example.com"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, _ := login(t, h)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie})
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session %d %s", rec.Code, rec.Body.String())
+	}
+	var sess map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
+		t.Fatal(err)
+	}
+	links, _ := sess["tool_links"].(map[string]any)
+	if links["pgadmin"] != "https://pgadmin.example.com" {
+		t.Fatalf("pgadmin = %#v", links["pgadmin"])
+	}
+	if links["redisinsight"] != "https://redis-insight.example.com" {
+		t.Fatalf("redisinsight = %#v", links["redisinsight"])
+	}
+}
+
+func TestSessionToolLinksRedisInsightAlone(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	srv.cfg.RedisInsightURL = "https://redis-insight.example.com"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, _ := login(t, h)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie})
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session %d %s", rec.Code, rec.Body.String())
+	}
+	var sess map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
+		t.Fatal(err)
+	}
+	links, _ := sess["tool_links"].(map[string]any)
+	if links["redisinsight"] != "https://redis-insight.example.com" {
+		t.Fatalf("redisinsight = %#v", links["redisinsight"])
+	}
+	if _, ok := links["pgadmin"]; ok {
+		t.Fatalf("empty pgadmin present: %#v", links)
 	}
 }

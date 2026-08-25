@@ -304,3 +304,99 @@ func decodeStatus(t *testing.T, rec *httptest.ResponseRecorder) map[string]statu
 	}
 	return out
 }
+
+func TestStatusToolLinksOKWhenConfigured(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	srv.cfg.PgAdminURL = "https://pgadmin-canary.example.test/browser"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/status", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeStatus(t, rec)
+	if got["tool_links"].state != "ok" || got["tool_links"].reason != "" {
+		t.Fatalf("tool_links = %#v", got["tool_links"])
+	}
+	if got["tool_links"].state == "unavailable" || got["tool_links"].state == "not_implemented" {
+		t.Fatalf("tool_links forbidden state: %#v", got["tool_links"])
+	}
+	raw := rec.Body.String()
+	if strings.Contains(raw, "pgadmin-canary.example.test") || strings.Contains(raw, "https://") {
+		t.Fatalf("status included URL: %s", raw)
+	}
+}
+
+func TestStatusToolLinksOKWhenRedisInsightAlone(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	srv.cfg.RedisInsightURL = "https://redis-insight-canary.example.test"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/status", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeStatus(t, rec)
+	if got["tool_links"].state != "ok" {
+		t.Fatalf("tool_links = %#v", got["tool_links"])
+	}
+	if strings.Contains(rec.Body.String(), "redis-insight-canary.example.test") {
+		t.Fatalf("status included URL: %s", rec.Body.String())
+	}
+}
+
+func TestStatusPostgresUnavailableKeepsToolLinksOK(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{PingErr: postgresadmin.ErrUnavailable}, postgresadmin.NewPolicy(config.Config{}))
+	srv := testServerWithPostgres(t, svc)
+	srv.cfg.PgAdminURL = "https://pgadmin.example.com"
+	srv.cfg.RedisInsightURL = "https://redis-insight.example.com"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/status", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	got := decodeStatus(t, rec)
+	if got["postgres_direct"].state != "unavailable" {
+		t.Fatalf("postgres = %#v", got["postgres_direct"])
+	}
+	if got["tool_links"].state != "ok" || got["tool_links"].reason != "" {
+		t.Fatalf("tool_links = %#v", got["tool_links"])
+	}
+	raw := rec.Body.String()
+	if strings.Contains(raw, "pgadmin.example.com") || strings.Contains(raw, "redis-insight.example.com") {
+		t.Fatalf("status included URL: %s", raw)
+	}
+	if len(got) != 5 {
+		t.Fatalf("components = %#v", got)
+	}
+}
+
+func TestHealthzUnchangedDoesNotReadToolURLs(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	srv.cfg.PgAdminURL = "https://pgadmin-canary.example.test"
+	srv.cfg.RedisInsightURL = "https://redis-insight-canary.example.test"
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/healthz", nil)
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var body healthzBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Status != "ok" {
+		t.Fatalf("status = %q", body.Status)
+	}
+	raw := rec.Body.String()
+	if strings.Contains(raw, `"components"`) || strings.Contains(raw, "tool_links") || strings.Contains(raw, "pgadmin-canary.example.test") || strings.Contains(raw, "redis-insight-canary.example.test") {
+		t.Fatalf("healthz leaked tool URLs: %s", raw)
+	}
+}
