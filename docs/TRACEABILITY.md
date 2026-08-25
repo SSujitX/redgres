@@ -2426,13 +2426,22 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
  Not run: race, Playwright, viewport/zoom, live expert tools, CI, gitleaks,
  govulncheck, Node 24.19.0
 Local commits: `1a528cd` (freeze), `33087b6` (API), `fb0c6ce` (UI),
- `28faa83` (merge UI), `bf47017` (docs record), this UI review pin.
- Not pushed.
-Reviewer/date: UI review (2026-08-25) on `bf47017`/`fb0c6ce`/`28faa83`
- approve Partial UI; no Critical/High. Optional Low (non-blocking): shared
- `--focus` outline is button/input only, so the new `.text-button` anchors
- use the UA outline. Explicitly NOT viewport/zoom sign-off. Security review
- pending.
+ `28faa83` (merge UI), `bf47017` (docs record), `46fdf6c` (UI review pin),
+ this security pin. Not pushed.
+Reviewer/date: Security review (2026-08-25) on `bf47017`/`33087b6`/`28faa83`
+ approve Partial; no Critical/High/Medium. GET /session session-gated hrefs;
+ GET /status session + platform.read; no CSRF/audit; no-store; 401 omits
+ components; Load/status never fetch operator URLs; javascript/data/file/
+ userinfo/fragment/relative rejected without echoing URL; login has no
+ tool_links; status JSON has no host/URL; UI post-login GET /session CSRF;
+ Overview does not refetch /session; no iframe; no localStorage.
+ Optional questions (non-blocking): login no-tool_links test without
+ PgAdminURL set; 401 status without canary URLs; client parseToolLinks does
+ not re-check http(s).
+ UI review (2026-08-25) on `bf47017`/`fb0c6ce`/`28faa83` approve Partial UI;
+ no Critical/High. Optional Low (non-blocking): shared `--focus` outline is
+ button/input only, so the new `.text-button` anchors use the UA outline.
+ Explicitly NOT viewport/zoom sign-off.
 Keep PLAT-001 Partial. Keep PG-012 Partial. Keep REDIS-005 Partial.
  Do not mark Complete.
 ```
