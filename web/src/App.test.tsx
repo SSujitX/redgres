@@ -385,6 +385,19 @@ function overviewOkStatus() {
   });
 }
 
+function toolLinksOkStatus() {
+  return jsonResponse(200, {
+    components: [
+      { id: "redgres_state", state: "ok" },
+      { id: "postgres_direct", state: "not_configured" },
+      { id: "pgbouncer", state: "not_configured" },
+      { id: "redis", state: "not_configured" },
+      { id: "tool_links", state: "ok" },
+    ],
+    request_id: "toollinksok0000000000000000000000",
+  });
+}
+
 function disconnectedSearch() {
   return jsonResponse(200, {
     groups: [
@@ -532,6 +545,8 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.every((call) => !isStatusUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isRedisStatusUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isSearchUrl(String(call[0])))).toBe(true);
+    expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
   });
 
   it("shows the shell when the session is valid", async () => {
@@ -596,11 +611,19 @@ describe("App session and login", () => {
   });
 
   it("enters the shell after login and does not persist secrets", async () => {
+    let authed = false;
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
-        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "b".repeat(64) });
       }
-      return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "b".repeat(64) });
+      if (url.includes("/api/v1/auth/login")) {
+        authed = true;
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "login-b".padEnd(64, "0") });
+      }
+      return unknownApi(url);
     });
     render(<App />);
     fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "admin" } });
@@ -2936,8 +2959,12 @@ describe("App session and login", () => {
     render(<App />);
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !isStatusUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/healthz"))).toBe(true);
     expect(screen.queryByLabelText("PgBouncer: Not configured")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("PgBouncer: Not connected")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Tool links: Not configured")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
   });
 
   it("does not persist Overview status in localStorage or sessionStorage", async () => {
@@ -3004,6 +3031,8 @@ describe("App session and login", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
     expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
   });
 
   it("shows a generic Overview alert when status fetch throws", async () => {
@@ -3127,6 +3156,203 @@ describe("App session and login", () => {
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(screen.queryByLabelText("PostgreSQL direct: Unavailable")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+  });
+
+  it("paints no tool link anchors when session omits tool_links and status is not_configured", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "tools-missing".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Tool links: Not configured")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
+  });
+
+  it("paints no tool link anchors when session tool_links is empty", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, {
+          owner: { username: "admin" },
+          csrf_token: "tools-empty".padEnd(64, "0"),
+          tool_links: {},
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Tool links: Not configured")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
+  });
+
+  it("renders a pgAdmin anchor when only that href is configured", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, {
+          owner: { username: "admin" },
+          csrf_token: "tools-one".padEnd(64, "0"),
+          tool_links: { pgadmin: "https://pgadmin.example.com" },
+        });
+      }
+      if (isStatusUrl(url)) {
+        return toolLinksOkStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const card = await screen.findByLabelText("Tool links: Reachable");
+    const link = within(card).getByRole("link", { name: "pgAdmin" });
+    expect(link).toHaveAttribute("href", "https://pgadmin.example.com");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(within(card).queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
+  });
+
+  it("renders pgAdmin and RedisInsight anchors with opener isolation when both hrefs are configured", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, {
+          owner: { username: "admin" },
+          csrf_token: "tools-both".padEnd(64, "0"),
+          tool_links: {
+            pgadmin: "https://pgadmin.example.com",
+            redisinsight: "https://redis-insight.example.com",
+          },
+        });
+      }
+      if (isStatusUrl(url)) {
+        return toolLinksOkStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const card = await screen.findByLabelText("Tool links: Reachable");
+    const pgAdmin = within(card).getByRole("link", { name: "pgAdmin" });
+    const redisInsight = within(card).getByRole("link", { name: "RedisInsight" });
+    expect(pgAdmin).toHaveAttribute("href", "https://pgadmin.example.com");
+    expect(pgAdmin).toHaveAttribute("target", "_blank");
+    expect(pgAdmin).toHaveAttribute("rel", "noopener noreferrer");
+    expect(redisInsight).toHaveAttribute("href", "https://redis-insight.example.com");
+    expect(redisInsight).toHaveAttribute("target", "_blank");
+    expect(redisInsight).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("does not persist tool link hrefs in localStorage or sessionStorage", async () => {
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, {
+          owner: { username: "admin" },
+          csrf_token: "tools-storage".padEnd(64, "0"),
+          tool_links: {
+            pgadmin: "https://pgadmin.example.com",
+            redisinsight: "https://redis-insight.example.com",
+          },
+        });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (isStatusUrl(url)) {
+        return toolLinksOkStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("link", { name: "pgAdmin" })).toBeInTheDocument();
+    expect(localSet).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
+    expect(localSet).not.toHaveBeenCalled();
+    localSet.mockRestore();
+  });
+
+  it("does not refetch /session when Overview Refresh is used", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, {
+          owner: { username: "admin" },
+          csrf_token: "tools-refresh".padEnd(64, "0"),
+          tool_links: { pgadmin: "https://pgadmin.example.com" },
+        });
+      }
+      if (isStatusUrl(url)) {
+        return toolLinksOkStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("link", { name: "pgAdmin" })).toBeInTheDocument();
+    const sessionCallsBefore = fetch.mock.calls.filter((call) => String(call[0]).includes("/api/v1/session")).length;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.filter((call) => isStatusUrl(String(call[0]))).length).toBeGreaterThanOrEqual(2);
+    });
+    expect(screen.getByRole("link", { name: "pgAdmin" })).toBeInTheDocument();
+    const sessionCallsAfter = fetch.mock.calls.filter((call) => String(call[0]).includes("/api/v1/session")).length;
+    expect(sessionCallsAfter).toBe(sessionCallsBefore);
+  });
+
+  it("GETs /session after login and uses that CSRF plus tool links before the shell", async () => {
+    const loginCsrf = "login-csrf-token".padEnd(64, "L");
+    const sessionCsrf = "session-csrf-token".padEnd(64, "S");
+    let authed = false;
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, {
+          owner: { username: "admin" },
+          csrf_token: sessionCsrf,
+          tool_links: {
+            pgadmin: "https://pgadmin.example.com",
+            redisinsight: "https://redis-insight.example.com",
+          },
+        });
+      }
+      if (url.includes("/api/v1/auth/login")) {
+        authed = true;
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: loginCsrf });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe(sessionCsrf);
+        return jsonResponse(200, { ok: true });
+      }
+      if (isStatusUrl(url)) {
+        return toolLinksOkStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isStatusUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/healthz"))).toBe(true);
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("link", { name: "pgAdmin" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "RedisInsight" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "admin" })).toBeInTheDocument();
+    const urls = fetch.mock.calls.map((call) => String(call[0]));
+    const loginIndex = urls.findIndex((url) => url.includes("/api/v1/auth/login"));
+    const sessionAfterLogin = urls.findIndex(
+      (url, index) => index > loginIndex && url.includes("/api/v1/session"),
+    );
+    const statusIndex = urls.findIndex((url) => isStatusUrl(url));
+    expect(loginIndex).toBeGreaterThanOrEqual(0);
+    expect(sessionAfterLogin).toBeGreaterThan(loginIndex);
+    expect(statusIndex).toBeGreaterThan(sessionAfterLogin);
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
   });
 
   it("treats an unknown Overview state as Unavailable", async () => {
@@ -4597,11 +4823,16 @@ describe("App session and login", () => {
   });
 
   it("never POSTs /api/v1/redis/users from the login route", async () => {
+    let authed = false;
     const fetch = stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
-        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-session".padEnd(64, "0") });
       }
       if (url.includes("/api/v1/auth/login")) {
+        authed = true;
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login".padEnd(64, "0") });
       }
       return unknownApi(url);
@@ -5036,11 +5267,16 @@ describe("App session and login", () => {
   });
 
   it("never POSTs enable or disable from the login route", async () => {
+    let authed = false;
     const fetch = stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
-        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-toggle-session".padEnd(64, "0") });
       }
       if (url.includes("/api/v1/auth/login")) {
+        authed = true;
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-toggle".padEnd(64, "0") });
       }
       return unknownApi(url);
@@ -5499,11 +5735,16 @@ describe("App session and login", () => {
   });
 
   it("never POSTs rotate from the login route", async () => {
+    let authed = false;
     const fetch = stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
-        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-rotate-session".padEnd(64, "0") });
       }
       if (url.includes("/api/v1/auth/login")) {
+        authed = true;
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-rotate".padEnd(64, "0") });
       }
       return unknownApi(url);
@@ -6132,11 +6373,16 @@ describe("App session and login", () => {
   });
 
   it("never PATCHes Redis ACL users from the login route", async () => {
+    let authed = false;
     const fetch = stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
-        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-patch-session".padEnd(64, "0") });
       }
       if (url.includes("/api/v1/auth/login")) {
+        authed = true;
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-patch".padEnd(64, "0") });
       }
       return unknownApi(url);

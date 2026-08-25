@@ -1,12 +1,24 @@
 import { useEffect, useState } from "react";
-import { errorMessage, fetchSession, logout } from "./api/auth";
+import { errorMessage, fetchSession, logout, parseToolLinks, type ToolLinks } from "./api/auth";
 import AppShell from "./components/shell/AppShell";
 import LoginPage from "./features/auth/LoginPage";
 
 type View =
   | { kind: "loading" }
   | { kind: "login" }
-  | { kind: "shell"; username: string; csrf: string };
+  | { kind: "shell"; username: string; csrf: string; toolLinks: ToolLinks };
+
+function shellFromSession(body: { owner?: { username?: string }; csrf_token?: string; tool_links?: unknown }): View | null {
+  if (!body.owner?.username || !body.csrf_token) {
+    return null;
+  }
+  return {
+    kind: "shell",
+    username: body.owner.username,
+    csrf: body.csrf_token,
+    toolLinks: parseToolLinks(body.tool_links),
+  };
+}
 
 export default function App() {
   const [view, setView] = useState<View>({ kind: "loading" });
@@ -20,13 +32,12 @@ export default function App() {
         if (controller.signal.aborted) {
           return;
         }
-        if (result.status === 200 && result.body.owner?.username && result.body.csrf_token) {
-          setView({
-            kind: "shell",
-            username: result.body.owner.username,
-            csrf: result.body.csrf_token,
-          });
-          return;
+        if (result.status === 200) {
+          const next = shellFromSession(result.body);
+          if (next) {
+            setView(next);
+            return;
+          }
         }
         setView({ kind: "login" });
       })
@@ -71,9 +82,23 @@ export default function App() {
   if (view.kind === "login") {
     return (
       <LoginPage
-        onSuccess={(username, csrf) => {
+        onSuccess={() => {
           setSessionError("");
-          setView({ kind: "shell", username, csrf });
+          setView({ kind: "loading" });
+          void fetchSession()
+            .then((result) => {
+              if (result.status === 200) {
+                const next = shellFromSession(result.body);
+                if (next) {
+                  setView(next);
+                  return;
+                }
+              }
+              setView({ kind: "login" });
+            })
+            .catch(() => {
+              setView({ kind: "login" });
+            });
         }}
       />
     );
@@ -89,6 +114,7 @@ export default function App() {
       <AppShell
         username={view.username}
         csrf={view.csrf}
+        toolLinks={view.toolLinks}
         onLogout={() => void handleLogout()}
         loggingOut={loggingOut}
       />

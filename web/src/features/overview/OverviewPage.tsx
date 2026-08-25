@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchRedisStatus, type RedisStatusMetrics, type RedisStatusPayload } from "../../api/redis";
 import { errorMessage, fetchStatus, type StatusComponent } from "../../api/status";
+import type { ToolLinks } from "../../api/auth";
 import { displayText } from "../../text/displayText";
 
 type CardSpec = {
@@ -158,6 +159,28 @@ function indexById(components: StatusComponent[]): Map<string, StatusComponent> 
   return out;
 }
 
+function ToolLinkAnchors({ links }: { links: ToolLinks }) {
+  const pgadmin = links.pgadmin;
+  const redisinsight = links.redisinsight;
+  if (!pgadmin && !redisinsight) {
+    return null;
+  }
+  return (
+    <div>
+      {pgadmin ? (
+        <a className="text-button" href={pgadmin} target="_blank" rel="noopener noreferrer">
+          pgAdmin
+        </a>
+      ) : null}
+      {redisinsight ? (
+        <a className="text-button" href={redisinsight} target="_blank" rel="noopener noreferrer">
+          RedisInsight
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 function RedisMetrics({
   headlineTone,
   detail,
@@ -212,7 +235,7 @@ function RedisMetrics({
   );
 }
 
-export default function OverviewPage() {
+export default function OverviewPage({ toolLinks = {} }: { toolLinks?: ToolLinks }) {
   const [components, setComponents] = useState<StatusComponent[] | null>(null);
   const [redisDetail, setRedisDetail] = useState<RedisDetail>({ kind: "none" });
   const [error, setError] = useState("");
@@ -337,6 +360,7 @@ export default function OverviewPage() {
                   {text}
                 </p>
                 {card.id === "redis" ? <RedisMetrics headlineTone={tone} detail={redisDetail} /> : null}
+                {card.id === "tool_links" ? <ToolLinkAnchors links={toolLinks} /> : null}
               </li>
             );
           })}
