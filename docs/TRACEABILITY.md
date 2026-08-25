@@ -2989,4 +2989,42 @@ Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  Verifier pending. Not pushed.
 ```
 
+## PG-012 rotation eligibility verifier PASS Partial (2026-08-25)
+
+```text
+Requirement: PG-012 Partial (rotation_eligible on GET /api/v1/postgres/security
+ databases[] + Security overview last column; no POST rotate/reveal/create)
+Decision/ADR: ADR-004 (vault decrypt still unused); freeze `674bd5c`
+Verifier/date: independent verifier (2026-08-25) on HEAD
+ `8ed12b1bc5da42f462e527ff62367f5b352152b2`. Tracked tree clean.
+ PASS Partial. Do not mark Complete.
+Freeze: formula holds; always JSON boolean (no omitempty); no can_rotate;
+ no new catalog SQL; POST rotate unregistered (chi 404; no dedicated HTTP
+ 404 test — residual Low); UI last column Yes/No/—; header still
+ “Rotation is not available.”; 401 omits databases; 405 other methods;
+ vault unavailable still emits booleans; 401/503 UI unchanged.
+Commands executed (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/postgresadmin ./internal/httpapi
+ → ok postgresadmin 1.201s; httpapi 31.349s
+ go test -count=1 ./... → all ok (httpapi 31.056s; cmd/redgres 5.049s;
+ postgresadmin 1.728s; web 0.731s; migrations no tests)
+ go test -race -count=1 ./internal/postgresadmin → ok 2.327s
+ go vet ./... → no findings
+ go build -o NUL ./cmd/redgres → success (retry after npm build;
+ first attempt raced hashed embed rewrite)
+ go list -m github.com/jackc/pgx/v5 → v5.10.0
+ go list -m github.com/redis/go-redis/v9 → v9.22.0
+ npm --prefix web run test:run → Tests 224 passed (224), 44.84s
+ npm --prefix web run build → success (ignored internal/web/dist/app/)
+Unexecuted: live PostgreSQL 17/18, Playwright viewports, Gate 4 copied
+ production ciphertext, POST rotate/reveal, CI, Node 24.19.0,
+ go test -race ./..., REDGRES_LEGACY_VAULT_SECRET_FILE.
+No secret artifacts in 674bd5c..HEAD. Prior UI `53c0d1b`, security
+ `c27700e`, evidence `8ed12b1` pins stand.
+Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
+ Not pushed.
+```
+
 
