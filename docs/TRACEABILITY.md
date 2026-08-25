@@ -3191,4 +3191,47 @@ Keep REDIS-008 Partial. Keep AUTH-006 Partial. Keep PG-012 Partial.
  Verifier pending. Not pushed.
 ```
 
+## REDIS-008 ACL delete verifier PASS Partial (2026-08-25)
+
+```text
+Requirement: REDIS-008 Partial + AUTH-006 Partial (DELETE /api/v1/redis/users/{username}
+ in-handler reauth + inspector Delete; no POST /api/v1/auth/reauth)
+Decision/ADR: AUTH-006 in-handler LookupOwnerByUsername + Verify; freeze `372fbfa`
+Verifier/date: independent verifier (2026-08-25) on HEAD
+ `c945811befd6805bc2f7c8d1aef4d8a9b77ee685`. Tracked tree clean.
+ PASS Partial. Do not mark Complete.
+Freeze: check order holds; redis.destructive + CSRF; exact confirmation
+ (400 no Redis no audit); reauth_required username-only audit (never
+ reason: reauth; AUTH-005 unchanged; no 429); protected never DELUSER;
+ 200 {request_id} only; audit-fail after DELUSER is 503 fail-closed;
+ collection DELETE 405; no POST /api/v1/auth/reauth; go-redis v9.22.0.
+ UI: Delete for non-protected when list ok; hidden for protected/loading/
+ unavailable/not_configured; .danger-button --danger not --redis; dialog
+ Delete Redis user; 200 clears secrets/selection; reauth_required stays
+ and clears password only; search/login never DELETE.
+Commands executed (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/auth ./internal/redisadmin ./internal/httpapi
+ → ok auth 15.015s; redisadmin 5.409s; httpapi 137.982s
+ go test -count=1 ./... → all ok (httpapi 120.770s; auth 14.208s;
+ redisadmin 5.611s; cmd/redgres 7.341s; migrations no tests)
+ go test -race -count=1 ./internal/auth → ok 11.313s
+ go vet ./... → no findings
+ go build -o NUL ./cmd/redgres → success
+ go list -m github.com/redis/go-redis/v9 → v9.22.0
+ npm --prefix web run test:run → Tests 242 passed (242), 65.16s
+ (first vitest run timed out under parallel Go load; rerun alone passed)
+Unexecuted: live Redis 8.2/8.8, COMPATIBILITY.md §6, Playwright viewports,
+ dedicated reauth throttle, PostgreSQL drop/truncate/row-delete,
+ POST /api/v1/auth/reauth, CI, Node 24.19.0, gitleaks, govulncheck,
+ go test -race ./...
+No secret artifacts in 372fbfa..HEAD. Prior UI `062fb4c`, security
+ `bae3c8f`, evidence `c945811` pins stand (this verifier ran on evidence
+ HEAD).
+Keep REDIS-008 Partial. Keep AUTH-006 Partial. Keep PG-012 Partial.
+ Keep PG-004 Partial. Keep PG-005 Partial.
+ Not pushed.
+```
+
 
