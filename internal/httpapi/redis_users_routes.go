@@ -63,6 +63,12 @@ type redisCreateRequest struct {
 	QueueKind  string `json:"queue_kind"`
 }
 
+type redisPatchRequest struct {
+	KeyPattern string `json:"key_pattern"`
+	Preset     string `json:"preset"`
+	QueueKind  string `json:"queue_kind"`
+}
+
 type redisPresetsBody struct {
 	Presets   []redisadmin.NamedPreset `json:"presets"`
 	RequestID string                   `json:"request_id"`
@@ -207,6 +213,49 @@ func (s *Server) handleRedisUsersCreate(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (s *Server) handleRedisUserPatch(w http.ResponseWriter, r *http.Request) {
+	username, err := parseRedisUsernameParam(chi.URLParam(r, "username"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid username")
+		return
+	}
+	var body redisPatchRequest
+	if err := decodeJSON(r, &body); err != nil {
+		s.writeDecodeError(w, r, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), redisUsersTimeout)
+	defer cancel()
+	sess := sessionFrom(r)
+	meta := redisUpdateAuditMeta(username, body.KeyPattern, body.Preset, body.QueueKind)
+	if s.redis == nil {
+		_ = s.audit.Record(sess.Username, "redis.user.update", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
+		return
+	}
+	user, err := s.redis.UpdatePermissions(ctx, username, body.KeyPattern, body.Preset, body.QueueKind)
+	if err != nil {
+		_ = s.audit.Record(sess.Username, "redis.user.update", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeRedisUpdateError(w, r, err)
+		return
+	}
+	meta["username"] = user.Username
+	meta["preset"] = user.Preset
+	meta["key_pattern"] = user.KeyPattern
+	delete(meta, "queue_kind")
+	if user.Preset == redisadmin.PresetQueueWorker {
+		meta["queue_kind"] = user.QueueKind
+	}
+	if err := s.audit.Record(sess.Username, "redis.user.update", user.Username, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, redisUserEnableResponse{
+		User:      toRedisUserDetail(user),
+		RequestID: requestID(r),
+	})
+}
+
 func (s *Server) handleRedisUserRotate(w http.ResponseWriter, r *http.Request) {
 	username, err := parseRedisUsernameParam(chi.URLParam(r, "username"))
 	if err != nil {
@@ -308,6 +357,45 @@ func (s *Server) writeRedisEnableError(w http.ResponseWriter, r *http.Request, e
 	default:
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
 	}
+}
+
+func (s *Server) writeRedisUpdateError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, redisadmin.ErrInvalidPrefix):
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid key pattern", map[string]string{"key_pattern": "invalid"})
+	case errors.Is(err, redisadmin.ErrInvalidPreset):
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid preset", map[string]string{"preset": "invalid"})
+	case errors.Is(err, redisadmin.ErrInvalidQueueKind):
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, "Invalid queue kind", map[string]string{"queue_kind": "invalid"})
+	case errors.Is(err, redisadmin.ErrProtectedUser):
+		s.writeError(w, r, http.StatusForbidden, CodeProtectedResource, "This Redis user is protected")
+	case errors.Is(err, redisadmin.ErrNotFound):
+		s.writeError(w, r, http.StatusNotFound, CodeNotFound, "Not found")
+	case errors.Is(err, redisadmin.ErrInvalidUsername):
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid username")
+	default:
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
+	}
+}
+
+func redisUpdateAuditMeta(username, keyPattern, preset, queueKind string) map[string]any {
+	meta := map[string]any{"username": username}
+	if keyPattern != "" {
+		meta["key_pattern"] = keyPattern
+	}
+	switch preset {
+	case redisadmin.PresetCacheReadWrite, redisadmin.PresetReadOnly:
+		if queueKind == "" {
+			meta["preset"] = preset
+		}
+	case redisadmin.PresetQueueWorker:
+		meta["preset"] = preset
+		switch queueKind {
+		case redisadmin.QueueLists, redisadmin.QueueStreams, redisadmin.QueueSortedSets:
+			meta["queue_kind"] = queueKind
+		}
+	}
+	return meta
 }
 
 func (s *Server) writeRedisCreateError(w http.ResponseWriter, r *http.Request, err error) {

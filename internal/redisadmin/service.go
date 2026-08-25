@@ -197,6 +197,43 @@ func (s *Service) GetUser(ctx context.Context, username string) (User, error) {
 	return User{}, ErrNotFound
 }
 
+func (s *Service) UpdatePermissions(ctx context.Context, username, keyPattern, preset, queueKind string) (User, error) {
+	adminUser := ""
+	if s != nil {
+		adminUser = s.adminUser
+	}
+	if IsProtectedUsername(username, adminUser) {
+		return User{}, ErrProtectedUser
+	}
+	if _, err := s.GetUser(ctx, username); err != nil {
+		return User{}, err
+	}
+	pattern, err := NormalizePrefix(keyPattern)
+	if err != nil {
+		return User{}, err
+	}
+	if preset == "" {
+		return User{}, ErrInvalidPreset
+	}
+	_, commands, err := resolveNamedPreset(preset, queueKind)
+	if err != nil {
+		return User{}, err
+	}
+	rules := buildUpdateACLRules(pattern, commands)
+	if err := s.client.ACLSetUser(ctx, username, rules...); err != nil {
+		return User{}, classifyRedisError(err)
+	}
+	return s.GetUser(ctx, username)
+}
+
+func buildUpdateACLRules(keyPattern string, commands []string) []string {
+	rules := []string{"resetkeys", "~" + keyPattern, "resetchannels", "nocommands", "-@all"}
+	for _, cmd := range commands {
+		rules = append(rules, "+"+strings.ToUpper(cmd))
+	}
+	return rules
+}
+
 func (s *Service) SetEnabled(ctx context.Context, username string, enabled bool) (User, error) {
 	adminUser := ""
 	if s != nil {

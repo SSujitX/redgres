@@ -330,7 +330,6 @@ func TestRedisUsersRejectsMutatingMethods(t *testing.T) {
 		{http.MethodDelete, "/api/v1/redis/users"},
 		{http.MethodPost, "/api/v1/redis/users/project_a"},
 		{http.MethodPut, "/api/v1/redis/users/project_a"},
-		{http.MethodPatch, "/api/v1/redis/users/project_a"},
 		{http.MethodDelete, "/api/v1/redis/users/project_a"},
 	}
 	for _, tc := range cases {
@@ -1828,5 +1827,536 @@ func assertAuditRotateSafe(t *testing.T, srv *Server, outcome, password string) 
 	}
 	if strings.Contains(metadata, `"preset"`) || strings.Contains(metadata, `"key_pattern"`) || strings.Contains(metadata, `"state"`) {
 		t.Fatalf("audit metadata has extra keys: %s", metadata)
+	}
+}
+
+const redisPatchBody = `{"key_pattern":"project_b","preset":"read-only"}`
+const redisPatchPath = "/api/v1/redis/users/project_a"
+
+func TestRedisUserPatchRequiresSession(t *testing.T) {
+	srv := testServerWithRedis(t, redisadmin.NewService(&redisadmin.MemoryClient{
+		ACLLines: []string{enableUserACLLine},
+	}))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, redisPatchPath, strings.NewReader(redisPatchBody)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"state", "users", "user", "reason", "credential"} {
+		if _, ok := raw[key]; ok {
+			t.Fatalf("401 leaked %s: %s", key, rec.Body.Bytes())
+		}
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeUnauthorized {
+		t.Fatalf("code = %q", body.Error.Code)
+	}
+}
+
+func TestRedisUserPatchRequiresCSRF(t *testing.T) {
+	srv := testServerWithRedis(t, redisadmin.NewService(&redisadmin.MemoryClient{
+		ACLLines: []string{enableUserACLLine},
+	}))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, _ := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPatch, redisPatchPath, cookie, "", redisPatchBody))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeCSRFInvalid {
+		t.Fatalf("code = %q", body.Error.Code)
+	}
+}
+
+func TestRedisUserPatch200NoStore(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	before := countAuditEvents(t, srv)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPatch, redisPatchPath, cookie, csrf, redisPatchBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q", rec.Header().Get("Cache-Control"))
+	}
+	assertPatchSuccessBody(t, rec, "project_b:*", "read-only", "")
+	assertNoRedisUsersCanary(t, rec.Body.String())
+	if len(mem.ACLSetUserCalls) != 1 {
+		t.Fatalf("ACLSetUser calls = %d", len(mem.ACLSetUserCalls))
+	}
+	if after := countAuditEvents(t, srv); after != before+1 {
+		t.Fatalf("audit events changed from %d to %d", before, after)
+	}
+	assertAuditUpdateSafe(t, srv, "success", "project_a", "read-only", "project_b:*", "")
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPatch, redisPatchPath, cookie, csrf, redisPatchBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("idempotent status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	assertPatchSuccessBody(t, rec, "project_b:*", "read-only", "")
+	if len(mem.ACLSetUserCalls) != 2 {
+		t.Fatalf("idempotent SETUSER calls = %d", len(mem.ACLSetUserCalls))
+	}
+
+	getBefore := countAuditEvents(t, srv)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, redisPatchPath, cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET after patch status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := raw["user"].(map[string]any)
+	if raw["state"] != "ok" || user["preset"] != "read-only" || user["key_pattern"] != "project_b:*" {
+		t.Fatalf("GET after patch = %s", rec.Body.Bytes())
+	}
+	if after := countAuditEvents(t, srv); after != getBefore {
+		t.Fatalf("GET wrote audit: %d -> %d", getBefore, after)
+	}
+}
+
+func TestRedisUserPatchNamedPresets(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		preset    string
+		queueKind string
+	}{
+		{name: "cache-read-write", body: `{"key_pattern":"user_crw","preset":"cache-read-write"}`, preset: "cache-read-write"},
+		{name: "read-only", body: `{"key_pattern":"user_ro","preset":"read-only"}`, preset: "read-only"},
+		{name: "queue-lists", body: `{"key_pattern":"user_ql","preset":"queue-worker","queue_kind":"lists"}`, preset: "queue-worker", queueKind: "lists"},
+		{name: "queue-streams", body: `{"key_pattern":"user_qs","preset":"queue-worker","queue_kind":"streams"}`, preset: "queue-worker", queueKind: "streams"},
+		{name: "queue-sorted-sets", body: `{"key_pattern":"user_qz","preset":"queue-worker","queue_kind":"sorted-sets"}`, preset: "queue-worker", queueKind: "sorted-sets"},
+	}
+	catalog := redisadmin.NamedPresets()
+	wantCmds := map[string][]string{}
+	for _, p := range catalog {
+		key := p.Preset
+		if p.QueueKind != "" {
+			key += ":" + p.QueueKind
+		}
+		wantCmds[key] = p.Commands
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+			srv := testServerWithRedis(t, redisadmin.NewService(mem))
+			seedOwner(t, srv)
+			h := srv.Handler()
+			cookie, csrf := login(t, h)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, authed(http.MethodPatch, redisPatchPath, cookie, csrf, tc.body))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+			}
+			assertPatchSuccessBody(t, rec, "", tc.preset, tc.queueKind)
+			if len(mem.ACLSetUserCalls) != 1 {
+				t.Fatalf("ACLSetUser calls = %d", len(mem.ACLSetUserCalls))
+			}
+			key := tc.preset
+			if tc.queueKind != "" {
+				key += ":" + tc.queueKind
+			}
+			gotCmds := httpGrantedCommands(mem.ACLSetUserCalls[0].Rules)
+			if !stringSlicesEqual(gotCmds, wantCmds[key]) {
+				t.Fatalf("SETUSER grants = %#v want %#v", gotCmds, wantCmds[key])
+			}
+			assertAuditUpdateSafe(t, srv, "success", "project_a", tc.preset, "", tc.queueKind)
+		})
+	}
+}
+
+func TestRedisUserPatchUnknownFieldsAndValidation(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	before := countAuditEvents(t, srv)
+	cases := []struct {
+		name  string
+		path  string
+		body  string
+		field string
+	}{
+		{name: "unknown_preset", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"not-a-preset"}`, field: "preset"},
+		{name: "custom_preset", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"custom"}`, field: "preset"},
+		{name: "empty_preset", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":""}`, field: "preset"},
+		{name: "omitted_preset", path: redisPatchPath, body: `{"key_pattern":"project_a"}`, field: "preset"},
+		{name: "unknown_password", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"read-only","password":"canary-secret"}`},
+		{name: "unknown_commands", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"read-only","commands":["get"]}`},
+		{name: "unknown_categories", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"read-only","categories":["@string"]}`},
+		{name: "unknown_enabled", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"read-only","enabled":true}`},
+		{name: "unknown_username", path: redisPatchPath, body: `{"username":"other","key_pattern":"project_a","preset":"read-only"}`},
+		{name: "queue_kind_without_queue_preset", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"read-only","queue_kind":"lists"}`, field: "queue_kind"},
+		{name: "queue_worker_missing_kind", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"queue-worker"}`, field: "queue_kind"},
+		{name: "queue_worker_bad_kind", path: redisPatchPath, body: `{"key_pattern":"project_a","preset":"queue-worker","queue_kind":"jobs"}`, field: "queue_kind"},
+		{name: "invalid_json", path: redisPatchPath, body: `{`},
+		{name: "key_pattern", path: redisPatchPath, body: `{"key_pattern":"*","preset":"read-only"}`, field: "key_pattern"},
+		{name: "bad_username_path", path: "/api/v1/redis/users/bad.name", body: redisPatchBody},
+		{name: "long_username_path", path: "/api/v1/redis/users/" + strings.Repeat("a", 65), body: redisPatchBody},
+		{name: "space_username_path", path: "/api/v1/redis/users/%20", body: redisPatchBody},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, authed(http.MethodPatch, tc.path, cookie, csrf, tc.body))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+			}
+			var body errorBody
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Error.Code != CodeValidationError {
+				t.Fatalf("code = %q", body.Error.Code)
+			}
+			if tc.field != "" && body.Error.Fields[tc.field] == "" {
+				t.Fatalf("missing fields.%s: %#v", tc.field, body.Error.Fields)
+			}
+			if strings.Contains(rec.Body.String(), "canary-secret") || strings.Contains(rec.Body.String(), "bad.name") || strings.Contains(rec.Body.String(), strings.Repeat("a", 65)) || strings.Contains(rec.Body.String(), "%20") || strings.Contains(rec.Body.String(), "not-a-preset") || strings.Contains(rec.Body.String(), "jobs") {
+				t.Fatalf("400 echoed illegal value: %s", rec.Body.Bytes())
+			}
+		})
+	}
+	if len(mem.ACLSetUserCalls) != 0 {
+		t.Fatalf("SETUSER on validation reject: %#v", mem.ACLSetUserCalls)
+	}
+	if after := countAuditEvents(t, srv); after != before+8 {
+		// path validation and unknown-field/decode errors must not audit; service field errors do.
+		t.Fatalf("audit events = %d -> %d", before, after)
+	}
+}
+
+func TestRedisUserPatchProtectedNotFoundUnavailable(t *testing.T) {
+	t.Run("protected", func(t *testing.T) {
+		mem := &redisadmin.MemoryClient{ACLLines: []string{
+			"user default on nopass ~* &* +@all",
+			"user admin on ~* -@all +ping",
+			"user ops_admin on ~* -@all +ping",
+		}}
+		srv := testServerWithRedis(t, redisadmin.NewServiceAdmin(mem, "ops_admin"))
+		seedOwner(t, srv)
+		h := srv.Handler()
+		cookie, csrf := login(t, h)
+		for _, name := range []string{"admin", "ops_admin"} {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, authed(http.MethodPatch, "/api/v1/redis/users/"+name, cookie, csrf, redisPatchBody))
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("%s status = %d body = %s", name, rec.Code, rec.Body.Bytes())
+			}
+			var body errorBody
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Error.Code != CodeProtectedResource {
+				t.Fatalf("%s code = %q", name, body.Error.Code)
+			}
+			assertAuditUpdateSafe(t, srv, "failure", name, "read-only", "", "")
+		}
+		if len(mem.ACLSetUserCalls) != 0 {
+			t.Fatalf("SETUSER on protected: %#v", mem.ACLSetUserCalls)
+		}
+	})
+	t.Run("not_found", func(t *testing.T) {
+		mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+		srv := testServerWithRedis(t, redisadmin.NewService(mem))
+		seedOwner(t, srv)
+		h := srv.Handler()
+		cookie, csrf := login(t, h)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodPatch, "/api/v1/redis/users/missing", cookie, csrf, redisPatchBody))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+		}
+		var body errorBody
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error.Code != CodeNotFound || body.Error.Message != "Not found" {
+			t.Fatalf("error = %#v", body.Error)
+		}
+		if strings.Contains(rec.Body.String(), `"user"`) && strings.Contains(rec.Body.String(), `"enabled"`) {
+			t.Fatalf("404 looked like a user payload: %s", rec.Body.Bytes())
+		}
+		if len(mem.ACLSetUserCalls) != 0 {
+			t.Fatalf("SETUSER on missing: %#v", mem.ACLSetUserCalls)
+		}
+		assertAuditUpdateSafe(t, srv, "failure", "missing", "read-only", "", "")
+	})
+	t.Run("nil_adapter", func(t *testing.T) {
+		srv, _ := testServer(t, nil)
+		seedOwner(t, srv)
+		h := srv.Handler()
+		cookie, csrf := login(t, h)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodPatch, redisPatchPath, cookie, csrf, redisPatchBody))
+		assertPatchUnavailable(t, rec)
+		assertAuditUpdateSafe(t, srv, "failure", "project_a", "read-only", "", "")
+	})
+	t.Run("unconfigured", func(t *testing.T) {
+		srv := testServerWithRedis(t, redisadmin.NewService(nil))
+		seedOwner(t, srv)
+		h := srv.Handler()
+		cookie, csrf := login(t, h)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodPatch, redisPatchPath, cookie, csrf, redisPatchBody))
+		assertPatchUnavailable(t, rec)
+		assertAuditUpdateSafe(t, srv, "failure", "project_a", "read-only", "", "")
+	})
+	t.Run("redis_fail", func(t *testing.T) {
+		srv := testServerWithRedis(t, redisadmin.NewService(&redisadmin.MemoryClient{
+			ACLListErr: errors.New("dial tcp 10.0.0.1:6379 canary-secret"),
+		}))
+		seedOwner(t, srv)
+		h := srv.Handler()
+		cookie, csrf := login(t, h)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodPatch, redisPatchPath, cookie, csrf, redisPatchBody))
+		assertPatchUnavailable(t, rec)
+		assertNoRedisUsersCanary(t, rec.Body.String())
+		if strings.Contains(rec.Body.String(), "10.0.0.1") {
+			t.Fatalf("503 leaked host: %s", rec.Body.Bytes())
+		}
+		assertAuditUpdateSafe(t, srv, "failure", "project_a", "read-only", "", "")
+	})
+	t.Run("setuser_modifier", func(t *testing.T) {
+		mem := &redisadmin.MemoryClient{
+			ACLLines:      []string{enableUserACLLine},
+			ACLSetUserErr: errors.New("ERR Error in ACL SETUSER modifier '>canary-secret': Syntax error"),
+		}
+		srv := testServerWithRedis(t, redisadmin.NewService(mem))
+		seedOwner(t, srv)
+		h := srv.Handler()
+		cookie, csrf := login(t, h)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodPatch, redisPatchPath, cookie, csrf, redisPatchBody))
+		assertPatchUnavailable(t, rec)
+		assertNoRedisUsersCanary(t, rec.Body.String())
+		if strings.Contains(rec.Body.String(), "SETUSER") || strings.Contains(rec.Body.String(), "Syntax error") {
+			t.Fatalf("503 echoed Redis SETUSER text: %s", rec.Body.Bytes())
+		}
+		assertAuditUpdateSafe(t, srv, "failure", "project_a", "read-only", "", "")
+	})
+}
+
+func TestRedisUserPatchAuditFailClosed(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	dead, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "dead-audit-patch.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = dead.Close() })
+	_ = dead.Close()
+	srv.audit = audit.Store{DB: dead}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPatch, redisPatchPath, cookie, csrf, redisPatchBody))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["user"]; ok {
+		t.Fatalf("audit failure returned user: %s", rec.Body.Bytes())
+	}
+	if _, ok := raw["credential"]; ok {
+		t.Fatalf("audit failure returned credential: %s", rec.Body.Bytes())
+	}
+	if strings.Contains(rec.Body.String(), `"password"`) {
+		t.Fatalf("audit failure returned password: %s", rec.Body.Bytes())
+	}
+	if len(mem.ACLSetUserCalls) != 1 {
+		t.Fatalf("expected SETUSER before audit fail, calls = %d", len(mem.ACLSetUserCalls))
+	}
+}
+
+func TestRedisUserPatchCollectionStill405(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPatch, "/api/v1/redis/users", cookie, csrf, redisPatchBody))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeMethodNotAllowed {
+		t.Fatalf("code = %q", body.Error.Code)
+	}
+}
+
+func TestRedisUserPatchDoesNotBreakSiblingRoutes(t *testing.T) {
+	mem := &redisadmin.MemoryClient{ACLLines: []string{enableUserACLLine}}
+	srv := testServerWithRedis(t, redisadmin.NewService(mem))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/redis/presets", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("presets status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/redis/users/project_a", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET detail status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/redis/users/project_a/disable", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/redis/users", cookie, csrf, `{"username":"other_user","key_pattern":"other_user"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/redis/users/project_a/credentials/rotate", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+}
+
+func assertPatchSuccessBody(t *testing.T, rec *httptest.ResponseRecorder, keyPattern, preset, queueKind string) {
+	t.Helper()
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"state", "reason", "credential", "password"} {
+		if _, ok := raw[key]; ok {
+			t.Fatalf("success leaked %s: %s", key, rec.Body.Bytes())
+		}
+	}
+	user, ok := raw["user"].(map[string]any)
+	if !ok {
+		t.Fatalf("user missing: %s", rec.Body.Bytes())
+	}
+	if user["username"] != "project_a" || user["enabled"] != true || user["protected"] != false {
+		t.Fatalf("user = %#v", user)
+	}
+	if keyPattern != "" && user["key_pattern"] != keyPattern {
+		t.Fatalf("key_pattern = %#v want %q", user["key_pattern"], keyPattern)
+	}
+	if user["preset"] != preset || user["rule_fidelity"] != "exact" {
+		t.Fatalf("labels = %#v", user)
+	}
+	if queueKind == "" {
+		if _, ok := user["queue_kind"]; ok {
+			t.Fatalf("queue_kind present: %#v", user)
+		}
+	} else if user["queue_kind"] != queueKind {
+		t.Fatalf("queue_kind = %#v", user["queue_kind"])
+	}
+	cmds, ok := user["commands"].([]any)
+	if !ok || len(cmds) == 0 {
+		t.Fatalf("commands = %#v", user["commands"])
+	}
+	cats, ok := user["categories"].([]any)
+	if !ok || cats == nil || len(cats) != 0 {
+		t.Fatalf("categories = %#v", user["categories"])
+	}
+	id, _ := raw["request_id"].(string)
+	if !requestIDOK(id) {
+		t.Fatalf("request_id = %q", id)
+	}
+}
+
+func assertPatchUnavailable(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["reason"]; ok {
+		t.Fatalf("503 leaked reason: %s", rec.Body.Bytes())
+	}
+	if _, ok := raw["credential"]; ok {
+		t.Fatalf("503 leaked credential: %s", rec.Body.Bytes())
+	}
+	if _, ok := raw["user"]; ok {
+		t.Fatalf("503 leaked user: %s", rec.Body.Bytes())
+	}
+	if strings.Contains(rec.Body.String(), `"password"`) {
+		t.Fatalf("503 leaked password: %s", rec.Body.Bytes())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeDependencyUnavailable {
+		t.Fatalf("code = %q", body.Error.Code)
+	}
+}
+
+func assertAuditUpdateSafe(t *testing.T, srv *Server, outcome, username, preset, keyPattern, queueKind string) {
+	t.Helper()
+	var metadata, gotAction, gotOutcome, target string
+	if err := srv.db.QueryRow(`SELECT action, target, outcome, metadata FROM audit_events WHERE action = 'redis.user.update' ORDER BY id DESC LIMIT 1`).Scan(&gotAction, &target, &gotOutcome, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if gotAction != "redis.user.update" || gotOutcome != outcome {
+		t.Fatalf("audit action/outcome = %s/%s want redis.user.update/%s", gotAction, gotOutcome, outcome)
+	}
+	if target != username {
+		t.Fatalf("audit target = %q want %q", target, username)
+	}
+	if strings.Contains(metadata, "canary-secret") || strings.Contains(metadata, ">") || strings.Contains(metadata, "csrf") || strings.Contains(metadata, "password") {
+		t.Fatalf("audit leaked secret: %s", metadata)
+	}
+	if !strings.Contains(metadata, `"username":"`+username+`"`) {
+		t.Fatalf("audit metadata = %s target = %s", metadata, username)
+	}
+	if preset != "" && !strings.Contains(metadata, `"preset":"`+preset+`"`) {
+		t.Fatalf("audit missing preset: %s", metadata)
+	}
+	if keyPattern != "" && !strings.Contains(metadata, `"key_pattern":"`+keyPattern+`"`) {
+		t.Fatalf("audit missing key_pattern: %s", metadata)
+	}
+	if queueKind == "" {
+		if strings.Contains(metadata, `"queue_kind"`) {
+			t.Fatalf("audit has queue_kind: %s", metadata)
+		}
+	} else if !strings.Contains(metadata, `"queue_kind":"`+queueKind+`"`) {
+		t.Fatalf("audit missing queue_kind: %s", metadata)
 	}
 }

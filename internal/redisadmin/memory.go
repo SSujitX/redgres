@@ -65,6 +65,9 @@ func (m *MemoryClient) ACLSetUser(_ context.Context, username string, rules ...s
 	if mergePasswordReset(m.ACLLines, username, copied) {
 		return nil
 	}
+	if mergePermissionsUpdate(m.ACLLines, username, copied) {
+		return nil
+	}
 	line := "user " + username
 	if len(copied) > 0 {
 		line += " " + strings.Join(copied, " ")
@@ -136,4 +139,73 @@ func mergePasswordReset(lines []string, username string, rules []string) bool {
 		return true
 	}
 	return false
+}
+
+func mergePermissionsUpdate(lines []string, username string, rules []string) bool {
+	pattern, cmds, ok := permissionsUpdateGrants(rules)
+	if !ok {
+		return false
+	}
+	for i, existing := range lines {
+		fields := strings.Fields(existing)
+		if len(fields) < 2 || fields[0] != "user" || fields[1] != username {
+			continue
+		}
+		kept := make([]string, 0, 4+len(cmds))
+		kept = append(kept, fields[0], fields[1])
+		onOff := ""
+		passwords := make([]string, 0)
+		for _, f := range fields[2:] {
+			switch {
+			case f == "on" || f == "off":
+				if onOff == "" {
+					onOff = f
+				}
+			case f == "nopass" || strings.HasPrefix(f, "#") || strings.HasPrefix(f, ">") || strings.HasPrefix(f, "!"):
+				passwords = append(passwords, f)
+			}
+		}
+		if onOff != "" {
+			kept = append(kept, onOff)
+		}
+		kept = append(kept, passwords...)
+		kept = append(kept, pattern, "-@all")
+		kept = append(kept, cmds...)
+		lines[i] = strings.Join(kept, " ")
+		return true
+	}
+	return false
+}
+
+func permissionsUpdateGrants(rules []string) (string, []string, bool) {
+	if len(rules) < 5 || rules[0] != "resetkeys" {
+		return "", nil, false
+	}
+	pattern := ""
+	cmds := make([]string, 0)
+	hasResetChannels := false
+	hasNoCommands := false
+	hasMinusAll := false
+	for _, rule := range rules {
+		switch {
+		case rule == "reset" || rule == "resetpass" || rule == "on" || rule == "off":
+			return "", nil, false
+		case strings.HasPrefix(rule, ">") && rule != ">":
+			return "", nil, false
+		case strings.HasPrefix(rule, "~"):
+			pattern = rule
+		case rule == "resetchannels":
+			hasResetChannels = true
+		case rule == "nocommands":
+			hasNoCommands = true
+		case rule == "-@all":
+			hasMinusAll = true
+		case strings.HasPrefix(rule, "+") && !strings.HasPrefix(rule, "+@"):
+			cmds = append(cmds, rule)
+		}
+	}
+	if pattern == "" || !hasResetChannels || !hasNoCommands || !hasMinusAll {
+		return "", nil, false
+	}
+	return pattern, cmds, true
 }
