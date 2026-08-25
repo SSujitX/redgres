@@ -32,7 +32,7 @@ func TestMigrateCreatesControlStateSchema(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	required := []string{"schema_migrations", "owners", "sessions", "login_attempts", "audit_events"}
+	required := []string{"schema_migrations", "owners", "sessions", "login_attempts", "audit_events", "operations", "operation_locks"}
 	for _, name := range required {
 		var found string
 		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&found)
@@ -46,6 +46,9 @@ func TestMigrateCreatesControlStateSchema(t *testing.T) {
 		"login_attempts_lookup_idx",
 		"audit_events_created_at_idx",
 		"audit_events_request_id_idx",
+		"operations_status_idx",
+		"operations_created_at_idx",
+		"operation_locks_operation_id_idx",
 	}
 	for _, name := range indexes {
 		var found string
@@ -58,7 +61,7 @@ func TestMigrateCreatesControlStateSchema(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 1 {
+	if version != 2 {
 		t.Fatalf("schema_migrations count = %d", version)
 	}
 }

@@ -26,6 +26,8 @@ The complete glossary is [docs/GLOSSARY.md](docs/GLOSSARY.md). Product decisions
 - `redisadmin`: Redis health and ACL user lifecycle through explicit safe commands.
 - `platform`: aggregate health, release/runtime status, operation coordination, and expert-tool links.
 - `database`: Redgres SQLite control-state persistence only.
+- `operations`: durable non-secret long-operation records and resource locks (ADR-010).
+- `backup`: filesystem backup-manifest parse and DROP-gate evaluation (ADR-011). No live dump in this package.
 - `httpapi`: versioned transport, middleware, error mapping, and embedded frontend delivery.
 
 Do not use “user” without qualifying owner, PostgreSQL role, or Redis ACL user. Do not call RedisInsight the Redis admin console; `redis-admin` means ACL administration and `redis-insight` means data exploration.

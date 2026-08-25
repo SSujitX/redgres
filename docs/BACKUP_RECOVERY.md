@@ -81,3 +81,17 @@ The exact AOF procedure must be validated against the deployed Redis version bec
 ## 8. Required restore evidence
 
 Each drill records date, backup manifest, isolated target, commands/tool versions, duration, checksums, database counts, Redis key/ACL checks, vault fixture reveal, Redgres login/audit check, failures, and approver. A backup status UI must display last successful **backup** and last successful **restore test** separately.
+
+## 9. DROP gate catalog (schema v1)
+
+Live dump, off-host copy, restore, and `deploy/backup.sh` are installer-recovery. This section freezes the filesystem manifest types used by `backup.EvaluateDropGate` ([ADR-011](decisions/ADR-011-drop-backup-gate.md)). There is no SQLite backup table and no `REDGRES_BACKUP_CATALOG` until backend-integration.
+
+Required identity: `schema_version` = 1; `backup_set_id` 32 lowercase hex; `completed_at` RFC3339Nano; `cluster.system_identifier` decimal string (caller later supplies the live value from official `pg_control_system()`; this package does not query PostgreSQL).
+
+Required PostgreSQL artifact for DROP of database `D`: `kind=postgres.database`, `name=D`, `sha256` 64 lowercase hex, `size_bytes` ≥ 0, `path` relative and jail-local via `internal/securefile`.
+
+Off-host: `off_host.completed=true` and `copied_at` ≥ `completed_at` for this set. Off-host age is not a second 24h window. No transport credentials on the manifest.
+
+Restore evidence: `restore.isolated=true`, `restore.outcome=succeeded`, `restore.backup_set_id` equal, `restore.completed_at` ≤30d.
+
+`completed_at` must be ≤24h at evaluation time. Fail closed on missing fields, extra JSON, traversal (`..`, absolute, NUL, `?`, `#`, `%`), or identity mismatch. Truncate and row-delete stay ungated. Optional empty `redgres.version` / `redgres.compatibility_policy_revision` do not fail DROP evaluation. Redis/SQLite artifacts are optional for this predicate. Artifact bytes need not exist for Evaluate in this slice.

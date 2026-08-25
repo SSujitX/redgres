@@ -117,7 +117,7 @@ For drop/truncate/row delete/Redis user delete:
 4. Protected-resource policy passes.
 5. Exact target typed confirmation passes.
 6. Fresh owner-password reauthentication passes (or a short-lived server-side reauth grant in a future ADR). Redis ACL delete, PostgreSQL row delete, PostgreSQL truncate, and PostgreSQL drop implement this as an in-handler password check on the mutation body, not a reauth endpoint.
-7. Optional backup freshness requirement passes for database-level destruction (DROP DATABASE). Truncate is a table-set mutation and does **not** use this HTTP gate. PG-011 Partial **does not** implement this HTTP gate (**BF-1**): there is no backup catalog or freshness window; UI disclosure is not authorization; sibling client checkbox is forbidden as the sole guard. OPS-004 remains the Complete blocker.
+7. Optional backup freshness requirement passes for database-level destruction (DROP DATABASE). Truncate is a table-set mutation and does **not** use this HTTP gate. ADR-011 freezes filesystem manifest schema v1 and a pure `EvaluateDropGate` (`internal/backup`): target-matched PostgreSQL artifact, `completed_at` ≤24h, off-host `completed` for this set with `copied_at` ≥ `completed_at`, isolated restore of this `backup_set_id` with `outcome=succeeded` and `completed_at` ≤30d. PG-011 Partial **does not** call that evaluator from HTTP (**BF-1**): there is no `REDGRES_BACKUP_CATALOG`; UI disclosure is not authorization; sibling client checkbox is forbidden as the sole guard. Live dump/copy/restore is installer-recovery. OPS-004 remains the Complete blocker.
 8. Mutation executes with timeouts/target lock.
 9. Success/failure and safe metadata are audited.
 10. Response reports actual effect and any partial failure.
@@ -135,7 +135,7 @@ Never make browser confirmation the sole guard.
 - `style-src 'self'` (no `unsafe-inline`) blocks React `style={{…}}` attributes. Use stylesheets/classes, or propose a reviewed CSP change.
 - No wildcard CORS. Same-origin deployment normally needs no CORS middleware.
 - Request bodies, timeouts, headers, and concurrent long operations are bounded.
-- JSON request bodies must contain exactly one value; unknown fields and trailing JSON values are rejected.
+- JSON request bodies that are decoded as JSON reject unknown fields and trailing JSON values. Empty-body and ignore-body routes stay as already frozen (PG-005 reveal; REDIS-007 rotate).
 - Every API response is `Cache-Control: no-store`. Credential-bearing route success and error paths additionally use `max-age=0` and `Pragma: no-cache`.
 - Health endpoint reveals no versions, hostnames, secrets, or internal errors to unauthenticated callers.
 

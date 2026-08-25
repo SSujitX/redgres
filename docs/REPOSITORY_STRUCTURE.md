@@ -23,8 +23,13 @@ Redgres/
 │   │   ├── database.go
 │   │   └── migrations.go
 │   ├── operations/
-│   │   ├── service.go
-│   │   └── locks.go
+│   │   ├── types.go
+│   │   ├── store.go
+│   │   └── reconcile.go
+│   ├── backup/
+│   │   ├── types.go
+│   │   ├── parse.go
+│   │   └── evaluate.go
 │   ├── postgresadmin/
 │   │   ├── adapter.go
 │   │   ├── databases.go
@@ -60,6 +65,7 @@ Redgres/
 │   │   ├── redis_routes.go
 │   │   ├── audit_routes.go
 │   │   ├── search_routes.go
+│   │   ├── operations_routes.go
 │   │   └── system_routes.go
 │   └── web/
 │       ├── embed.go

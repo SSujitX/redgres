@@ -27,7 +27,7 @@ Use hand-rolled, embedded, ordered `.sql` files. Do not add a third-party migrat
 - `SetMaxOpenConns(1)` serializes writers, so `SQLITE_BUSY` transaction-upgrade deadlocks are structurally excluded.
 - Until the first tagged release, `001_initial.sql` may still be edited; developers must delete the local development database after such an edit. After the first tag, only new numbered files.
 
-`operations` remains a later numbered file; its columns depend on the long-operation state machine.
+`migrations/002_operations.sql` adds `operations` and `operation_locks`. Columns, statuses, locks, retention, and GET are frozen in [ADR-010](ADR-010-durable-operations.md). Backup catalogs are filesystem manifests, not a later SQLite file ([ADR-011](ADR-011-drop-backup-gate.md)).
 
 ## Hash encoding (2026-08-23 amendment)
 

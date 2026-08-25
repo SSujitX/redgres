@@ -82,7 +82,7 @@ There is no `REDGRES_FEATURE_POSTGRES_ROTATE`. Rotate is not a destructive flag.
 There is no `REDGRES_FEATURE_POSTGRES_DUPLICATE`. Duplicate is not a destructive flag.
 There is no `ENABLE_DESTRUCTIVE_ACTIONS` and no `REDGRES_FEATURE_POSTGRES_DELETE`.
 
-Enabling a flag makes the server-side workflow reachable; it never bypasses capabilities, protected targets, CSRF, confirmation, reauthentication, or audit. Flag-off DELETE rows is `403` `forbidden` with copy **Row delete is turned off.** before JSON decode. Flag-off POST truncate is `403` `forbidden` with copy **Truncate is turned off.** before JSON decode. Flag-off DELETE database is `403` `forbidden` with copy **Drop is turned off.** before JSON decode. `GET /api/v1/session` does not gain a `features` object in this slice. Backup freshness is **not** an HTTP gate on PG-011 Partial (**BF-1**); there is no backup catalog env var this slice.
+Enabling a flag makes the server-side workflow reachable; it never bypasses capabilities, protected targets, CSRF, confirmation, reauthentication, or audit. Flag-off DELETE rows is `403` `forbidden` with copy **Row delete is turned off.** before JSON decode. Flag-off POST truncate is `403` `forbidden` with copy **Truncate is turned off.** before JSON decode. Flag-off DELETE database is `403` `forbidden` with copy **Drop is turned off.** before JSON decode. `GET /api/v1/session` does not gain a `features` object in this slice. Backup freshness is **not** an HTTP gate on PG-011 Partial (**BF-1**). ADR-011 catalog types exist; there is **no** `REDGRES_BACKUP_CATALOG` env var this slice. Do not add a backup-catalog key until backend-integration wires `EvaluateDropGate`.
 
 ## Owner bootstrap CLI
 

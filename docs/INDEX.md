@@ -58,6 +58,8 @@ For day-to-day Cursor commands, start at [../CURSOR_CODING.md](../CURSOR_CODING.
 - [ADR-007: Staged migration with legacy fallback](decisions/ADR-007-staged-migration.md)
 - [ADR-008: Tested service-version matrix and operator selection](decisions/ADR-008-service-version-policy.md)
 - [ADR-009: PostgreSQL adoption, extension enablement, and PgBouncer lifecycle](decisions/ADR-009-postgres-adoption-and-extensions.md)
+- [ADR-010: Durable operations ledger](decisions/ADR-010-durable-operations.md)
+- [ADR-011: DROP backup-gate catalog types](decisions/ADR-011-drop-backup-gate.md)
 
 ## Status labels
 

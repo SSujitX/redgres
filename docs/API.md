@@ -43,7 +43,7 @@ Core error codes: `unauthorized`, `forbidden`, `csrf_invalid`, `rate_limited`, `
 | GET | `/api/v1/status` | Authenticated component status |
 | GET | `/api/v1/search?q=&limit=` | Authenticated bounded search over manageable resource metadata/navigation; no secrets or destructive execution |
 | GET | `/api/v1/audit?cursor=&limit=` | Paginated redacted audit history (implemented) |
-| GET | `/api/v1/operations/{id}` | Long-operation state/result summary |
+| GET | `/api/v1/operations/{id}` | Long-operation state/result summary (`platform.read`; ADR-010; no CSRF) |
 
 Session cookie name: `redgres_session` (opaque 64-hex token, `Path=/`, `HttpOnly`, `SameSite=Strict`, `Secure` from `REDGRES_COOKIE_SECURE`). Mutations send `X-CSRF-Token`. There is no HTTP bootstrap route.
 
@@ -116,6 +116,37 @@ Independent checks, sequential. Ping probes use a 2s timeout; `tool_links` is co
 | `tool_links` | Not a probe. Both optional URLs empty/unset → `not_configured`. One or both set → `ok`. Never `unavailable` (no fetch/ping). Never `not_implemented`. Independent of `postgres_direct` / `pgbouncer` / `redis`. Status JSON never includes the URLs; hrefs are GET `/session` only. |
 
 This GET is not a mutation and does not write an audit event.
+
+**GET `/api/v1/operations/{id}` (ADR-010 freeze).** Session cookie and `platform.read`. No CSRF. Do not invent `operations.read`. Collection GET does not exist. Cancel does not exist. `POST`, `PUT`, `PATCH`, and `DELETE` on this path are `405` `method_not_allowed`. `{id}` is 32 lowercase hex (same construction as `request_id`). Invalid id → `400` `validation_error`. Missing row → `404` `not_found`. SQLite down → `503` `dependency_unavailable`. Missing session → `401` `unauthorized`. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access. Response is `Cache-Control: no-store`. This GET is not a mutation and does not write an audit event.
+
+This freeze commits the HTTP contract and SQLite schema. The route is registered in the same durable-foundations slice after `operations.Store` exists. Unauthenticated GET must not exist.
+
+Success `200`:
+
+```json
+{
+  "operation": {
+    "id": "<32 hex>",
+    "action": "postgres.database.duplicate",
+    "status": "queued|running|compensating|interrupted|indeterminate|succeeded|failed|canceled",
+    "phase": "accepted|cloning|transferring_ownership|vaulting|compensating",
+    "actor": "admin",
+    "target": "project_a_copy",
+    "accepted_request_id": "<32 hex>",
+    "result": { "database": "project_a_copy", "owner": "app_project_a_copy", "source": "project_a" },
+    "error": { "code": "dependency_unavailable", "message": "Safe operator-facing message", "fields": {} },
+    "created_at": "<RFC3339Nano>",
+    "updated_at": "<RFC3339Nano>",
+    "started_at": null,
+    "finished_at": null
+  },
+  "request_id": "<this GET's id>"
+}
+```
+
+Omit `result` unless `status` is `succeeded`. Omit `error` unless `status` is `failed` or `indeterminate`. Omit `phase` when unknown. Duplicate `result` keys are exactly `database`, `owner`, `source` (same as audit). Forbidden in SQLite and JSON: password, credential URL, ciphertext, session/CSRF/tunnel tokens, private keys, raw `err.Error()`, SQL with values.
+
+**Target 202 (backend-integration, not this freeze):** after enqueue, `POST /api/v1/postgres/databases/{db}/duplicate` returns always `202` `{ "operation": { "id": "<32 hex>", "status": "queued" }, "request_id": "..." }` with no credential. Never wait for TEMPLATE. After `succeeded`, the operator uses existing Reveal. Current implemented duplicate remains **201 in-request**.
 
 **GET `/api/v1/search`** requires a session cookie and the `platform.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
 
@@ -255,7 +286,7 @@ Success `200`:
 r.With(s.requireSession, s.requireCapability("postgres.destructive"), s.requireMutation).Delete("/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows", s.handlePostgresRowsDelete)
 ```
 
-POST/PUT/PATCH on `/rows` stay `405` `method_not_allowed`. GET `/rows` is unchanged (`postgres.read`, no CSRF). There is no `POST /api/v1/auth/reauth` and no short-lived reauth grant (that needs a future ADR). Handler timeout is **30s**. No in-process TryLock. No `202`. No `migrations/002_operations.sql`. Responses are `Cache-Control: no-store`. Feature flag is **`REDGRES_FEATURE_POSTGRES_ROW_DELETE`** only (default unset = off). There is no `ENABLE_DESTRUCTIVE_ACTIONS` and no `REDGRES_FEATURE_POSTGRES_DELETE`. This Partial is in-request **200**. Do not bump pgx (`v5.10.0`).
+POST/PUT/PATCH on `/rows` stay `405` `method_not_allowed`. GET `/rows` is unchanged (`postgres.read`, no CSRF). There is no `POST /api/v1/auth/reauth` and no short-lived reauth grant (that needs a future ADR). Handler timeout is **30s**. No in-process TryLock. No `202`. `migrations/002_operations.sql` exists; this DELETE does not write it. Responses are `Cache-Control: no-store`. Feature flag is **`REDGRES_FEATURE_POSTGRES_ROW_DELETE`** only (default unset = off). There is no `ENABLE_DESTRUCTIVE_ACTIONS` and no `REDGRES_FEATURE_POSTGRES_DELETE`. This Partial is in-request **200**. Do not bump pgx (`v5.10.0`).
 
 `DisallowUnknownFields` applies. Unknown fields (including `primary_key_column`, `password`, `confirmation`, `database_confirmation`) → `400` `validation_error` (`Unknown field`), no audit, no PostgreSQL.
 
@@ -305,7 +336,7 @@ PG-008 stays Partial. AUTH-006 stays Partial: Redis `DELETE /api/v1/redis/users/
 r.With(s.requireSession, s.requireCapability("postgres.destructive"), s.requireMutation).Post("/api/v1/postgres/databases/{db}/truncate", s.handlePostgresDatabaseTruncate)
 ```
 
-Other methods on `/truncate` are `405` `method_not_allowed`. Path `{db}` uses existing `decodePathIdentifier`. Invalid name → `400` `validation_error`, no catalog. There is no `POST /api/v1/auth/reauth` and no short-lived reauth grant. Handler timeout is **30s**. In-process TryLock on the **database name** only (request-scoped memory; do not share rotate/duplicate lock maps). Serialize with PG-011 drop: if the drop map holds the same name, `409` **A drop is already in progress.** Lock fail on the truncate map → `409` `operation_in_progress`, copy **A truncate is already in progress.** No `202`. No `migrations/002_operations.sql`. Responses are `Cache-Control: no-store`. Feature flag is **`REDGRES_FEATURE_POSTGRES_TRUNCATE`** only (default unset = off), parsed with `envBool` (same rules as row delete). There is no `ENABLE_DESTRUCTIVE_ACTIONS`. This Partial is in-request **200**. Do not bump pgx (`v5.10.0`). Official PostgreSQL 17/18 `TRUNCATE`: [17](https://www.postgresql.org/docs/17/sql-truncate.html), [18](https://www.postgresql.org/docs/18/sql-truncate.html). Backup freshness is **not** an HTTP gate (table-set mutation, not DROP DATABASE). `docs/OPERATIONS.md` remains the operator runbook. Gate 4 does not apply.
+Other methods on `/truncate` are `405` `method_not_allowed`. Path `{db}` uses existing `decodePathIdentifier`. Invalid name → `400` `validation_error`, no catalog. There is no `POST /api/v1/auth/reauth` and no short-lived reauth grant. Handler timeout is **30s**. In-process TryLock on the **database name** only (request-scoped memory; do not share rotate/duplicate lock maps). Serialize with PG-011 drop: if the drop map holds the same name, `409` **A drop is already in progress.** Lock fail on the truncate map → `409` `operation_in_progress`, copy **A truncate is already in progress.** No `202`. `migrations/002_operations.sql` exists; this POST does not write it. Responses are `Cache-Control: no-store`. Feature flag is **`REDGRES_FEATURE_POSTGRES_TRUNCATE`** only (default unset = off), parsed with `envBool` (same rules as row delete). There is no `ENABLE_DESTRUCTIVE_ACTIONS`. This Partial is in-request **200**. Do not bump pgx (`v5.10.0`). Official PostgreSQL 17/18 `TRUNCATE`: [17](https://www.postgresql.org/docs/17/sql-truncate.html), [18](https://www.postgresql.org/docs/18/sql-truncate.html). Backup freshness is **not** an HTTP gate (table-set mutation, not DROP DATABASE). `docs/OPERATIONS.md` remains the operator runbook. Gate 4 does not apply.
 
 Body **only**:
 
@@ -384,7 +415,7 @@ r.With(s.requireSession, s.requireCapability("postgres.destructive"), s.requireM
 r.With(s.requireSession, s.requireCapability("postgres.read")).Get("/api/v1/postgres/databases/{db}", s.handlePostgresDatabase)
 ```
 
-`POST /api/v1/postgres/databases/{db}` (no suffix) stays `405`. Collection DELETE stays `405`. Do **not** add `POST …/{db}/drop`. PUT/PATCH on item `{db}` stay `405`. Other methods on `/truncate` unchanged. Path `{db}` uses existing `decodePathIdentifier`. Invalid name → `400` `validation_error`, no catalog. There is no `POST /api/v1/auth/reauth` and no short-lived reauth grant. Handler timeout is **30s**. In-process TryLock on the **database name** only (new map; do not share rotate/duplicate maps). Serialize with truncate: if the truncate map holds the same name, `409` **A truncate is already in progress.** Drop-map lock fail → `409` `operation_in_progress`, copy **A drop is already in progress.** No `202`. No `migrations/002_operations.sql`. Responses are `Cache-Control: no-store`. Feature flag is **`REDGRES_FEATURE_POSTGRES_DROP`** only (default unset = off), parsed with `envBool` (same rules as row delete / truncate). There is no `ENABLE_DESTRUCTIVE_ACTIONS`. This Partial is in-request **200**. Do not bump pgx (`v5.10.0`). Official PostgreSQL 17/18 `DROP DATABASE` is the same command, including `WITH (FORCE)` and “cannot be executed inside a transaction block” ([17](https://www.postgresql.org/docs/17/sql-dropdatabase.html), [18](https://www.postgresql.org/docs/18/sql-dropdatabase.html)). **Do not use `WITH (FORCE)`.** Backup freshness is **not** an HTTP gate on this Partial (**BF-1**): there is no backup catalog or OPS-004 check; the real §6.7 gate remains Complete. UI **discloses** recovery needs a valid external backup; it does **not** authorize drop. No `backup_confirmed` body field. No checkbox-as-authorization. `GET /api/v1/session` still has no `features` object. Gate 4 does not apply (vault DELETE is existence-row only; no decrypt).
+`POST /api/v1/postgres/databases/{db}` (no suffix) stays `405`. Collection DELETE stays `405`. Do **not** add `POST …/{db}/drop`. PUT/PATCH on item `{db}` stay `405`. Other methods on `/truncate` unchanged. Path `{db}` uses existing `decodePathIdentifier`. Invalid name → `400` `validation_error`, no catalog. There is no `POST /api/v1/auth/reauth` and no short-lived reauth grant. Handler timeout is **30s**. In-process TryLock on the **database name** only (new map; do not share rotate/duplicate maps). Serialize with truncate: if the truncate map holds the same name, `409` **A truncate is already in progress.** Drop-map lock fail → `409` `operation_in_progress`, copy **A drop is already in progress.** No `202`. `migrations/002_operations.sql` exists; this DELETE does not write it. Responses are `Cache-Control: no-store`. Feature flag is **`REDGRES_FEATURE_POSTGRES_DROP`** only (default unset = off), parsed with `envBool` (same rules as row delete / truncate). There is no `ENABLE_DESTRUCTIVE_ACTIONS`. This Partial is in-request **200**. Do not bump pgx (`v5.10.0`). Official PostgreSQL 17/18 `DROP DATABASE` is the same command, including `WITH (FORCE)` and “cannot be executed inside a transaction block” ([17](https://www.postgresql.org/docs/17/sql-dropdatabase.html), [18](https://www.postgresql.org/docs/18/sql-dropdatabase.html)). **Do not use `WITH (FORCE)`.** Backup freshness is **not** an HTTP gate on this Partial (**BF-1**): ADR-011 catalog types exist; HTTP DROP does not call `EvaluateDropGate`; there is no `REDGRES_BACKUP_CATALOG`; UI disclosure is not authorization. The HTTP §6.7 gate is backend-integration; OPS-004 Complete still requires live backup/restore. UI **discloses** recovery needs a valid external backup; it does **not** authorize drop. No `backup_confirmed` body field. No checkbox-as-authorization. `GET /api/v1/session` still has no `features` object. Gate 4 does not apply (vault DELETE is existence-row only; no decrypt).
 
 Body **only**:
 
@@ -580,7 +611,7 @@ GET/PUT/PATCH/DELETE on this path are `405` `method_not_allowed`. There is no `P
 6. Missing/unreadable vault key (`Open` stored none) → **503 before ALTER**.
 7. Vault reachability probe (`SavedRoleNames` / connect to `database_console_vault`; **no ciphertext**) → **503 before ALTER** if the vault DB/table is unreachable. Do not `ensure_vault`.
 8. Generate password with existing `postgresadmin.GeneratePassword()` (24-byte `crypto/rand` + `RawURLEncoding`). **Do not** copy sibling `secrets.token_hex(32)`. **Do not** import `redisadmin`. Encrypt in memory with `secrets.Encrypt`.
-9. In-process **per-owner TryLock**. Fail → `409` `operation_in_progress`, copy **A password rotation is already in progress for this role.** No second ALTER. The lock is request-scoped process memory only (no SQLite `operations` row; ADR-005 `002_operations.sql` is out of this slice).
+9. In-process **per-owner TryLock**. Fail → `409` `operation_in_progress`, copy **A password rotation is already in progress for this role.** No second ALTER. The lock is request-scoped process memory only (no SQLite `operations` row; `002_operations.sql` exists for duplicate/GET, not rotate).
 10. `ALTER ROLE {owner} WITH PASSWORD {literal} CONNECTION LIMIT 20` (`QuoteIdentifier` + existing `quoteStringLiteral`; simple-protocol `Exec`; constant **20**). Do not add `REDGRES_POSTGRES_CONNECTION_LIMIT`.
 11. Parameterized vault upsert (retries **3**, no re-ALTER). If upsert still fails after ALTER → **503** `dependency_unavailable`, copy **The PostgreSQL password was changed but the vault could not be saved. Rotate again.** Failure audit. **Do not return the credential.** The next POST rotate is allowed (new password) — that is recovery. Password stays in process memory only.
 12. Success audit then **200**. Audit-fail after cluster+vault success → **503** fail-closed, **do not** return the credential (operator can Reveal).
@@ -632,7 +663,7 @@ PG-006 stays Partial. Live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright, G
 r.With(s.requireSession, s.requireCapability("postgres.provision"), s.requireMutation).Post("/api/v1/postgres/databases/{db}/duplicate", s.handlePostgresDatabasesDuplicate)
 ```
 
-GET/PUT/PATCH/DELETE on this path are `405` `method_not_allowed`. Collection POST `/api/v1/postgres/databases` is the PG-003 freeze. `POST /api/v1/postgres/databases/{db}` (no suffix) stays `405`. There is no feature flag (`REDGRES_FEATURE_POSTGRES_DUPLICATE` / sibling `ENABLE_DESTRUCTIVE_ACTIONS` do not apply). There is no `POST /api/v1/auth/reauth` and no `owner_password` (AUTH-006 does not apply). Handler timeout is **30s**. Compensation after successful DDL uses a **detached** context if the request context is canceled (same as create). Responses are `Cache-Control: no-store`. Path `{db}` is the **source** (`decodePathIdentifier`). This Partial is **201 in-request**. It does not return `202`, does not allocate an operation ID, and does not read or write `GET /api/v1/operations/{id}` or `migrations/002_operations.sql` (ADR-005 later file). Large TEMPLATE clones that exceed 30s remain a Complete / later-operations limitation.
+GET/PUT/PATCH/DELETE on this path are `405` `method_not_allowed`. Collection POST `/api/v1/postgres/databases` is the PG-003 freeze. `POST /api/v1/postgres/databases/{db}` (no suffix) stays `405`. There is no feature flag (`REDGRES_FEATURE_POSTGRES_DUPLICATE` / sibling `ENABLE_DESTRUCTIVE_ACTIONS` do not apply). There is no `POST /api/v1/auth/reauth` and no `owner_password` (AUTH-006 does not apply). Handler timeout is **30s**. Compensation after successful DDL uses a **detached** context if the request context is canceled (same as create). Responses are `Cache-Control: no-store`. Path `{db}` is the **source** (`decodePathIdentifier`). This Partial is **201 in-request**. It does not return `202`, does not allocate an operation ID, and does not write `operations` rows. `GET /api/v1/operations/{id}` is a separate ADR-010 contract. **Target** after backend-integration: always `202` `{ "operation": { "id", "status": "queued" }, "request_id" }` with no credential (ADR-010). Large TEMPLATE clones that exceed 30s remain a Complete limitation until that 202 worker exists.
 
 **Body** (`DisallowUnknownFields`). Only:
 
@@ -706,7 +737,7 @@ Success **201** (same envelope as create/reveal; `one_time` JSON **false**; `res
 
 Always on 201: `resource`, `credential.username` (= new owner), `credential.password`, `credential.one_time` JSON `false`, `request_id`. Reuse `ProjectConnectionURL` / `encodeRFC3986Unreserved`; public host/ports; `sslmode=require`. Omit `urls` keys like create. No sibling `warning` field (the warning is UI). No Redis `urls.primary`. No extra `database` object (UI refreshes GET list).
 
-PG-010 stays Partial. Live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright, Gate 4, Python Gate 2 if not executed, `002_operations.sql`, `GET /api/v1/operations/{id}`, `POST /api/v1/auth/reauth`, `ensure_vault`, dual-secret ADR, and production vault-secret probe remain outstanding. Do not mark Complete.
+PG-010 stays Partial. Live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright, Gate 4, Python Gate 2 if not executed, POST 202 worker, `POST /api/v1/auth/reauth`, `ensure_vault`, dual-secret ADR, and production vault-secret probe remain outstanding. Do not mark Complete.
 
 **UI copy (frozen with this POST contract):** Databases inspector **Duplicate** is a `text-button` (not `--danger`), not a header/nav action. Show when details are loaded and `owner` is non-empty and `security.owner_can_login` is true and `security.owner_is_superuser` is false (missing flags → hide). Hidden while details loading. Disabled while duplicate/create/reveal/rotate is in flight or a credential ticket is open. Dialog `role=dialog`, title **Duplicate database**, same focus trap as Create database. Fields: **New database name**, **Project user**. Suggest owner `app_${database}` until the owner field is edited. No password field. Helper: Redgres generates the password and saves it in the encrypted vault. Warning (`form-warning`, not `--danger`): a unique project user is required; **N active connections to {source} will be terminated** (`N` from loaded details `connection_count`, including 0; `{source}` via `displayText`); object owners inside the copy change; source ownership is verified unchanged. Submit **Duplicate** disabled until both identifiers are valid and the new database name is not equal to the source. Client confirmation is not authorization. POST uses CSRF, `encodeURIComponent(source)`, JSON `{ "database", "owner" }`. HTTP 201: close dialog, refresh list, open the **existing** PostgreSQL vault-repeatable ticket (title **This PostgreSQL password is still saved.**). After dismiss, select the **new** database in memory. 401: session-expired, clear secrets, no leftover password. 400/403/409: stay on the dialog and announce the error. 404 / generic 503: inspector not-found / PostgreSQL-unavailable families; do not paint a ticket. Isolation-rollback 503 uses the distinct copy above. Memory only; clear on dismiss, selection change, Back, logout. Security overview / search / login never POST duplicate. No `postgres-duplicate` nav id. Redis tickets stay one-time “shown now.” Header sentence “Passwords are not revealed.” is out of this freeze.
 
