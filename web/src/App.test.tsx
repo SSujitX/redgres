@@ -77,6 +77,34 @@ function isRedisUserRotate(url: string, username: string, init?: RequestInit): b
   );
 }
 
+function isRedisUserPatch(url: string, username: string, init?: RequestInit): boolean {
+  return (
+    url === `/api/v1/redis/users/${encodeURIComponent(username)}` &&
+    String(init?.method ?? "").toUpperCase() === "PATCH"
+  );
+}
+
+function isRedisPresetsUrl(url: string): boolean {
+  return url === "/api/v1/redis/presets" || url.startsWith("/api/v1/redis/presets?");
+}
+
+function redisAclPatch200(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    user: {
+      username: "project_a",
+      enabled: true,
+      key_pattern: "other:*",
+      preset: "read-only",
+      protected: false,
+      rule_fidelity: "exact",
+      commands: ["echo", "get", "ping"],
+      categories: [],
+      ...extra,
+    },
+    request_id: "dddddddddddddddddddddddddddddddd",
+  });
+}
+
 function redisAclToggleOk(extra: Record<string, unknown> = {}) {
   return jsonResponse(200, {
     user: {
@@ -4678,5 +4706,591 @@ describe("App session and login", () => {
     expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/credentials/rotate"))).toBe(true);
     expect(screen.queryByRole("button", { name: "Rotate" })).not.toBeInTheDocument();
+  });
+
+  it("shows Edit permissions next to Enable or Disable for a non-protected inspector when the ACL list is ok", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-ok".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit permissions" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(await within(details).findByRole("button", { name: "Disable" })).toBeInTheDocument();
+    expect(within(details).getByRole("button", { name: "Rotate" })).toBeInTheDocument();
+    const edit = within(details).getByRole("button", { name: "Edit permissions" });
+    expect(edit).toBeEnabled();
+    expect(edit.className).not.toMatch(/danger/);
+  });
+
+  it("hides Edit permissions for a protected ACL user", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-prot".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem({ protected: true, enabled: false })]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ protected: true, enabled: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(await within(details).findByText("Protected")).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Edit permissions" })).not.toBeInTheDocument();
+  });
+
+  it("hides Edit permissions while ACL user details are loading", async () => {
+    let releaseDetail: () => void = () => {};
+    const blockedDetail = new Promise<void>((resolve) => {
+      releaseDetail = resolve;
+    });
+    stubFetch(async (url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-load".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        await blockedDetail;
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(within(details).getByText("Loading details.")).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Edit permissions" })).not.toBeInTheDocument();
+    releaseDetail();
+    expect(await within(details).findByRole("button", { name: "Edit permissions" })).toBeInTheDocument();
+  });
+
+  it.each(["not_configured", "unavailable"] as const)(
+    "hides Edit permissions when the ACL list is %s",
+    async (state) => {
+      stubFetch((url) => {
+        if (url.includes("/api/v1/session")) {
+          return jsonResponse(200, { owner: { username: "admin" }, csrf_token: `acl-patch-${state}`.padEnd(64, "0") });
+        }
+        if (isRedisUsersListUrl(url)) {
+          return jsonResponse(200, {
+            state,
+            ...(state === "unavailable" ? { reason: "unreachable" } : { users: [] }),
+            request_id: "77777777777777777777777777777777",
+          });
+        }
+        return unknownApi(url);
+      });
+      render(<App />);
+      expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+      goToAclUsers();
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Edit permissions" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("prefills named presets without Custom, commands, username, or GET /presets", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-form".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem({ preset: "read-only", key_pattern: "project_a:*" })]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ preset: "read-only", key_pattern: "project_a:*" });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
+    expect(within(dialog).getByText("project_a")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("textbox", { name: "Username" })).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Key prefix")).toHaveValue("project_a:*");
+    expect(within(dialog).getByLabelText("Permission preset")).toHaveDisplayValue("Read only");
+    expect(within(dialog).getByLabelText("Permission preset")).toHaveValue("read-only");
+    expect(within(dialog).queryByLabelText("Queue type")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("option", { name: "Custom" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Commands")).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+  });
+
+  it("defaults a custom inspect preset to cache-read-write with no Custom option", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-custom".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem({ preset: "custom", rule_fidelity: "limited" })]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ preset: "custom", rule_fidelity: "limited" });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
+    expect(within(dialog).getByLabelText("Permission preset")).toHaveDisplayValue("Cache read/write");
+    expect(within(dialog).getByLabelText("Permission preset")).toHaveValue("cache-read-write");
+    expect(within(dialog).queryByRole("option", { name: "Custom" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Queue type")).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Commands")).not.toBeInTheDocument();
+  });
+
+  it("includes queue_kind only for queue-worker and never sends password or commands", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-queue".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([
+          redisAclListItem({ preset: "queue-worker", key_pattern: "project_a:*" }),
+        ]);
+      }
+      if (isRedisUserPatch(url, "project_a", init)) {
+        return redisAclPatch200({ key_pattern: "project_a:*" });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({
+          preset: "queue-worker",
+          queue_kind: "streams",
+          key_pattern: "project_a:*",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const first = await screen.findByRole("dialog", { name: "Edit permissions" });
+    expect(within(first).getByLabelText("Queue type")).toHaveDisplayValue("Streams");
+    fireEvent.change(within(first).getByLabelText("Permission preset"), { target: { value: "read-only" } });
+    expect(within(first).queryByLabelText("Queue type")).not.toBeInTheDocument();
+    fireEvent.click(within(first).getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isRedisUserPatch(String(call[0]), "project_a", call[1]))).toBe(true);
+    });
+    const readOnlyBody = JSON.parse(
+      String(fetch.mock.calls.find((call) => isRedisUserPatch(String(call[0]), "project_a", call[1]))?.[1]?.body),
+    );
+    expect(readOnlyBody).toEqual({ key_pattern: "project_a:*", preset: "read-only" });
+    expect(readOnlyBody).not.toHaveProperty("queue_kind");
+    expect(readOnlyBody).not.toHaveProperty("username");
+    expect(readOnlyBody).not.toHaveProperty("password");
+    expect(readOnlyBody).not.toHaveProperty("commands");
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const second = await screen.findByRole("dialog", { name: "Edit permissions" });
+    fireEvent.change(within(second).getByLabelText("Permission preset"), { target: { value: "queue-worker" } });
+    expect(within(second).getByLabelText("Queue type")).toBeInTheDocument();
+    fireEvent.change(within(second).getByLabelText("Queue type"), { target: { value: "sorted-sets" } });
+    fireEvent.click(within(second).getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.filter((call) => isRedisUserPatch(String(call[0]), "project_a", call[1])).length).toBe(2);
+    });
+    const patchBodies = fetch.mock.calls
+      .filter((call) => isRedisUserPatch(String(call[0]), "project_a", call[1]))
+      .map((call) => JSON.parse(String(call[1]?.body)));
+    expect(patchBodies[1]).toEqual({
+      key_pattern: "project_a:*",
+      preset: "queue-worker",
+      queue_kind: "sorted-sets",
+    });
+    expect(patchBodies[1]).not.toHaveProperty("password");
+    expect(patchBodies[1]).not.toHaveProperty("commands");
+    expect(patchBodies[1]).not.toHaveProperty("username");
+    expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+  });
+
+  it("PATCHes permissions with CSRF and encodeURIComponent and no GET /presets", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-csrf".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserPatch(url, "project_a", init)) {
+        return redisAclPatch200();
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
+    fireEvent.change(within(dialog).getByLabelText("Key prefix"), { target: { value: "other:*" } });
+    fireEvent.change(within(dialog).getByLabelText("Permission preset"), { target: { value: "read-only" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isRedisUserPatch(String(call[0]), "project_a", call[1]))).toBe(true);
+    });
+    const patchCall = fetch.mock.calls.find((call) => isRedisUserPatch(String(call[0]), "project_a", call[1]));
+    expect(patchCall?.[0]).toBe("/api/v1/redis/users/project_a");
+    expect(patchCall?.[0]).toBe(`/api/v1/redis/users/${encodeURIComponent("project_a")}`);
+    expect(new Headers(patchCall?.[1]?.headers).get("X-CSRF-Token")).toBe("acl-patch-csrf".padEnd(64, "0"));
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    expect(body).toEqual({ key_pattern: "other:*", preset: "read-only" });
+    expect(body).not.toHaveProperty("password");
+    expect(body).not.toHaveProperty("commands");
+    expect(body).not.toHaveProperty("categories");
+    expect(body).not.toHaveProperty("enabled");
+    expect(body).not.toHaveProperty("username");
+    expect(body).not.toHaveProperty("queue_kind");
+    expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+  });
+
+  it("applies a 200 PATCH payload to inspector and the matching ledger row without a ticket", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-200".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([
+          redisAclListItem(),
+          redisAclListItem({ username: "project_b", key_pattern: "project_b:*" }),
+        ]);
+      }
+      if (isRedisUserPatch(url, "project_a", init)) {
+        return redisAclPatch200();
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Edit permissions" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Edit permissions" })).getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(within(details).getByText("read-only")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("dialog", { name: "Edit permissions" })).not.toBeInTheDocument();
+    expect(within(details).getByText("other:*")).toBeInTheDocument();
+    expect(within(details).getByText("echo")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("canary-rotated-password-32chars!!");
+    expect(document.body.textContent).not.toContain("canary-one-time-password-32chars!!");
+    const row = screen.getByRole("button", { name: /project_a/ });
+    expect(row).toHaveTextContent("read-only");
+    expect(row).toHaveTextContent("other:*");
+    expect(screen.getByRole("button", { name: /project_b/ })).toHaveTextContent("cache-read-write");
+    expect(screen.getByRole("button", { name: /project_b/ })).toHaveTextContent("project_b:*");
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("shows session-expired copy on PATCH 401 without a ticket", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-401".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserPatch(url, "project_a", init)) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Edit permissions" })).getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("dialog", { name: "Edit permissions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("shows not-found copy on PATCH 404", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-404".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserPatch(url, "project_a", init)) {
+        return jsonResponse(404, { error: { code: "not_found", message: "Not found" } });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Edit permissions" })).getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not found");
+    expect(screen.queryByRole("dialog", { name: "Edit permissions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("No commands.")).not.toBeInTheDocument();
+  });
+
+  it("shows protected copy on PATCH 403 without a ticket", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-403".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserPatch(url, "project_a", init)) {
+        return jsonResponse(403, { error: { code: "protected_resource", message: "This Redis user is protected" } });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("This Redis user is protected");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("shows Redis unavailable copy on PATCH 503", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-503".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserPatch(url, "project_a", init)) {
+        return jsonResponse(503, { error: { code: "dependency_unavailable", message: "Redis is unavailable." } });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Redis is unavailable.");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("disables Edit permissions while PATCH is in flight", async () => {
+    let releasePatch: () => void = () => {};
+    const blockedPatch = new Promise<void>((resolve) => {
+      releasePatch = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-wait".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserPatch(url, "project_a", init)) {
+        await blockedPatch;
+        return redisAclPatch200();
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Edit permissions" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
+    const save = within(dialog).getByRole("button", { name: "Save" });
+    fireEvent.click(save);
+    await waitFor(() => {
+      expect(save).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Edit permissions" })).toBeDisabled();
+    });
+    releasePatch();
+    expect(await within(details).findByText("read-only")).toBeInTheDocument();
+    expect(within(details).getByRole("button", { name: "Edit permissions" })).toBeEnabled();
+  });
+
+  it("disables Edit permissions while enable, rotate, or a ticket is in flight", async () => {
+    let releaseDisable: () => void = () => {};
+    const blockedDisable = new Promise<void>((resolve) => {
+      releaseDisable = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-busy".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDisable(url, "project_a", init)) {
+        await blockedDisable;
+        return redisAclToggleOk({ enabled: false });
+      }
+      if (isRedisUserRotate(url, "project_a", init)) {
+        return redisAclRotate200();
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    const edit = await within(details).findByRole("button", { name: "Edit permissions" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Disable" }));
+    await waitFor(() => {
+      expect(edit).toBeDisabled();
+    });
+    releaseDisable();
+    expect(await within(details).findByRole("button", { name: "Enable" })).toBeEnabled();
+    expect(within(details).getByRole("button", { name: "Edit permissions" })).toBeEnabled();
+    fireEvent.click(within(details).getByRole("button", { name: "Rotate" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Rotate password?" })).getByRole("button", { name: "Rotate now" }));
+    expect(await screen.findByRole("alertdialog", { name: /shown now/i })).toBeInTheDocument();
+    expect(within(details).getByRole("button", { name: "Edit permissions" })).toBeDisabled();
+  });
+
+  it("does not persist PATCH dialog state across logout, section change, or inspect of another user", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-clear".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([
+          redisAclListItem(),
+          redisAclListItem({ username: "project_b", key_pattern: "project_b:*" }),
+        ]);
+      }
+      if (isRedisUserPatch(url, "project_a", init)) {
+        return jsonResponse(503, { error: { code: "dependency_unavailable", message: "Redis is unavailable." } });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserDetailUrl(url, "project_b")) {
+        return redisAclDetailOk({
+          username: "project_b",
+          key_pattern: "project_b:*",
+          commands: ["fresh-command"],
+          categories: [],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const first = await screen.findByRole("dialog", { name: "Edit permissions" });
+    fireEvent.click(within(first).getByRole("button", { name: "Save" }));
+    expect(await within(first).findByRole("alert")).toHaveTextContent("Redis is unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: /project_b/ }));
+    expect(screen.queryByRole("dialog", { name: "Edit permissions" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Redis is unavailable.")).not.toBeInTheDocument();
+    expect(await screen.findByText("fresh-command")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const again = await screen.findByRole("dialog", { name: "Edit permissions" });
+    expect(within(again).queryByText("Redis is unavailable.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(screen.queryByRole("dialog", { name: "Edit permissions" })).not.toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    expect(await screen.findByRole("dialog", { name: "Edit permissions" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Edit permissions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit permissions" })).not.toBeInTheDocument();
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("never PATCHes Redis ACL users from the login route", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      if (url.includes("/api/v1/auth/login")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-patch".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
+    expect(
+      fetch.mock.calls.every((call) => String(call[1]?.method ?? "").toUpperCase() !== "PATCH"),
+    ).toBe(true);
+    expect(screen.queryByRole("button", { name: "Edit permissions" })).not.toBeInTheDocument();
   });
 });
