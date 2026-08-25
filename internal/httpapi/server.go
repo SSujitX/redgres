@@ -94,6 +94,7 @@ func (s *Server) Handler() http.Handler {
 	r.With(s.requireSession, s.requireCapability("postgres.read")).Get("/api/v1/postgres/databases/{db}/connection", s.handlePostgresConnection)
 	r.With(s.requireSession, s.requireCapability("postgres.credentials"), s.requireMutation).Post("/api/v1/postgres/databases/{db}/connection/reveal", s.handlePostgresConnectionReveal)
 	r.With(s.requireSession, s.requireCapability("postgres.credentials"), s.requireMutation).Post("/api/v1/postgres/databases/{db}/credentials/rotate", s.handlePostgresCredentialsRotate)
+	r.With(s.requireSession, s.requireCapability("postgres.provision"), s.requireMutation).Post("/api/v1/postgres/databases/{db}/duplicate", s.handlePostgresDatabasesDuplicate)
 	r.With(s.requireSession, s.requireCapability("postgres.read")).Get("/api/v1/postgres/databases/{db}", s.handlePostgresDatabase)
 	r.With(s.requireSession, s.requireCapability("postgres.read")).Get("/api/v1/postgres/security", s.handlePostgresSecurity)
 	return r

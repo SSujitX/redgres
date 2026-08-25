@@ -16,6 +16,47 @@ var (
 
 const vaultUnsyncedMessage = "The PostgreSQL password was changed but the vault could not be saved. Rotate again."
 
+const duplicateInProgressMessage = "A database duplicate is already in progress."
+
+const isolationChangedMessage = "The source database ownership or CONNECT ACL changed during duplicate. The clone was rolled back."
+
+const duplicateSameOwnerMessage = "Choose a different project user than the source database owner."
+
+// DuplicateInProgress is a 409 distinct from rotate's in-progress copy.
+type DuplicateInProgress struct{}
+
+func (DuplicateInProgress) Error() string {
+	return duplicateInProgressMessage
+}
+
+func (DuplicateInProgress) Unwrap() error {
+	return ErrOperationInProgress
+}
+
+// IsolationChanged is a 503 after the clone is rolled back.
+type IsolationChanged struct{}
+
+func (IsolationChanged) Error() string {
+	return isolationChangedMessage
+}
+
+func (IsolationChanged) Unwrap() error {
+	return ErrUnavailable
+}
+
+// FieldError is a 400 with fields.database or fields.owner.
+type FieldError struct {
+	Field   string
+	Message string
+}
+
+func (e FieldError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "validation error"
+}
+
 // VaultUnsynced is a 503 after ALTER succeeded but vault upsert failed.
 type VaultUnsynced struct {
 	Database string
