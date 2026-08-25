@@ -58,7 +58,8 @@ The owner receives all capabilities. HTTP handlers ask the authorization service
 - Session and CSRF tokens are 256-bit hex; SQLite stores SHA-256 only. Login deletes prior sessions for that owner.
 - Lockout is per normalized username + `RemoteAddr` host. Forwarded-for / `CF-Connecting-IP` headers are not trusted.
 - Login success and logout fail closed if the audit insert fails.
-- Redis user create fail-closes if the audit insert fails after `ACL SETUSER` succeeds; the one-time credential is not returned. Enable/disable fail-closes the same way after `on`/`off` and do not return `user`. Rotate fail-closes the same way after `resetpass`/`>password` and does not return `credential`, `password`, or `user`.
+- Redis user create fail-closes if the audit insert fails after `ACL SETUSER` succeeds; the one-time credential is not returned. Named-preset create (`cache-read-write`, `read-only`, `queue-worker`) uses the same fail-closed path. Enable/disable fail-closes the same way after `on`/`off` and do not return `user`. Rotate fail-closes the same way after `resetpass`/`>password` and does not return `credential`, `password`, or `user`.
+- GET `/api/v1/redis/presets` is a session + `redis.read` catalog of named command sets. It is not a credential-bearing route: it does not return passwords, URLs, or tickets, does not call Redis, and does not write audit.
 
 ## 5. Protected resources
 

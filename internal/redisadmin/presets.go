@@ -69,6 +69,62 @@ var inspectQueueSortedSets = concat(inspectConnectionSafe, []string{
 	"zremrangebyrank", "zremrangebyscore", "zscan", "bzmpop", "zmpop",
 })
 
+type NamedPreset struct {
+	Preset    string   `json:"preset"`
+	QueueKind string   `json:"queue_kind,omitempty"`
+	Commands  []string `json:"commands"`
+}
+
+func NamedPresets() []NamedPreset {
+	return []NamedPreset{
+		{Preset: PresetCacheReadWrite, Commands: cloneStrings(inspectCacheReadWrite)},
+		{Preset: PresetReadOnly, Commands: cloneStrings(inspectReadOnly)},
+		{Preset: PresetQueueWorker, QueueKind: QueueLists, Commands: cloneStrings(inspectQueueLists)},
+		{Preset: PresetQueueWorker, QueueKind: QueueStreams, Commands: cloneStrings(inspectQueueStreams)},
+		{Preset: PresetQueueWorker, QueueKind: QueueSortedSets, Commands: cloneStrings(inspectQueueSortedSets)},
+	}
+}
+
+func cloneStrings(in []string) []string {
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+func resolveNamedPreset(preset, queueKind string) (inspectPreset, []string, error) {
+	if preset == "" {
+		if queueKind != "" {
+			return inspectPreset{}, nil, ErrInvalidQueueKind
+		}
+		return inspectPreset{preset: PresetCacheReadWrite}, inspectCacheReadWrite, nil
+	}
+	switch preset {
+	case PresetCacheReadWrite:
+		if queueKind != "" {
+			return inspectPreset{}, nil, ErrInvalidQueueKind
+		}
+		return inspectPreset{preset: PresetCacheReadWrite}, inspectCacheReadWrite, nil
+	case PresetReadOnly:
+		if queueKind != "" {
+			return inspectPreset{}, nil, ErrInvalidQueueKind
+		}
+		return inspectPreset{preset: PresetReadOnly}, inspectReadOnly, nil
+	case PresetQueueWorker:
+		switch queueKind {
+		case QueueLists:
+			return inspectPreset{preset: PresetQueueWorker, queueKind: QueueLists}, inspectQueueLists, nil
+		case QueueStreams:
+			return inspectPreset{preset: PresetQueueWorker, queueKind: QueueStreams}, inspectQueueStreams, nil
+		case QueueSortedSets:
+			return inspectPreset{preset: PresetQueueWorker, queueKind: QueueSortedSets}, inspectQueueSortedSets, nil
+		default:
+			return inspectPreset{}, nil, ErrInvalidQueueKind
+		}
+	default:
+		return inspectPreset{}, nil, ErrInvalidPreset
+	}
+}
+
 type inspectPreset struct {
 	preset    string
 	queueKind string

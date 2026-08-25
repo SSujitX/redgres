@@ -10,6 +10,8 @@ var (
 	ErrNotFound         = errors.New("not found")
 	ErrInvalidUsername  = errors.New("invalid username")
 	ErrInvalidPrefix    = errors.New("invalid key prefix")
+	ErrInvalidPreset    = errors.New("invalid preset")
+	ErrInvalidQueueKind = errors.New("invalid queue kind")
 	ErrProtectedUser    = errors.New("protected resource")
 	ErrConflict         = errors.New("conflict")
 )

@@ -542,6 +542,12 @@ func TestRedisUsersCreate201NoStore(t *testing.T) {
 	if user["preset"] != "cache-read-write" || user["protected"] != false || user["rule_fidelity"] != "exact" {
 		t.Fatalf("user labels = %#v", user)
 	}
+	if _, ok := user["commands"]; ok {
+		t.Fatalf("create summary leaked commands: %#v", user)
+	}
+	if _, ok := user["queue_kind"]; ok {
+		t.Fatalf("queue_kind present for cache-read-write: %#v", user)
+	}
 	cred, _ := raw["credential"].(map[string]any)
 	if cred["username"] != "project_a" || cred["one_time"] != true {
 		t.Fatalf("credential = %#v", cred)
@@ -576,6 +582,91 @@ func TestRedisUsersCreate201NoStore(t *testing.T) {
 	}
 	if after := countAuditEvents(t, srv); after != getBefore {
 		t.Fatalf("GET wrote audit: %d -> %d", getBefore, after)
+	}
+}
+
+func TestRedisUsersCreateNamedPresets(t *testing.T) {
+	cases := []struct {
+		name      string
+		username  string
+		body      string
+		preset    string
+		queueKind string
+	}{
+		{name: "explicit-cache-read-write", username: "user_crw", body: `{"username":"user_crw","key_pattern":"user_crw","preset":"cache-read-write"}`, preset: "cache-read-write"},
+		{name: "read-only", username: "user_ro", body: `{"username":"user_ro","key_pattern":"user_ro","preset":"read-only"}`, preset: "read-only"},
+		{name: "queue-lists", username: "user_ql", body: `{"username":"user_ql","key_pattern":"user_ql","preset":"queue-worker","queue_kind":"lists"}`, preset: "queue-worker", queueKind: "lists"},
+		{name: "queue-streams", username: "user_qs", body: `{"username":"user_qs","key_pattern":"user_qs","preset":"queue-worker","queue_kind":"streams"}`, preset: "queue-worker", queueKind: "streams"},
+		{name: "queue-sorted-sets", username: "user_qz", body: `{"username":"user_qz","key_pattern":"user_qz","preset":"queue-worker","queue_kind":"sorted-sets"}`, preset: "queue-worker", queueKind: "sorted-sets"},
+	}
+	catalog := redisadmin.NamedPresets()
+	wantCmds := map[string][]string{}
+	for _, p := range catalog {
+		key := p.Preset
+		if p.QueueKind != "" {
+			key += ":" + p.QueueKind
+		}
+		wantCmds[key] = p.Commands
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := &redisadmin.MemoryClient{}
+			srv := testServerWithRedis(t, redisadmin.NewService(mem))
+			seedOwner(t, srv)
+			h := srv.Handler()
+			cookie, csrf := login(t, h)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/redis/users", cookie, csrf, tc.body))
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d body = %s", rec.Code, rec.Body.Bytes())
+			}
+			var raw map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+				t.Fatal(err)
+			}
+			user, _ := raw["user"].(map[string]any)
+			if user["preset"] != tc.preset {
+				t.Fatalf("preset = %#v", user["preset"])
+			}
+			if tc.queueKind == "" {
+				if _, ok := user["queue_kind"]; ok {
+					t.Fatalf("queue_kind present: %#v", user)
+				}
+			} else if user["queue_kind"] != tc.queueKind {
+				t.Fatalf("queue_kind = %#v", user["queue_kind"])
+			}
+			if _, ok := user["commands"]; ok {
+				t.Fatalf("create summary leaked commands: %#v", user)
+			}
+			if len(mem.ACLSetUserCalls) != 1 {
+				t.Fatalf("ACLSetUser calls = %d", len(mem.ACLSetUserCalls))
+			}
+			key := tc.preset
+			if tc.queueKind != "" {
+				key += ":" + tc.queueKind
+			}
+			gotCmds := httpGrantedCommands(mem.ACLSetUserCalls[0].Rules)
+			if !stringSlicesEqual(gotCmds, wantCmds[key]) {
+				t.Fatalf("SETUSER grants = %#v want %#v", gotCmds, wantCmds[key])
+			}
+			var metadata string
+			if err := srv.db.QueryRow(`SELECT metadata FROM audit_events WHERE action = 'redis.user.create' ORDER BY id DESC LIMIT 1`).Scan(&metadata); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(metadata, `"preset":"`+tc.preset+`"`) {
+				t.Fatalf("audit missing preset: %s", metadata)
+			}
+			if tc.queueKind == "" {
+				if strings.Contains(metadata, `"queue_kind"`) {
+					t.Fatalf("audit has queue_kind: %s", metadata)
+				}
+			} else if !strings.Contains(metadata, `"queue_kind":"`+tc.queueKind+`"`) {
+				t.Fatalf("audit missing queue_kind: %s", metadata)
+			}
+			if strings.Contains(metadata, ">") || strings.Contains(metadata, "csrf") {
+				t.Fatalf("audit leaked secret: %s", metadata)
+			}
+		})
 	}
 }
 
@@ -626,8 +717,15 @@ func TestRedisUsersCreateUnknownFieldsAndValidation(t *testing.T) {
 		code   string
 		status int
 	}{
-		{name: "unknown_preset", body: `{"username":"project_a","key_pattern":"project_a","preset":"cache-read-write"}`, code: CodeValidationError, status: http.StatusBadRequest},
+		{name: "unknown_preset", body: `{"username":"project_a","key_pattern":"project_a","preset":"not-a-preset"}`, field: "preset", code: CodeValidationError, status: http.StatusBadRequest},
+		{name: "custom_preset", body: `{"username":"project_a","key_pattern":"project_a","preset":"custom"}`, field: "preset", code: CodeValidationError, status: http.StatusBadRequest},
 		{name: "unknown_password", body: `{"username":"project_a","key_pattern":"project_a","password":"canary-secret"}`, code: CodeValidationError, status: http.StatusBadRequest},
+		{name: "unknown_commands", body: `{"username":"project_a","key_pattern":"project_a","commands":["get"]}`, code: CodeValidationError, status: http.StatusBadRequest},
+		{name: "unknown_categories", body: `{"username":"project_a","key_pattern":"project_a","categories":["@string"]}`, code: CodeValidationError, status: http.StatusBadRequest},
+		{name: "unknown_enabled", body: `{"username":"project_a","key_pattern":"project_a","enabled":true}`, code: CodeValidationError, status: http.StatusBadRequest},
+		{name: "queue_kind_without_queue_preset", body: `{"username":"project_a","key_pattern":"project_a","preset":"read-only","queue_kind":"lists"}`, field: "queue_kind", code: CodeValidationError, status: http.StatusBadRequest},
+		{name: "queue_worker_missing_kind", body: `{"username":"project_a","key_pattern":"project_a","preset":"queue-worker"}`, field: "queue_kind", code: CodeValidationError, status: http.StatusBadRequest},
+		{name: "queue_worker_bad_kind", body: `{"username":"project_a","key_pattern":"project_a","preset":"queue-worker","queue_kind":"jobs"}`, field: "queue_kind", code: CodeValidationError, status: http.StatusBadRequest},
 		{name: "invalid_json", body: `{`, code: CodeValidationError, status: http.StatusBadRequest},
 		{name: "username", body: `{"username":"AB","key_pattern":"project_a"}`, field: "username", code: CodeValidationError, status: http.StatusBadRequest},
 		{name: "key_pattern", body: `{"username":"project_a","key_pattern":"*"}`, field: "key_pattern", code: CodeValidationError, status: http.StatusBadRequest},
@@ -649,7 +747,7 @@ func TestRedisUsersCreateUnknownFieldsAndValidation(t *testing.T) {
 			if tc.field != "" && body.Error.Fields[tc.field] == "" {
 				t.Fatalf("missing fields.%s: %#v", tc.field, body.Error.Fields)
 			}
-			if strings.Contains(rec.Body.String(), "AB") || strings.Contains(rec.Body.String(), "canary-secret") || strings.Contains(rec.Body.String(), `"*"`) {
+			if strings.Contains(rec.Body.String(), "AB") || strings.Contains(rec.Body.String(), "canary-secret") || strings.Contains(rec.Body.String(), `"*"`) || strings.Contains(rec.Body.String(), "not-a-preset") || strings.Contains(rec.Body.String(), "jobs") {
 				t.Fatalf("400 echoed illegal value: %s", rec.Body.Bytes())
 			}
 		})

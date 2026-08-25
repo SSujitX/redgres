@@ -228,13 +228,13 @@ Database/role names in URL segments are decoded then validated. Transport valida
 | GET | `/api/v1/redis/status` | Health/performance summary (implemented) |
 | GET | `/api/v1/redis/users` | ACL user list (implemented; inspect-only) |
 | GET | `/api/v1/redis/users/{username}` | ACL user inspect (implemented; inspect-only) |
-| POST | `/api/v1/redis/users` | Create isolated cache-read-write user; one-time credential; `no-store` (implemented) |
+| POST | `/api/v1/redis/users` | Create isolated named-preset user (`cache-read-write` default); one-time credential; `no-store` (implemented) |
 | PATCH | `/api/v1/redis/users/{username}` | Permissions/prefix only |
 | POST | `/api/v1/redis/users/{username}/enable` | Enable (implemented) |
 | POST | `/api/v1/redis/users/{username}/disable` | Disable (implemented) |
 | POST | `/api/v1/redis/users/{username}/credentials/rotate` | One-time credential; `no-store` (implemented) |
 | DELETE | `/api/v1/redis/users/{username}` | Exact confirmation + owner password |
-| GET | `/api/v1/redis/presets` | Versioned available presets/commands for UI/docs |
+| GET | `/api/v1/redis/presets` | Versioned named presets/commands for UI/docs (implemented; no Redis) |
 
 There is no generic Redis command endpoint.
 
@@ -336,11 +336,11 @@ Success detail `200`:
 
 Detail includes `commands` and `categories` (empty arrays when none). `queue_kind` is omitted unless `preset` is `queue-worker`. `preset` is `cache-read-write` | `read-only` | `queue-worker` | `custom`. `rule_fidelity` is `exact` | `limited`. Category-only or otherwise unmodelable rules are labeled `custom` / `limited` rather than inferred as a named preset. Protected users are visible (`200`, `protected: true`), not `404`. A missing username is `404` `not_found` with message `Not found` (same as a missing PostgreSQL database). Username path segments are `PathUnescape`d then validated: 1–64 Unicode code points, `[A-Za-z0-9_-]` only; empty, `/`, `..`, and controls are rejected. Lookup against parsed ACL names is exact and case-sensitive. Invalid usernames return `400` `validation_error` without echoing the raw parameter and without querying Redis.
 
-**POST `/api/v1/redis/users`** requires a session cookie, the `redis.provision` capability, and CSRF (`requireMutation`). The capability set is currently a static single-owner grant, so the session and CSRF checks enforce access today. The probe uses a 2s timeout. `DisallowUnknownFields` applies. The body may contain only `username` and `key_pattern`. `preset`, `commands`, `categories`, `queue_kind`, `enabled`, and `password` are rejected as unknown fields. The server always creates the user `on` with preset `cache-read-write`.
+**POST `/api/v1/redis/users`** requires a session cookie, the `redis.provision` capability, and CSRF (`requireMutation`). The capability set is currently a static single-owner grant, so the session and CSRF checks enforce access today. The probe uses a 2s timeout. `DisallowUnknownFields` applies. The body may contain `username`, `key_pattern`, optional `preset`, and optional `queue_kind`. Missing or empty `preset` is `cache-read-write` (existing `{username,key_pattern}` still `201`). `queue_kind` must be `lists`, `streams`, or `sorted-sets` when `preset` is `queue-worker`, and is forbidden otherwise (`400` `validation_error` with `fields.queue_kind`). `preset` `custom` or any other value is `400` with `fields.preset`. `commands`, `categories`, `enabled`, and `password` remain unknown fields (`400`). The server always creates the user `on`. Valid named presets are `cache-read-write`, `read-only`, and `queue-worker`.
 
 Create username validation is `^[a-z0-9][a-z0-9_-]{2,47}$` (3–48 lowercase). Inspect GET usernames stay 1–64 `[A-Za-z0-9_-]`. `key_pattern` is normalized as redis-ui `NormalizePrefix`: trim `:*` / `:`; reject whitespace, controls, and wildcards `*?[]`; 2–80 characters; `^[a-z0-9][a-z0-9_:-]{0,78}[a-z0-9]$` or `^[a-z0-9]{2}$`; applied as `prefix:*`. Protected names (`default`, `admin`, `redact_admin`, and the configured Redis administrator compared with `EqualFold`) return `403` `protected_resource`. The password is 192-bit URL-safe (`crypto/rand` + `base64.RawURLEncoding`, 24 bytes → 32 characters) and is never client-supplied.
 
-The adapter issues one Redis `ACL LIST` to detect an exact username match (`409` `conflict` because `ACL SETUSER` upserts), then one go-redis `ACLSetUser` with `reset`, `on`, `>password`, one `~prefix:*`, `resetchannels`, `-@all`, and `+CMD` for the `cache-read-write` command set. It does not call `ACL GETUSER`, `ACL USERS`, `ACLGenPass`, or generic `Do`.
+The adapter issues one Redis `ACL LIST` to detect an exact username match (`409` `conflict` because `ACL SETUSER` upserts), then one go-redis `ACLSetUser` with `reset`, `on`, `>password`, one `~prefix:*`, `resetchannels`, `-@all`, and `+CMD` (uppercase) for exactly the matching named-preset inspect command set. There is no `+@all`. It does not grant ACL/CONFIG/FLUSH/SCRIPT/EVAL. It does not call `ACL GETUSER`, `ACL USERS`, `ACLGenPass`, generic `Do`, or `CLIENT KILL`. Create is `CreateUser(ctx, username, keyPattern, preset, queueKind string)`; empty `preset` means `cache-read-write`.
 
 Success `201` when `SETUSER` succeeded:
 
@@ -353,18 +353,18 @@ Success `201` when `SETUSER` succeeded:
 }
 ```
 
-`credential.urls` is omitted unless both `REDGRES_REDIS_PUBLIC_HOST` and `REDGRES_REDIS_PUBLIC_PORT` are set. Then `urls.primary` is `rediss://` + URL-encoded userinfo + `host:port` + `/0`. The URL never copies administrator userinfo or host. There is no silent port default. Responses are `Cache-Control: no-store`. Errors never include `err.Error()`, passwords, URLs, or hashes.
+`credential.urls` is omitted unless both `REDGRES_REDIS_PUBLIC_HOST` and `REDGRES_REDIS_PUBLIC_PORT` are set. Then `urls.primary` is `rediss://` + URL-encoded userinfo + `host:port` + `/0`. The URL never copies administrator userinfo or host. There is no silent port default. Responses are `Cache-Control: no-store`. Errors never include `err.Error()`, passwords, URLs, or hashes. Create `user` is a summary: `commands` are omitted. `user.queue_kind` is present only when `preset` is `queue-worker`.
 
 | Status | Code | When |
 |---|---|---|
 | 401 | `unauthorized` | Missing session. No `credential`, `user`, or `state`. |
 | 403 | `csrf_invalid` | Origin or CSRF failure. |
-| 400 | `validation_error` | Unknown field, invalid JSON, or `fields.username` / `fields.key_pattern` (raw illegal values are not echoed). |
-| 403 | `protected_resource` | Reserved or configured administrator username. |
+| 400 | `validation_error` | Unknown field, invalid JSON, or `fields.username` / `fields.key_pattern` / `fields.preset` / `fields.queue_kind` (raw illegal values are not echoed). |
+| 403 | `protected_resource` | Reserved or configured administrator username. No SETUSER. |
 | 409 | `conflict` | Exact username already present in `ACL LIST`. |
-| 503 | `dependency_unavailable` | Nil adapter, `ErrNotConfigured`, or Redis auth/permission/unreachable. No `reason` key. Typed public message only. |
+| 503 | `dependency_unavailable` | Nil adapter, `ErrNotConfigured`, Redis failure, public-URL build failure, or audit insert fail after SETUSER. No `reason` key. Never Redis `ERR` / `err.Error()` / `>password`. |
 
-The action is `redis.user.create`; target is the username; outcome is success or failure; metadata is `username`, `preset=cache-read-write`, and `key_pattern`. Passwords, URLs, and CSRF values are never audited. If `SETUSER` succeeds but the audit insert fails, the handler returns `503` and does not return the credential. If `SETUSER` fails, a failure audit is written and the client receives typed `503` `dependency_unavailable` only — never Redis `ERR` text, `err.Error()`, or a `>password` modifier.
+The action is `redis.user.create`; target is the username; outcome is success or failure; metadata is `username`, `preset` (the actual named preset), and `key_pattern`, plus `queue_kind` only when the actual preset is `queue-worker`. Passwords, URLs, CSRF values, and `>` modifiers are never audited. If `SETUSER` succeeds but the audit insert fails, the handler returns `503` and does not return the credential. If `SETUSER` fails, a failure audit is written and the client receives typed `503` `dependency_unavailable` only — never Redis `ERR` text, `err.Error()`, or a `>password` modifier.
 
 **POST `/api/v1/redis/users/{username}/enable`** and **POST `/api/v1/redis/users/{username}/disable`** require a session cookie, the `redis.provision` capability, and CSRF (`requireMutation`). They are not `redis.destructive`. Username path validation matches GET inspect (`parseRedisUsernameParam`). There is no JSON body. `GET`, `PUT`, `PATCH`, and `DELETE` on these two paths are `405` `method_not_allowed`. `POST /api/v1/redis/users/{username}` (no suffix) stays `405`.
 
@@ -411,7 +411,26 @@ Success `200` when SETUSER and the success audit both succeed:
 
 The action is `redis.user.rotate`; target is the username; metadata is `username` only. Passwords, URLs, and CSRF values are never audited. If SETUSER succeeds but the audit insert fails, the handler returns `503` and does not return `credential`, `password`, or `user`. Rotation invalidates the previous password immediately. If the one-time response is lost, rotate again.
 
-`PATCH` permissions, delete, and `GET /api/v1/redis/presets` are not implemented in this slice.
+**GET `/api/v1/redis/presets`** requires a session cookie and the `redis.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant, so the session check enforces access today. There is no Redis call and no audit event. The handler returns `200` even when the Redis adapter is nil or not configured. Other methods are `405` `method_not_allowed`. Missing session is `401` `unauthorized` with no `presets` or `state` keys. This GET is not a credential-bearing route.
+
+The catalog is the five named create grant sets in this order: `cache-read-write`, `read-only`, then `queue-worker` `lists`, `streams`, and `sorted-sets`. `commands` are unique-sorted lowercase and byte-equal to the create `+CMD` grant set. There is no `custom` entry and no `state` or `reason`. `presets` is an array, never `null`. `queue_kind` is omitted except on `queue-worker` rows.
+
+Success `200`:
+
+```json
+{
+  "presets": [
+    { "preset": "cache-read-write", "commands": ["..."] },
+    { "preset": "read-only", "commands": ["..."] },
+    { "preset": "queue-worker", "queue_kind": "lists", "commands": ["..."] },
+    { "preset": "queue-worker", "queue_kind": "streams", "commands": ["..."] },
+    { "preset": "queue-worker", "queue_kind": "sorted-sets", "commands": ["..."] }
+  ],
+  "request_id": "<32 lowercase hex>"
+}
+```
+
+`PATCH` permissions and delete are not implemented in this slice.
 
 ## Credential payload
 

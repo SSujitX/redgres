@@ -113,11 +113,15 @@ func (s *Service) ListUsers(ctx context.Context) (UserList, error) {
 	return out, nil
 }
 
-func (s *Service) CreateUser(ctx context.Context, username, keyPattern string) (CreateResult, error) {
+func (s *Service) CreateUser(ctx context.Context, username, keyPattern, preset, queueKind string) (CreateResult, error) {
 	if err := ValidateUsername(username); err != nil {
 		return CreateResult{}, err
 	}
 	pattern, err := NormalizePrefix(keyPattern)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	resolved, commands, err := resolveNamedPreset(preset, queueKind)
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -142,7 +146,7 @@ func (s *Service) CreateUser(ctx context.Context, username, keyPattern string) (
 	if err != nil {
 		return CreateResult{}, ErrUnavailable
 	}
-	rules := buildCreateACLRules(password, pattern)
+	rules := buildCreateACLRules(password, pattern, commands)
 	if err := s.client.ACLSetUser(ctx, username, rules...); err != nil {
 		return CreateResult{}, classifyRedisError(err)
 	}
@@ -151,19 +155,20 @@ func (s *Service) CreateUser(ctx context.Context, username, keyPattern string) (
 			Username:     username,
 			Enabled:      true,
 			KeyPattern:   pattern,
-			Preset:       PresetCacheReadWrite,
+			Preset:       resolved.preset,
+			QueueKind:    resolved.queueKind,
 			Protected:    false,
 			RuleFidelity: RuleExact,
-			Commands:     append([]string(nil), inspectCacheReadWrite...),
+			Commands:     append([]string(nil), commands...),
 			Categories:   []string{},
 		},
 		Password: password,
 	}, nil
 }
 
-func buildCreateACLRules(password, keyPattern string) []string {
+func buildCreateACLRules(password, keyPattern string, commands []string) []string {
 	rules := []string{"reset", "on", ">" + password, "~" + keyPattern, "resetchannels", "-@all"}
-	for _, cmd := range inspectCacheReadWrite {
+	for _, cmd := range commands {
 		rules = append(rules, "+"+strings.ToUpper(cmd))
 	}
 	return rules
