@@ -5028,3 +5028,72 @@ Keep PG-011 Partial. Keep AUTH-006 Partial. Keep PG-008 Partial.
  Keep PG-009 Partial. Keep PG-010 Partial. Do not mark Complete.
 Not pushed.
 ```
+
+## PG-011 drop verifier PASS Partial (2026-08-26)
+
+```text
+Requirement: PG-011 Partial + AUTH-006 Partial (flagged DELETE
+ /api/v1/postgres/databases/{db} plus inspector danger Drop dialog,
+ title Drop database). Keep PG-011 Partial. Keep AUTH-006 Partial
+ (Redis DELETE /api/v1/redis/users/{username} plus PG-008 row DELETE
+ plus PG-009 truncate POST plus this DELETE). Keep PG-008 Partial.
+ Keep PG-009 Partial. Keep PG-010 Partial. Reject Complete.
+ Gate 4 N/A (vault DELETE is existence-row only; no decrypt).
+ Playwright is Complete-only.
+Decision/ADR: freeze b4674fb (b4674fb0d74a52a96dde5e27f15550f661de65b9).
+ AUTH-006 in-handler LookupOwnerByUsername + Verify on body
+ owner_password. No POST /api/v1/auth/reauth. Feature flag
+ REDGRES_FEATURE_POSTGRES_DROP via envBool (unset=false). Product
+ choice BF-1: HTTP does not check backups; UI discloses Recovery
+ requires a valid external backup / Cannot be undone; no
+ backup_confirmed; no checkbox-as-authorization. OPS-004 remains
+ Complete as SECURITY.md §6.7 policy (not an HTTP gate this Partial).
+Verification (2026-08-26) on HEAD 98fe882
+ (98fe8822d1bb8bc47c365a81de71befc9d42b507) master. Diff range
+ b4674fb..98fe882. Product tree ee295fe
+ (ee295feade67f6c32bd0ef7dcb69b13482007434). Go SHA 85372a6
+ (85372a6df90099102864b304eba8d09daa622c3a, cherry-pick of 8fb1d72).
+ UI SHA 604a956 (604a956c7171b8ad021054f64eb28210d4ab00e8, cherry-pick
+ of 452a395). UI review pin 040ae69 Approve Partial (reviewed ee295fe;
+ not viewport/Playwright). Security review pin 040ae69 Approve Partial
+ (reviewed ee295fe; no C/H/M). Evidence pin 98fe882 PASS Partial /
+ reject-Complete (tests not re-run by evidence reviewer). This
+ verifier re-ran the Partial suite on 98fe882 (go1.27.0 windows/amd64;
+ Node v25.3.0 not nvmrc 24.19.0):
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/config ./internal/postgresadmin
+ ./internal/httpapi → ok (config 1.204s; postgresadmin 1.144s;
+ httpapi 43.906s)
+ go test -count=1 ./... → all ok without dist rebuild (embed emptyFS;
+ httpapi 38.818s; cmd/redgres 2.519s; postgresadmin 1.581s;
+ config 1.273s)
+ go vet ./... → no findings
+ go build -o NUL ./cmd/redgres → success
+ npm --prefix web run test:run → Tests 353 passed (353), 68.96s
+ npm --prefix web run build → tsc --noEmit && vite build success
+ (wrote gitignored internal/web/dist/app/; not committed)
+Freeze criteria mapped to implementation and tests that passed:
+ DELETE registered with GET {db} after suffix routes
+ (internal/httpapi/server.go); handlePostgresDatabaseDrop flag-off
+ 403 before decode; terminateDatabaseSQL pid <> pg_backend_pid()
+ then quoted DROP DATABASE no FORCE no IF EXISTS
+ (internal/postgresadmin/drop.go); optional DROP ROLE + vault DELETE
+ only when not OwnerDenied and OwnedDatabaseCount == 0; AUTH-006
+ in-handler; inspector DropDatabaseDialog title Drop database.
+ HTTP tests internal/httpapi/postgres_drop_routes_test.go; domain
+ internal/postgresadmin/drop_test.go; config
+ internal/config/drop_test.go; jsdom web/src/App.test.tsx.
+ Success audit includes dropped_role when the role was dropped
+ (matches freeze/API; failure metadata is database only).
+ Status rows AUTH-006 / PG-001..012 Partial; PG-008/009/010 stay
+ Partial. Canonical API/SECURITY/CONFIGURATION/UX already frozen;
+ this HEAD is TRACEABILITY-only after product tree ee295fe.
+ No secret/runtime artifacts. Dist not committed.
+Unexecuted Complete blockers: live PostgreSQL 17/18,
+ COMPATIBILITY.md §6, Playwright viewports, go test -race, CI,
+ Node 24.19.0, Gate 4 (N/A), POST /api/v1/auth/reauth, OPS-004
+ backup freshness HTTP gate, gitleaks, govulncheck.
+Keep PG-011 Partial. Keep AUTH-006 Partial. Keep PG-008 Partial.
+ Keep PG-009 Partial. Keep PG-010 Partial. Do not mark Complete.
+Not pushed.
+```
