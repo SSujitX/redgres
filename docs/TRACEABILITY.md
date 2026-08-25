@@ -2426,7 +2426,13 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
  Not run: race, Playwright, viewport/zoom, live expert tools, CI, gitleaks,
  govulncheck, Node 24.19.0
 Local commits: `1a528cd` (freeze), `33087b6` (API), `fb0c6ce` (UI),
- `28faa83` (merge UI). Reviews pending. Not pushed.
+ `28faa83` (merge UI), `bf47017` (docs record), this UI review pin.
+ Not pushed.
+Reviewer/date: UI review (2026-08-25) on `bf47017`/`fb0c6ce`/`28faa83`
+ approve Partial UI; no Critical/High. Optional Low (non-blocking): shared
+ `--focus` outline is button/input only, so the new `.text-button` anchors
+ use the UA outline. Explicitly NOT viewport/zoom sign-off. Security review
+ pending.
 Keep PLAT-001 Partial. Keep PG-012 Partial. Keep REDIS-005 Partial.
  Do not mark Complete.
 ```
