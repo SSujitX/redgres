@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET (no decrypt/reveal); PG-003/004/006/008–011 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET (no decrypt/reveal); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs; PG-003/006/008–011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete); REDIS-008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -2732,6 +2732,57 @@ Known nits: SOURCE_BASELINE still says vault not started; no dedicated
  inspection); unique-owner SQL cap 500.
 Keep PG-005 Partial. Keep PG-012 Partial. Do not mark Complete.
 Local commit to verify: `d45b1d7`. This verifier record. Not pushed.
+```
+
+## PG-004/PG-005 masked connection GET Partial (2026-08-25)
+
+```text
+Requirement: PG-004/PG-005 Partial (GET masked connection metadata; no reveal/decrypt)
+Decision/ADR: ADR-001, ADR-003, ADR-004; freeze `99986a1`
+Source characterization: database-app get_database_connection_url +
+ connection_urls.py at 1c3e8e2; Redgres omits sibling null aliases and
+ has_saved_password; no silent db.example.com; sslmode=require;
+ POOLED_PORT reused for pooled URL port; Redis omit-key analog
+Implementation files: internal/config/{config,postgres,postgres_test}.go;
+ internal/postgresadmin/{connection,connection_test,types,service,service_test}.go;
+ internal/httpapi/{server,postgres_routes,postgres_routes_test}.go;
+ web/src/api/postgres.ts; web/src/features/postgres/DatabasesPage.tsx;
+ web/src/App.test.tsx
+Unit tests: builder encoding/omit/sslmode; Connection present/missing/
+ not_available; domain has no URL fields; config public host/direct port
+HTTP tests: 401/404/400/503; omit rules; no-store; GET without CSRF;
+ no canaries; POST /connection 405; POST /connection/reveal unregistered 404
+UI tests: inspector Direct/Pooled URLs + copy; clear on selection/logout;
+ 401/503; isDetailsUrl excludes /connection; no reason leak; no Reveal
+Integration tests: none — live PostgreSQL not run
+Security tests: postgres.read; no decrypt; no internal/secrets on path;
+ ciphertext SQL unchanged; 401 omits keys
+Deployment/migration impact: none. go.mod unchanged (pgx v5.10.0,
+ go-redis v9.22.0). New optional REDGRES_POSTGRES_PUBLIC_HOST /
+ REDGRES_POSTGRES_DIRECT_PORT. No REDGRES_LEGACY_VAULT_SECRET_FILE.
+Known limitations: POST reveal, Gate 4, Playwright viewports outstanding;
+ POST /connection/reveal is 404 (unregistered) not 405
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
+ v25.3.0 (not web/.nvmrc 24.19.0):
+ Writer API feat/pg-004-masked-connection-api `20addbf`:
+  gofmt -l → empty
+  go test -count=1 ./internal/postgresadmin ./internal/httpapi
+   → ok postgresadmin 0.922s; httpapi 21.991s
+  go test -count=1 ./... → ok (httpapi 23.541s)
+  go vet → no findings
+  go build -o NUL ./cmd/redgres → success
+ Writer UI feat/pg-004-masked-connection-ui `80c958d`:
+  npm --prefix web run test:run → Tests 222 passed (222)
+ Parent after merge `60825fd` (docs record this commit):
+  gofmt -l internal/postgresadmin internal/httpapi/postgres_routes.go
+   internal/httpapi/server.go internal/config → empty
+  go test -count=1 ./internal/postgresadmin ./internal/httpapi ./internal/config
+   → ok postgresadmin 1.084s; httpapi 21.214s; config 0.501s
+  npm --prefix web run test:run → Tests 222 passed (222), 31.82s
+Local commits: `99986a1` (freeze), `20addbf` (API), `80c958d` (UI),
+ `7ed29df` (merge API), `60825fd` (merge UI), this docs record.
+ Not pushed.
+Keep PG-004 Partial. Keep PG-005 Partial. Do not mark Complete.
 ```
 
 
