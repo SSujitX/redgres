@@ -46,8 +46,8 @@ Redgres/
 │   │   └── errors.go
 │   ├── secrets/
 │   │   ├── fernet.go
-│   │   ├── compatibility.go
-│   │   └── redaction.go
+│   │   ├── kdf.go
+│   │   └── testdata/            # Python cryptography 49.0.0 Fernet/KDF fixtures
 │   ├── platform/
 │   │   ├── status.go
 │   │   └── search.go
