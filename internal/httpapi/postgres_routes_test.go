@@ -203,9 +203,15 @@ func TestPostgresListRejectsPOST(t *testing.T) {
 	h := srv.Handler()
 	cookie, csrf := login(t, h)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/postgres/databases", cookie, csrf, `{}`))
-	if rec.Code != http.StatusMethodNotAllowed {
+	h.ServeHTTP(rec, authed(http.MethodPost, "/api/v1/postgres/databases", cookie, csrf, `{"database":"project_a","owner":"app_project_a","role_password":"nope"}`))
+	if rec.Code == http.StatusMethodNotAllowed {
+		t.Fatal("collection POST must be registered as create")
+	}
+	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Unknown field") {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 

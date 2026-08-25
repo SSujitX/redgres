@@ -26,6 +26,31 @@ type MemoryCatalog struct {
 	EncryptedPasswordCalls []string
 	PooledConfigured       bool
 	PingPooledErr          error
+	ExistingRoles          []string
+	ExistsErr              error
+	CreateRoleErr          error
+	CreateDatabaseErr      error
+	GrantSetRoleErr        error
+	LockConnectErr         error
+	InsertCredentialErr    error
+	OwnedCount             int
+	OwnedCountErr          error
+	LastCreateRoleSQL      string
+	LastGrantSQL           string
+	CreateRoleCalls        int
+	CreateDatabaseCalls    int
+	GrantCalls             int
+	LockConnectCalls       int
+	InsertCalls            int
+	DeleteCredentialCalls  int
+	DropDatabaseCalls      int
+	DropRoleCalls          int
+	CreatedRoles           []string
+	CreatedDatabases       []string
+	InsertedVault          []string
+	DroppedRoles           []string
+	DroppedDatabases       []string
+	DeletedVault           []string
 }
 
 func (m *MemoryCatalog) Ping(context.Context) error {
@@ -180,4 +205,143 @@ func (m *MemoryCatalog) SavedRoleNames(_ context.Context, roles []string) (map[s
 		}
 	}
 	return out, nil
+}
+
+func (m *MemoryCatalog) DatabaseExists(_ context.Context, name string) (bool, error) {
+	if m.ExistsErr != nil {
+		return false, m.ExistsErr
+	}
+	if m.Err != nil {
+		return false, m.Err
+	}
+	for _, row := range m.Rows {
+		if row.Name == name {
+			return true, nil
+		}
+	}
+	for _, created := range m.CreatedDatabases {
+		if created == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m *MemoryCatalog) RoleExists(_ context.Context, name string) (bool, error) {
+	if m.ExistsErr != nil {
+		return false, m.ExistsErr
+	}
+	if m.Err != nil {
+		return false, m.Err
+	}
+	for _, role := range m.ExistingRoles {
+		if role == name {
+			return true, nil
+		}
+	}
+	for _, role := range m.CreatedRoles {
+		if role == name {
+			return true, nil
+		}
+	}
+	for _, row := range m.Rows {
+		if row.Owner == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m *MemoryCatalog) CreateRole(_ context.Context, owner, password string) error {
+	sql, err := formatCreateRole(owner, password)
+	if err != nil {
+		return err
+	}
+	m.LastCreateRoleSQL = sql
+	m.CreateRoleCalls++
+	if m.CreateRoleErr != nil {
+		return m.CreateRoleErr
+	}
+	m.CreatedRoles = append(m.CreatedRoles, owner)
+	return nil
+}
+
+func (m *MemoryCatalog) GrantSetRole(_ context.Context, owner, admin string) error {
+	sql, err := formatGrantSetRole(owner, admin)
+	if err != nil {
+		return err
+	}
+	m.LastGrantSQL = sql
+	m.GrantCalls++
+	if m.GrantSetRoleErr != nil {
+		return m.GrantSetRoleErr
+	}
+	return nil
+}
+
+func (m *MemoryCatalog) CreateDatabase(_ context.Context, database, owner string) error {
+	m.CreateDatabaseCalls++
+	if m.CreateDatabaseErr != nil {
+		return m.CreateDatabaseErr
+	}
+	m.CreatedDatabases = append(m.CreatedDatabases, database)
+	m.Rows = append(m.Rows, CatalogRow{Name: database, Owner: owner, AllowConn: true})
+	return nil
+}
+
+func (m *MemoryCatalog) LockConnect(context.Context, string, string) error {
+	m.LockConnectCalls++
+	if m.LockConnectErr != nil {
+		return m.LockConnectErr
+	}
+	return nil
+}
+
+func (m *MemoryCatalog) InsertCredential(_ context.Context, role, encrypted string) error {
+	m.InsertCalls++
+	if m.InsertCredentialErr != nil {
+		return m.InsertCredentialErr
+	}
+	m.InsertedVault = append(m.InsertedVault, role)
+	m.SavedRoles = append(m.SavedRoles, role)
+	if m.Ciphertexts == nil {
+		m.Ciphertexts = map[string]string{}
+	}
+	m.Ciphertexts[role] = encrypted
+	return nil
+}
+
+func (m *MemoryCatalog) DeleteCredential(_ context.Context, role string) error {
+	m.DeleteCredentialCalls++
+	m.DeletedVault = append(m.DeletedVault, role)
+	return nil
+}
+
+func (m *MemoryCatalog) TerminateAndDropDatabase(_ context.Context, database string) error {
+	m.DropDatabaseCalls++
+	m.DroppedDatabases = append(m.DroppedDatabases, database)
+	filtered := m.Rows[:0]
+	for _, row := range m.Rows {
+		if row.Name != database {
+			filtered = append(filtered, row)
+		}
+	}
+	m.Rows = filtered
+	return nil
+}
+
+func (m *MemoryCatalog) OwnedDatabaseCount(context.Context, string) (int, error) {
+	if m.OwnedCountErr != nil {
+		return 0, m.OwnedCountErr
+	}
+	if len(m.CreatedDatabases) > 0 && m.DropDatabaseCalls == 0 {
+		return len(m.CreatedDatabases), nil
+	}
+	return m.OwnedCount, nil
+}
+
+func (m *MemoryCatalog) DropRole(_ context.Context, owner string) error {
+	m.DropRoleCalls++
+	m.DroppedRoles = append(m.DroppedRoles, owner)
+	return nil
 }

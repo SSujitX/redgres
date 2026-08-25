@@ -1,16 +1,20 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 	"unicode/utf8"
 
 	"github.com/SSujitX/redgres/internal/auth"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
 	"github.com/go-chi/chi/v5"
 )
+
+const postgresCreateTimeout = 30 * time.Second
 
 type postgresListBody struct {
 	postgresadmin.ListResult
@@ -33,6 +37,81 @@ func (s *Server) handlePostgresDatabases(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.writeJSON(w, r, http.StatusOK, postgresListBody{ListResult: result, RequestID: requestID(r)})
+}
+
+type postgresCreateRequest struct {
+	Database string `json:"database"`
+	Owner    string `json:"owner"`
+}
+
+func (s *Server) handlePostgresDatabasesCreate(w http.ResponseWriter, r *http.Request) {
+	var body postgresCreateRequest
+	if err := decodeJSON(r, &body); err != nil {
+		s.writeDecodeError(w, r, err)
+		return
+	}
+	fields := map[string]string{}
+	if err := postgresadmin.ValidateIdentifier(body.Database); err != nil {
+		fields["database"] = "invalid"
+	}
+	if err := postgresadmin.ValidateIdentifier(body.Owner); err != nil {
+		fields["owner"] = "invalid"
+	}
+	if len(fields) > 0 {
+		msg := "Invalid database name"
+		if _, ok := fields["database"]; !ok {
+			msg = "Invalid role name."
+		}
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, msg, fields)
+		return
+	}
+	policy := postgresadmin.NewPolicy(s.cfg)
+	if policy.DatabaseDenied(body.Database) || policy.OwnerDenied(body.Owner) {
+		s.writeError(w, r, http.StatusForbidden, CodeProtectedResource, "This PostgreSQL name is protected")
+		return
+	}
+	sess := sessionFrom(r)
+	meta := map[string]any{"database": body.Database, "owner": body.Owner}
+	if s.postgres == nil {
+		_ = s.audit.Record(sess.Username, "postgres.database.create", body.Database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), postgresCreateTimeout)
+	defer cancel()
+	created, err := s.postgres.Create(ctx, body.Database, body.Owner)
+	if err != nil {
+		s.writePostgresError(w, r, err)
+		return
+	}
+	cred := postgresRevealCredential{
+		Username: created.Owner,
+		Password: created.Password,
+		OneTime:  false,
+	}
+	var urls postgresRevealURLs
+	if s.cfg.PostgresPublicHost != "" && s.cfg.PostgresDirectPort != "" {
+		if u, urlErr := postgresadmin.ProjectConnectionURL(s.cfg.PostgresPublicHost, s.cfg.PostgresDirectPort, created.Owner, created.Password, created.Database); urlErr == nil {
+			urls.Direct = u
+		}
+	}
+	if s.cfg.PostgresPublicHost != "" && s.cfg.PostgresPooledPort != "" {
+		if u, urlErr := postgresadmin.ProjectConnectionURL(s.cfg.PostgresPublicHost, s.cfg.PostgresPooledPort, created.Owner, created.Password, created.Database); urlErr == nil {
+			urls.Pooled = u
+		}
+	}
+	if urls.Direct != "" || urls.Pooled != "" {
+		cred.URLs = &urls
+	}
+	if err := s.audit.Record(sess.Username, "postgres.database.create", created.Database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), map[string]any{"database": created.Database, "owner": created.Owner}); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	s.writeJSON(w, r, http.StatusCreated, postgresRevealResponse{
+		Resource:   postgresRevealResource{Type: "postgres_database", Name: created.Database},
+		Credential: cred,
+		RequestID:  requestID(r),
+	})
 }
 
 func (s *Server) handlePostgresDatabase(w http.ResponseWriter, r *http.Request) {
@@ -276,6 +355,15 @@ func (s *Server) writePostgresError(w http.ResponseWriter, r *http.Request, err 
 	switch {
 	case errors.Is(err, postgresadmin.ErrInvalidIdentifier):
 		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid database name")
+	case errors.Is(err, postgresadmin.ErrProtected):
+		s.writeError(w, r, http.StatusForbidden, CodeProtectedResource, "This PostgreSQL name is protected")
+	case errors.Is(err, postgresadmin.ErrConflict):
+		var conflict postgresadmin.Conflict
+		if errors.As(err, &conflict) && conflict.Field != "" {
+			s.writeErrorFields(w, r, http.StatusConflict, CodeConflict, conflict.Error(), map[string]string{conflict.Field: "exists"})
+			return
+		}
+		s.writeError(w, r, http.StatusConflict, CodeConflict, "Conflict")
 	case errors.Is(err, postgresadmin.ErrNotFound):
 		s.writeError(w, r, http.StatusNotFound, CodeNotFound, "Not found")
 	case errors.Is(err, postgresadmin.ErrUnavailable):
