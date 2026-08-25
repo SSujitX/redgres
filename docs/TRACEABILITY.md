@@ -3689,7 +3689,8 @@ Local commits: `c9d8e27` (freeze), `286b10f` (API), `21ca8fd` (UI),
  `f53d5f8` (merge API), `acc1999` (merge UI), this docs record.
  Not pushed.
 Reviewer/date: Security review (2026-08-25) on `4c06f91` Approve Partial;
- UI/evidence/verifier pending. Keep Partial.
+ UI review (2026-08-25) on `4c06f91` Approve Partial; evidence/verifier pending.
+ Keep Partial.
 Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial.
  Keep PG-005 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
  Keep AUTH-006 Partial. Do not mark Complete.
@@ -3722,6 +3723,37 @@ Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
  Gate 4, live PostgreSQL 17/18, Playwright, POST /api/v1/auth/reauth,
  ensure_vault, dual-secret ADR, production vault-secret probe, durable
  cross-process lock remain Complete blockers.
+Not pushed.
+```
+
+## PG-006 POST rotate UI pin (2026-08-25)
+
+```text
+Requirement: PG-006 Partial (Databases inspector Rotate + typed confirm + 200
+ vault-repeatable ticket + rotate warning). Keep PG-003 Partial. Keep PG-004
+ Partial. Keep PG-005 Partial.
+Decision/ADR: ADR-004; freeze `c9d8e27`.
+Reviewer/date: UI review (2026-08-25) on `4c06f91` Approve Partial; no
+ Critical/High/Medium. Freeze holds: Rotate text-button not --danger; show
+ when details loaded + owner non-empty + owner_can_login true +
+ owner_is_superuser false (missing flags hide), including vault missing;
+ hidden while details loading; disabled while rotate/reveal/create in flight
+ or ticket open; confirm role=dialog title Rotate password? same focus trap
+ as Redis rotate; typed database name; Rotate now until exact match; POST CSRF
+ + encodeURIComponent(db) + {confirmation}; HTTP 200 existing PostgreSQL
+ ticket plus form-warning; 401 session-expired clear secrets; 400/403 stay on
+ dialog; 404 / generic 503 inspector families no ticket; vault-out-of-sync
+ 503 stays on dialog; Security overview / search / login never POST rotate;
+ Redis tickets stay shown now; no setItem; no auto-copy / no toast of secrets.
+ Explicitly NOT viewport/zoom/Playwright sign-off. This reviewer did not
+ re-run npm tests; parent recorded 287 passed at `acc1999`.
+ Missing (non-blocking): dedicated missing-flags hide test; dedicated
+ search-never-POSTs-rotate test; dedicated rotate-ticket dismiss/selection
+ test (shared clearTicket with Reveal).
+Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
+ Partial. Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Playwright 360×800 / 768×1024 / 1280×800 / 1600×1000 + 200% zoom, live
+ PostgreSQL 17/18, Gate 4 remain Complete blockers.
 Not pushed.
 ```
 
