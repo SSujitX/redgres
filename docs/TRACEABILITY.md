@@ -2949,4 +2949,23 @@ Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
 Not pushed.
 ```
 
+## PG-012 rotation eligibility security pin (2026-08-25)
+
+```text
+Requirement: PG-012 Partial (rotation_eligible on GET /api/v1/postgres/security;
+ no POST rotate/reveal/create)
+Decision/ADR: ADR-004; freeze `674bd5c`
+Reviewer/date: Security review (2026-08-25) on `41ef55a` approve Partial;
+ no Critical/High/Medium. Formula holds; postgres.read; no CSRF; no audit;
+ no-store; no new route; POST rotate unregistered; can_rotate absent;
+ adminpg not hardcoded; no new catalog SQL; vault does not change
+ eligibility; diagnostic only; details GET has no field. Residual Lows
+ (non-blocking): no HTTP 404 assertion for POST rotate; documented adminpg
+ Policy delta; UI “Yes” under “Rotation is not available.” Reviewer did
+ not re-run tests.
+Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
+ POST rotate, POST reveal, Gate 4 remain Complete blockers.
+Not pushed.
+```
+
 
