@@ -31,6 +31,7 @@ type Catalog interface {
 	ListRows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
 	ListConnectionGroups(ctx context.Context) ([]ConnectionGroup, error)
 	SavedRoleNames(ctx context.Context, roles []string) (map[string]struct{}, error)
+	EncryptedPassword(ctx context.Context, role string) (string, error)
 	Ping(ctx context.Context) error
 	PingPooled(ctx context.Context) error
 }
@@ -43,6 +44,7 @@ type Inventory interface {
 	Rows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
 	SecurityOverview(ctx context.Context) (SecurityOverview, error)
 	Connection(ctx context.Context, name string) (Connection, error)
+	Reveal(ctx context.Context, name string) (RevealedConnection, error)
 	Ping(ctx context.Context) error
 	PingPooled(ctx context.Context) error
 }
@@ -84,6 +86,12 @@ type Connection struct {
 	Database        string          `json:"database"`
 	Owner           string          `json:"owner"`
 	SavedCredential SavedCredential `json:"saved_credential"`
+}
+
+type RevealedConnection struct {
+	Database string
+	Owner    string
+	Password string
 }
 
 type DatabaseDetails struct {

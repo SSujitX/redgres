@@ -8,21 +8,24 @@ type MemoryTable struct {
 }
 
 type MemoryCatalog struct {
-	Rows             []CatalogRow
-	Err              error
-	PingErr          error
-	Tables           map[string][]TableItem
-	TablesErr        error
-	LastTablesDB     string
-	TableData        map[string]MemoryTable
-	RowsErr          error
-	LastRowsKey      string
-	Connections      []ConnectionGroup
-	ConnectionsErr   error
-	SavedRoles       []string
-	VaultErr         error
-	PooledConfigured bool
-	PingPooledErr    error
+	Rows                   []CatalogRow
+	Err                    error
+	PingErr                error
+	Tables                 map[string][]TableItem
+	TablesErr              error
+	LastTablesDB           string
+	TableData              map[string]MemoryTable
+	RowsErr                error
+	LastRowsKey            string
+	Connections            []ConnectionGroup
+	ConnectionsErr         error
+	SavedRoles             []string
+	VaultErr               error
+	Ciphertexts            map[string]string
+	CiphertextErr          error
+	EncryptedPasswordCalls []string
+	PooledConfigured       bool
+	PingPooledErr          error
 }
 
 func (m *MemoryCatalog) Ping(context.Context) error {
@@ -145,6 +148,18 @@ func (m *MemoryCatalog) ListConnectionGroups(context.Context) ([]ConnectionGroup
 	out := make([]ConnectionGroup, len(m.Connections))
 	copy(out, m.Connections)
 	return out, nil
+}
+
+func (m *MemoryCatalog) EncryptedPassword(_ context.Context, role string) (string, error) {
+	m.EncryptedPasswordCalls = append(m.EncryptedPasswordCalls, role)
+	if m.CiphertextErr != nil {
+		return "", m.CiphertextErr
+	}
+	token, ok := m.Ciphertexts[role]
+	if !ok {
+		return "", ErrNotFound
+	}
+	return token, nil
 }
 
 func (m *MemoryCatalog) SavedRoleNames(_ context.Context, roles []string) (map[string]struct{}, error) {

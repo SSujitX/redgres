@@ -16,6 +16,16 @@ func MaskedProjectConnectionURL(host, port, owner, database string) (string, err
 	return "postgresql://" + encodeRFC3986Unreserved(owner) + ":********@" + hostport + "/" + encodeRFC3986Unreserved(database) + "?sslmode=require", nil
 }
 
+func ProjectConnectionURL(host, port, owner, password, database string) (string, error) {
+	host = strings.TrimSpace(host)
+	port = strings.TrimSpace(port)
+	if host == "" || port == "" {
+		return "", errors.New("public PostgreSQL host and port are required")
+	}
+	hostport := net.JoinHostPort(strings.Trim(host, "[]"), port)
+	return "postgresql://" + encodeRFC3986Unreserved(owner) + ":" + encodeRFC3986Unreserved(password) + "@" + hostport + "/" + encodeRFC3986Unreserved(database) + "?sslmode=require", nil
+}
+
 func encodeRFC3986Unreserved(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))

@@ -75,3 +75,26 @@ func TestMaskedProjectConnectionURLRequiresHostAndPort(t *testing.T) {
 		t.Fatal("expected whitespace port to fail")
 	}
 }
+
+func TestProjectConnectionURLEncodesPassword(t *testing.T) {
+	got, err := ProjectConnectionURL("db.example.com", "5432", "project_a_role", "p@ss:word/x", "project_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "postgresql://project_a_role:p%40ss%3Aword%2Fx@db.example.com:5432/project_a?sslmode=require"
+	if got != want {
+		t.Fatalf("url = %q want %q", got, want)
+	}
+	if strings.Contains(got, "10.0.0.1") {
+		t.Fatalf("must not copy admin host: %q", got)
+	}
+}
+
+func TestProjectConnectionURLRequiresHostAndPort(t *testing.T) {
+	if _, err := ProjectConnectionURL("", "5432", "project_a_role", "secret", "project_a"); err == nil {
+		t.Fatal("expected missing host to fail")
+	}
+	if _, err := ProjectConnectionURL("db.example.com", "", "project_a_role", "secret", "project_a"); err == nil {
+		t.Fatal("expected missing port to fail")
+	}
+}
