@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 Partial: in-handler `Reauthenticate` on `DELETE /api/v1/redis/users/{username}` only (no `POST /api/v1/auth/reauth`, no AUTH-005 `login_attempts` increment) | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; no POST rotate); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no POST rotate, no Gate 4); PG-006/008–011 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; POST rotate is PG-006); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003 Partial: POST `/api/v1/postgres/databases` (`postgres.provision` + CSRF) + `secrets.Encrypt` + vault INSERT + compensation + Databases Create dialog + ticket-open nav/search guard + list GET 401 clears ticket (no live PG, no Gate 4); PG-006 Partial: POST `/api/v1/postgres/databases/{db}/credentials/rotate` (`postgres.credentials` + CSRF) + ALTER ROLE + vault upsert + inspector Rotate (no live PG, no Gate 4, no AUTH-006); PG-008–011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -3618,5 +3618,81 @@ Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
  Not pushed.
 ```
+
+## PG-006 POST credential rotate Partial (2026-08-25)
+
+```text
+Requirement: PG-006 Partial (POST /api/v1/postgres/databases/{db}/credentials/rotate
+ ALTER ROLE + vault upsert + Databases inspector Rotate). Keep PG-006 Partial.
+ Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial. Keep PG-012 /
+ REDIS-008 / AUTH-006 Partial. Do not mark Complete. No Gate 4, no live
+ PostgreSQL, no POST /api/v1/auth/reauth, no ensure_vault, no
+ migrations/002_operations.sql, no client password, no sibling token_hex(32).
+Decision/ADR: ADR-004; ADR-005 (no operations table); freeze `c9d8e27`.
+ AUTH-006 does not apply.
+Source: database-app rotate_database_owner_password / store_role_password /
+ app.py rotate route at 1c3e8e2 (read-only). Did not copy FastAPI no-CSRF,
+ ensure_vault, secrets.token_hex(32), ENABLE_PASSWORD_ROTATION, or
+ {database, username, direct_url, pooled_url, warning}.
+ Official PG 17 ALTER ROLE (PASSWORD + CONNECTION LIMIT).
+Implementation files: internal/postgresadmin/{rotate.go,rotate_test.go,types.go,
+ service.go,memory.go,errors.go}; internal/httpapi/{server.go,postgres_routes.go,
+ postgres_rotate_routes_test.go,postgres_create_routes_test.go};
+ web/src/api/postgres.ts; web/src/features/postgres/DatabasesPage.tsx;
+ web/src/features/postgres/RotatePasswordDialog.tsx;
+ web/src/features/redis/CredentialTicket.tsx (optional rotateWarning default
+ off); web/src/App.test.tsx. create.go INSERT unchanged (no ON CONFLICT).
+Unit/HTTP: eligibility 404/403 no ALTER; missing vault key / vault probe 503
+ no ALTER; ALTER SQL QuoteIdentifier + quoteStringLiteral CONNECTION LIMIT 20;
+ upsert ON CONFLICT; create INSERT still no ON CONFLICT; lock 409 no second ALTER;
+ vault fail after ALTER → VaultUnsynced, 3 upsert retries, no password, no re-ALTER;
+ 401/CSRF/credentials; 200 no-store one_time JSON false; extra body field 400;
+ confirmation mismatch 400 no audit; protected 403/404; audit
+ postgres.credential.rotate metadata database+owner only; canary absent from
+ audit/error JSON; audit-fail 503 no credential; GET/PUT/PATCH/DELETE 405.
+UI: Rotate text-button when details loaded, owner non-empty, owner_can_login
+ true, owner_is_superuser false (missing flags hide), including saved_credential
+ missing. Hidden while details loading. Disabled while rotate/reveal/create in
+ flight or ticket open. Confirm role=dialog title Rotate password?; typed
+ database name; Rotate now disabled until exact match. POST CSRF +
+ encodeURIComponent(db) + {"confirmation":"<db>"}. HTTP 200 vault-repeatable
+ ticket plus form-warning. 401 session-expired, clear secrets. 400/403 stay on
+ dialog. 404 / generic 503 inspector families. Vault-out-of-sync 503 stays on
+ dialog. Security overview / search / login never POST rotate. Redis tickets
+ stay shown now. No setItem.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ Writer API feat/pg-006-rotate-api `286b10f`:
+  go test -count=1 ./internal/postgresadmin ./internal/httpapi
+   → ok postgresadmin 1.266s; httpapi 38.563s
+  go vet ./... → no findings
+ Writer UI feat/pg-006-rotate-ui `21ca8fd`:
+  npm --prefix web run test:run → Tests 287 passed (287), 46.48s
+  npm --prefix web run build → tsc + vite 8.2.2 (dist gitignored)
+ Parent after merges `f53d5f8` (API) `acc1999` (UI):
+  gofmt -l cmd internal migrations → empty
+  go test -count=1 ./internal/postgresadmin ./internal/httpapi
+   → ok postgresadmin 1.094s; httpapi 31.134s
+  go test -count=1 ./... → all ok (httpapi 42.875s; cmd/redgres 3.314s;
+   postgresadmin 1.662s; secrets 0.858s; web 1.057s; migrations no tests)
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  npm --prefix web run test:run → Tests 287 passed (287), 49.74s
+Not run: live PostgreSQL 17/18, Gate 4, COMPATIBILITY.md §6, Playwright,
+ gitleaks, govulncheck, CI, race, Node 24.19.0, Python Gate 2.
+Known limitations: in-process TryLock only; failure audit is nil-adapter +
+ vault-unsynced (not 400/403/404/409); capability test proves export denied,
+ not a provision-stripped owner. Header still says “Passwords are not
+ revealed.” ALTER then vault-fail cannot restore the old password (rotate
+ again is recovery).
+Local commits: `c9d8e27` (freeze), `286b10f` (API), `21ca8fd` (UI),
+ `f53d5f8` (merge API), `acc1999` (merge UI), this docs record.
+ Not pushed.
+Reviewer/date: pending parent/security/verifier. Keep Partial.
+Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial.
+ Keep PG-005 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
+ Keep AUTH-006 Partial. Do not mark Complete.
+```
+
 
 
