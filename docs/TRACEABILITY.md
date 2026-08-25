@@ -1626,7 +1626,11 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  Parent after API FF `beaa606`:
   go test -count=1 ./internal/redisadmin ./internal/httpapi → ok
  Writer UI `8158c6a`: npm --prefix web run test:run → 138 passed
- Parent after UI merge `6ecd075`: see following parent run
+ Parent after UI merge `6ecd075` + docs:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 2.371s; httpapi 13.250s
+  go vet ./... → no findings
+  npm --prefix web run test:run → Tests 138 passed (138)
 Not run: live Redis, §6, gitleaks, govulncheck, CI, Playwright,
  viewport/zoom, Node 24.19.0
 Known limitations: SETUSER-then-audit-fail leftover toggle;
