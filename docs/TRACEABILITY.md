@@ -1980,29 +1980,45 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  Parent review of API then FF onto master `00549ec`:
   go test -count=1 ./internal/redisadmin ./internal/httpapi
    → ok redisadmin 1.588s; httpapi 19.749s
- Writer UI feat/redis-005-allowlist-ui `b07c0de` (Node v25.3.0; writer
- npm counts not independently re-run on that worktree by parent).
- Parent after UI merge `76299b0` + this docs commit:
+ Writer UI feat/redis-005-allowlist-ui `b07c0de` (Node v25.3.0):
+  npm --prefix web run test:run → Tests 177 passed (177) (writer worktree)
+  npm --prefix web run build → tsc + vite 8.2.2 (writer; dist gitignored)
+ Parent after UI merge `76299b0` + docs `ed64500`:
   go test -count=1 ./internal/redisadmin ./internal/httpapi
    → ok redisadmin 2.205s; httpapi 20.405s
   go test -count=1 ./... → ok
   npm --prefix web run test:run → Tests 177 passed (177)
   go vet ./... → no findings; go build -o NUL ./cmd/redgres → success
   go list -m github.com/redis/go-redis/v9 → v9.22.0
+ Parent after UI High/Medium/Low correction `9f81257`:
+  npm --prefix web run test:run → Tests 178 passed (178)
+  (Go tests not re-run; CSS/dialog/docs only.)
 Not run by parent: live Redis, COMPATIBILITY.md §6, gitleaks, govulncheck,
  CI, Playwright, npm production build, viewport/zoom, Node 24.19.0,
  go test -race.
- Writer API ./... / vet / build are writer-attributed, not parent-after-merge
- re-runs of those exact commands (parent did re-run them after UI merge).
+ Writer API ./... / vet / build and writer UI npm build are
+ writer-attributed, not parent-after-merge re-runs of those exact
+ commands (parent did re-run Go ./... / vet / build after UI merge).
 Known limitations: SETUSER-then-audit-fail leftover grants; GetUser/SETUSER
  race; MemoryClient plaintext > residual unchanged; Redis 7+ ACL selectors
  survive PATCH (no clearselectors; inherited Medium); no POST custom;
  if custom set equals a named inspect set, inferPreset may return that
  named preset (expected). CreateUser arity unchanged.
-Reviewer/date: pending independent security / UI / evidence review on this
- docs commit. Verifier pending after those reviews.
+Reviewer/date: Security review (2026-08-25) on `ed64500` approve Partial;
+ no Critical/High/Medium/Low this-slice; no deny-list mistake; no
+ allow-list hole. Inherited selector leftover and SETUSER-then-audit-fail
+ stay out of scope.
+ UI review (2026-08-25) on `ed64500` approve Partial UI; High wrapping
+ catalog labels, Medium 44px hit area, Low UA fieldset chrome + prefix
+ aria-invalid on catalog errors. Parent closed those on `9f81257`.
+ Re-check of `9f81257` in flight. Explicitly NOT viewport/zoom sign-off.
+ Evidence review (2026-08-25) on `ed64500` keep-Partial; nine mapped
+ claims supported; no required corrections. API.md unique-sort vs raw
+ len>256 sentence aligned in this pin.
+ Verifier pending after UI re-check of `9f81257`.
  Local commits: `00549ec` (API), `b07c0de` (UI), `76299b0` (merge UI),
- this docs record. Not pushed.
+ `ed64500` (docs record), `9f81257` (checklist layout), this review pin.
+ Not pushed.
  Keep REDIS-005 Partial.
 ```
 
