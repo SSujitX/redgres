@@ -20,7 +20,7 @@ This document is the authoritative Redgres service-version matrix. Other documen
 | Redis Open Source | minor series | 8.2, 8.8 | 8.2, 8.8 | 8.8 | 8.2 |
 | PgBouncer | full release | release-pinned tested version | detected version must pass compatibility checks | release-pinned | release-pinned |
 
-PostgreSQL 17 remains supported for existing deployments and compatibility testing; a fresh installation defaults to PostgreSQL 18. Redis 8.2 is the conservative production default because it has a published long support window; Redis 8.8 is the current newest GA series and the initial latest-tested local-development target. These are initial targets, not implementation evidence.
+PostgreSQL 17 remains supported for existing deployments and compatibility testing; a fresh installation defaults to PostgreSQL 18. Redis 8.2 is the conservative production default because it has a published long support window. Redis 8.8 is the Redgres local latest-tested default ([ADR-008](decisions/ADR-008-service-version-policy.md)); it is not Hub `redis:latest`. On 2026-08-26 the official Redis image grouped `latest` with **8.10.1**, a series this matrix does not include. Discovery of a newer upstream series is not support (see §7). These are initial targets, not implementation evidence.
 
 PostgreSQL extension support is a second release-owned matrix keyed by PostgreSQL major, Ubuntu architecture and capability. The candidate registry and lifecycle are in [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md). A server major may be supported while a particular optional capability is unavailable; installer input cannot turn missing/unverified extension packaging into support. PgBouncer remains a separately pinned service, not an extension row.
 
@@ -104,3 +104,28 @@ A version-matrix change requires:
 6. A documented deprecation window before removing an already supported version, except for an urgent security reason.
 
 Discovery that an upstream version exists is not enough to claim support.
+
+## 8. Local skippable live-test pins (not §6 evidence)
+
+This section freezes artifacts for **skippable** local live tests when Docker is available. It does **not** make any version production-supported. It does **not** pass §6 (four jobs, PgBouncer, TLS, backup, restore). [TESTING.md](TESTING.md) already treats skippable live tests as distinct from that matrix. Redis CI matrix jobs stay blocked until `redis-ui` has Git provenance.
+
+First cell (local defaults: PostgreSQL 18 × Redis 8.8):
+
+| Service | Pin | Forbidden |
+|---|---|---|
+| PostgreSQL | `postgres:18.6` | `postgres:latest`, floating `postgres:18` |
+| Redis Open Source | `redis:8.8.2` | `redis:latest`, floating `redis:8.8` |
+| PgBouncer | omitted | any third-party Hub `pgbouncer` image |
+
+Sources (retrieved 2026-08-26, no `docker pull` in that review): PostgreSQL 18.6 news and [release notes](https://www.postgresql.org/docs/release/18.6/); [Docker Official Image `postgres`](https://hub.docker.com/_/postgres); Redis 8.8 [release notes](https://github.com/redis/redis/blob/8.8/00-RELEASENOTES) (8.8.2 SECURITY, 2026-08-17); [Docker Official Image `redis`](https://hub.docker.com/_/redis). PgBouncer publishes [source/tarballs](https://www.pgbouncer.org/downloads/) and distro packages, not a Docker Official Image (`library/pgbouncer` 404). Production PgBouncer remains host-native ([ADR-002](decisions/ADR-002-hybrid-deployment.md)).
+
+Official `postgres` and `redis` images do **not** start TLS by default. A plaintext loopback cell cannot satisfy §6 TLS/authentication.
+
+Hub tags are mutable. The Hub v2 index digest snapshot from 2026-08-26 is **not** pull evidence:
+
+```text
+postgres:18.6@sha256:1957b2ff3137e4ef7f3bc813e74fff50b1e1ffddc85c8b9d6f14ade972be8687
+redis:8.8.2@sha256:c514823c0ec1a40764df434efc2dc4ab5ec669c71c1cb00e4f7b1a694cee9fc3
+```
+
+Authoritative freeze is `RepoDigests` from the first successful `docker pull`, plus runtime `SHOW server_version` / `SHOW server_version_num` and Redis `INFO server` `redis_version`. If pull digests differ from the snapshot, freeze the pull digest. A green job on floating `latest` is not evidence.

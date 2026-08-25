@@ -5097,3 +5097,39 @@ Keep PG-011 Partial. Keep AUTH-006 Partial. Keep PG-008 Partial.
  Keep PG-009 Partial. Keep PG-010 Partial. Do not mark Complete.
 Not pushed.
 ```
+
+## Local skippable live-test image pins (2026-08-26)
+
+```text
+Requirement: OPS-006 / NFR live-matrix seam — freeze first-cell
+ artifacts only. Keep OPS-001..007 Planned. Keep PG-001..012 Partial.
+ Keep REDIS-001..008 Partial. Do not mark COMPATIBILITY.md §6 Complete.
+ Do not mark any TRACEABILITY row Complete. No live tests in this pin.
+Decision/ADR: ADR-008 (matrix stays PostgreSQL 17/18 × Redis 8.2/8.8;
+ Redis 8.8 remains local latest-tested default, not Hub latest).
+ ADR-002 (production PgBouncer host-native). Product: first skippable
+ cell is PostgreSQL 18 × Redis 8.8 plaintext loopback; omit PgBouncer;
+ do not add Redis 8.10 to the matrix.
+Evidence: redgres-compatibility-researcher (2026-08-26) on HEAD
+ ca8f428, no docker pull, no tests. Official sources: PostgreSQL 18.6
+ news + https://www.postgresql.org/docs/release/18.6/ ;
+ Docker Official Image postgres; Redis 8.8 00-RELEASENOTES (8.8.2
+ SECURITY 2026-08-17); Docker Official Image redis; pgbouncer.org
+ downloads; Hub library/pgbouncer 404.
+Pins frozen in docs/COMPATIBILITY.md §8 and linked from
+ docs/TESTING.md merge-gate row:
+ postgres:18.6 (reject latest and floating :18)
+ redis:8.8.2 (reject latest — Hub grouped latest with 8.10.1 on
+ 2026-08-26 — and floating :8.8)
+ PgBouncer omitted (no Docker Official Image).
+ Official images do not start TLS by default; this cell cannot
+ satisfy §6 TLS. Hub index digest snapshot recorded as non-authoritative
+ until first successful docker pull RepoDigests plus runtime
+ SHOW server_version / server_version_num and Redis INFO redis_version.
+ Canonical COMPATIBILITY.md §2 no longer calls Redis 8.8 the current
+ newest GA series.
+ Live harness not implemented this pin. Docker Desktop daemon was
+ not running on the parent Windows host (no pull).
+Keep all status rows unchanged. Do not mark Complete.
+Not pushed.
+```
