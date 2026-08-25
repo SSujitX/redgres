@@ -215,11 +215,61 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 | GET | `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` | Bounded rows/search (implemented; offset/limit; `q` max 128) |
 | DELETE | `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` | PK values + confirmations/reauth |
 | POST | `/api/v1/postgres/databases/{db}/truncate` | Explicit target confirmation + reauth |
-| GET | `/api/v1/postgres/security` | Cluster/project security overview |
+| GET | `/api/v1/postgres/security` | Cluster security overview (implemented; vault status is `not_available`) |
 
 Database/role names in URL segments are decoded then validated. Transport validation never replaces PostgreSQL identifier quoting.
 
-**Implemented now:** `GET /api/v1/postgres/databases`, `GET /api/v1/postgres/databases/{db}`, `GET /api/v1/postgres/databases/{db}/tables`, and `GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` require a session and the `postgres.read` capability. List and table list are unpaginated and hard-capped at 500 (`truncated: true` if more rows exist). Details include owner, size, collation/ctype, locale fields, connection count, and security flags. `saved_credential.status` is always `not_available` with reason `vault_not_implemented` in this slice; no vault query or decrypt occurs. Table list returns `{schema,name}` for `information_schema` `BASE TABLE` rows outside `pg_catalog` and `information_schema`. Schema/table names on the table list are result columns. Row browse quotes schema, table, and column names with `pgx.Identifier` and parameterizes values. Query `q` is optional (no minimum); more than 128 Unicode code points returns `400` `validation_error` with `fields.q` and does not query. `q` `ILIKE`s columns whose `data_type` contains `text`, `character`, or `citext` (same predicate as `database-app` `fetch_table_data` at `1c3e8e2`; `citext` stored as `USER-DEFINED` is therefore usually not searched). `%` and `_` in `q` remain LIKE wildcards. Default `limit` is 50; `limit<=0` or `limit>500` clamps to 50; `offset<0` clamps to 0; non-integer `limit`/`offset` is `400`. Response is `{columns,rows,total,offset,limit,request_id}`. A missing or non-`BASE TABLE` schema/table, `pg_catalog`/`information_schema`, or a table with no columns is `404` `not_found` (same message as a missing database). An existing table with columns and zero matching rows is `200` with `rows: []` and `total: 0`. Cell values use JSON-safe encoding (`null`, bool, finite numbers, `numeric` as string, `bytea` as PostgreSQL `\x` hex text, timestamps as RFC3339). Encode/connect/query failure is `503` `dependency_unavailable` and never a healthy empty page. Protected names, protected owners, templates, and `datallowconn=false` are omitted from the list and return the same `404` `not_found` as a missing database (not `protected_resource`); table list and rows do not open a per-database connection for those names. Invalid identifiers return `400` `validation_error` without querying. `GET /api/v1/healthz` does not ping PostgreSQL. `DELETE .../rows` is not implemented.
+**Implemented now:** `GET /api/v1/postgres/databases`, `GET /api/v1/postgres/databases/{db}`, `GET /api/v1/postgres/databases/{db}/tables`, `GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows`, and `GET /api/v1/postgres/security` require a session and the `postgres.read` capability. List and table list are unpaginated and hard-capped at 500 (`truncated: true` if more rows exist). Details include owner, size, collation/ctype, locale fields, connection count, and security flags. `saved_credential.status` is always `not_available` with reason `vault_not_implemented` in this slice; no vault query or decrypt occurs. Table list returns `{schema,name}` for `information_schema` `BASE TABLE` rows outside `pg_catalog` and `information_schema`. Schema/table names on the table list are result columns. Row browse quotes schema, table, and column names with `pgx.Identifier` and parameterizes values. Query `q` is optional (no minimum); more than 128 Unicode code points returns `400` `validation_error` with `fields.q` and does not query. `q` `ILIKE`s columns whose `data_type` contains `text`, `character`, or `citext` (same predicate as `database-app` `fetch_table_data` at `1c3e8e2`; `citext` stored as `USER-DEFINED` is therefore usually not searched). `%` and `_` in `q` remain LIKE wildcards. Default `limit` is 50; `limit<=0` or `limit>500` clamps to 50; `offset<0` clamps to 0; non-integer `limit`/`offset` is `400`. Response is `{columns,rows,total,offset,limit,request_id}`. A missing or non-`BASE TABLE` schema/table, `pg_catalog`/`information_schema`, or a table with no columns is `404` `not_found` (same message as a missing database). An existing table with columns and zero matching rows is `200` with `rows: []` and `total: 0`. Cell values use JSON-safe encoding (`null`, bool, finite numbers, `numeric` as string, `bytea` as PostgreSQL `\x` hex text, timestamps as RFC3339). Encode/connect/query failure is `503` `dependency_unavailable` and never a healthy empty page. Protected names, protected owners, templates, and `datallowconn=false` are omitted from the list and return the same `404` `not_found` as a missing database (not `protected_resource`); table list and rows do not open a per-database connection for those names. Invalid identifiers return `400` `validation_error` without querying. `GET /api/v1/healthz` does not ping PostgreSQL. `DELETE .../rows` is not implemented.
+
+**GET `/api/v1/postgres/security`** requires a session cookie and the `postgres.read` capability, and does not require CSRF. There are no query parameters. The path is exact. Other methods are `405` `method_not_allowed`. Missing session is `401` `unauthorized` with no `summary`, `databases`, `connections`, `saved_credential`, or `truncated` keys. Nil adapter or catalog/query failure is `503` `dependency_unavailable` (same operator copy as other PostgreSQL GETs) and is never a `200` with empty arrays. Responses are `Cache-Control: no-store`. This GET is not a mutation and does not write an audit event. Responses never include passwords, URLs, hashes, role OIDs, raw `datacl`, SQL, `err.Error()`, `connection_limit`, `size`, `size_bytes`, `has_saved_password`, `can_rotate`, `missing_password_count`, or URL templates.
+
+This cluster view is a documented delta from `GET /api/v1/postgres/databases`: it lists **all non-template** databases, including `postgres` and `database_console_vault`, so PUBLIC CONNECT on protected targets is visible. Templates (`datistemplate`) are omitted. `protected` is `true` when the row is not `policy.Manageable` (same policy as list/details, including configured deny-lists and the admin database/role). List/details still omit those names (`404`). Vault is not queried: `saved_credential` is always `{ "status": "not_available", "reason": "vault_not_implemented" }`.
+
+Database rows reuse existing catalog facts (`datname`, owner, `public_can_connect`, owner superuser/login/createdb/createrole/replication, `active_connections` from the existing `pg_stat_activity` count). Sort by database name ascending. Connection groups match database-app `get_security_overview` at `1c3e8e2`: `backend_type = 'client backend' AND pid <> pg_backend_pid()`, grouped by `datname`, `usename`, `client_addr`, `application_name`, `state`. `database` is `datname` or `"(none)"`; `user` is `usename` or `"(unknown)"`; `client` is `COALESCE(client_addr::text, 'local')`; `application` is `application_name` or `"—"`; `state` is `state` or `"unknown"`; `count` is the group size. No query text.
+
+`databases` and `connections` are arrays, never `null`. Each list is hard-capped at 500. `truncated` is a single flag: `true` if **either** the database list or the connection-group list exceeds 500. Summary counts are **before** those caps: `database_count` is the non-template database count; `public_connect_count` is how many of those have `public_can_connect`; `active_connection_count` is the sum of group `count`s; `connection_group_count` is the number of groups. The returned arrays are the first 500 of each sorted list.
+
+Success `200`:
+
+```json
+{
+  "summary": {
+    "database_count": 2,
+    "public_connect_count": 1,
+    "active_connection_count": 3,
+    "connection_group_count": 2
+  },
+  "saved_credential": { "status": "not_available", "reason": "vault_not_implemented" },
+  "databases": [
+    {
+      "name": "postgres",
+      "owner": "postgres",
+      "protected": true,
+      "public_can_connect": false,
+      "owner_is_superuser": true,
+      "owner_can_login": true,
+      "owner_createdb": true,
+      "owner_createrole": true,
+      "owner_replication": true,
+      "active_connections": 1
+    }
+  ],
+  "connections": [
+    {
+      "database": "postgres",
+      "user": "postgres",
+      "client": "local",
+      "application": "redgres",
+      "state": "idle",
+      "count": 1
+    }
+  ],
+  "truncated": false,
+  "request_id": "<32 hex>"
+}
+```
+
+PG-012 stays Partial: vault existence, missing-password counts, and rotation eligibility are not implemented. Live PostgreSQL 17/18 and viewport evidence are not this slice.
 
 ## Redis endpoints
 
