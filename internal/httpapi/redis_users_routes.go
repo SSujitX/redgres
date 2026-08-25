@@ -198,13 +198,13 @@ func (s *Server) handleRedisUsersCreate(w http.ResponseWriter, r *http.Request) 
 	sess := sessionFrom(r)
 	meta := redisCreateAuditMeta(body.Username, body.KeyPattern, body.Preset, body.QueueKind)
 	if s.redis == nil {
-		_ = s.audit.Record(sess.Username, "redis.user.create", body.Username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "redis.user.create", body.Username, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
 		return
 	}
 	created, err := s.redis.CreateUser(ctx, body.Username, body.KeyPattern, body.Preset, body.QueueKind, body.Commands)
 	if err != nil {
-		_ = s.audit.Record(sess.Username, "redis.user.create", body.Username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "redis.user.create", body.Username, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeRedisCreateError(w, r, err)
 		return
 	}
@@ -223,13 +223,13 @@ func (s *Server) handleRedisUsersCreate(w http.ResponseWriter, r *http.Request) 
 	if s.cfg.RedisPublicHost != "" && s.cfg.RedisPublicPort != "" {
 		primary, urlErr := redisadmin.ProjectConnectionURL(s.cfg.RedisPublicHost, s.cfg.RedisPublicPort, created.User.Username, created.Password)
 		if urlErr != nil {
-			_ = s.audit.Record(sess.Username, "redis.user.create", created.User.Username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+			_ = s.audit.Record(sess.Username, "redis.user.create", created.User.Username, "failure", requestID(r), requestClientIP(r), meta)
 			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
 			return
 		}
 		cred.URLs = &redisCreateURLs{Primary: primary}
 	}
-	if err := s.audit.Record(sess.Username, "redis.user.create", created.User.Username, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+	if err := s.audit.Record(sess.Username, "redis.user.create", created.User.Username, "success", requestID(r), requestClientIP(r), meta); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
@@ -257,13 +257,13 @@ func (s *Server) handleRedisUserPatch(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r)
 	meta := redisUpdateAuditMeta(username, body.KeyPattern, body.Preset, body.QueueKind)
 	if s.redis == nil {
-		_ = s.audit.Record(sess.Username, "redis.user.update", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "redis.user.update", username, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
 		return
 	}
 	user, err := s.redis.UpdatePermissions(ctx, username, body.KeyPattern, body.Preset, body.QueueKind, body.Commands)
 	if err != nil {
-		_ = s.audit.Record(sess.Username, "redis.user.update", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "redis.user.update", username, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeRedisUpdateError(w, r, err)
 		return
 	}
@@ -274,7 +274,7 @@ func (s *Server) handleRedisUserPatch(w http.ResponseWriter, r *http.Request) {
 	if user.Preset == redisadmin.PresetQueueWorker {
 		meta["queue_kind"] = user.QueueKind
 	}
-	if err := s.audit.Record(sess.Username, "redis.user.update", user.Username, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+	if err := s.audit.Record(sess.Username, "redis.user.update", user.Username, "success", requestID(r), requestClientIP(r), meta); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
@@ -295,13 +295,13 @@ func (s *Server) handleRedisUserRotate(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r)
 	meta := map[string]any{"username": username}
 	if s.redis == nil {
-		_ = s.audit.Record(sess.Username, "redis.user.rotate", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "redis.user.rotate", username, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
 		return
 	}
 	rotated, err := s.redis.RotateUser(ctx, username)
 	if err != nil {
-		_ = s.audit.Record(sess.Username, "redis.user.rotate", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "redis.user.rotate", username, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeRedisEnableError(w, r, err)
 		return
 	}
@@ -313,13 +313,13 @@ func (s *Server) handleRedisUserRotate(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.RedisPublicHost != "" && s.cfg.RedisPublicPort != "" {
 		primary, urlErr := redisadmin.ProjectConnectionURL(s.cfg.RedisPublicHost, s.cfg.RedisPublicPort, rotated.User.Username, rotated.Password)
 		if urlErr != nil {
-			_ = s.audit.Record(sess.Username, "redis.user.rotate", rotated.User.Username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+			_ = s.audit.Record(sess.Username, "redis.user.rotate", rotated.User.Username, "failure", requestID(r), requestClientIP(r), meta)
 			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
 			return
 		}
 		cred.URLs = &redisCreateURLs{Primary: primary}
 	}
-	if err := s.audit.Record(sess.Username, "redis.user.rotate", rotated.User.Username, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+	if err := s.audit.Record(sess.Username, "redis.user.rotate", rotated.User.Username, "success", requestID(r), requestClientIP(r), meta); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
@@ -347,7 +347,7 @@ func (s *Server) handleRedisUserDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := sessionFrom(r)
-	clientIP := auth.ClientIP(r.RemoteAddr)
+	clientIP := requestClientIP(r)
 	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword, clientIP, time.Now().UTC()); err != nil {
 		switch {
 		case errors.Is(err, auth.ErrRateLimited):
@@ -368,16 +368,16 @@ func (s *Server) handleRedisUserDelete(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	meta := map[string]any{"username": username}
 	if s.redis == nil {
-		_ = s.audit.Record(sess.Username, "redis.user.delete", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "redis.user.delete", username, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
 		return
 	}
 	if err := s.redis.DeleteUser(ctx, username); err != nil {
-		_ = s.audit.Record(sess.Username, "redis.user.delete", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "redis.user.delete", username, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeRedisEnableError(w, r, err)
 		return
 	}
-	if err := s.audit.Record(sess.Username, "redis.user.delete", username, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+	if err := s.audit.Record(sess.Username, "redis.user.delete", username, "success", requestID(r), requestClientIP(r), meta); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
@@ -407,17 +407,17 @@ func (s *Server) setRedisUserEnabled(w http.ResponseWriter, r *http.Request, ena
 	sess := sessionFrom(r)
 	meta := map[string]any{"username": username}
 	if s.redis == nil {
-		_ = s.audit.Record(sess.Username, action, username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, action, username, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
 		return
 	}
 	user, err := s.redis.SetEnabled(ctx, username, enabled)
 	if err != nil {
-		_ = s.audit.Record(sess.Username, action, username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, action, username, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeRedisEnableError(w, r, err)
 		return
 	}
-	if err := s.audit.Record(sess.Username, action, username, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+	if err := s.audit.Record(sess.Username, action, username, "success", requestID(r), requestClientIP(r), meta); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}

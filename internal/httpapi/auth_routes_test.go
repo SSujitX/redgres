@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/SSujitX/redgres/internal/auth"
 )
@@ -548,5 +550,183 @@ func TestSessionToolLinksRedisInsightAlone(t *testing.T) {
 	}
 	if _, ok := links["pgadmin"]; ok {
 		t.Fatalf("empty pgadmin present: %#v", links)
+	}
+}
+
+func seedLoginFailures(t *testing.T, srv *Server, username, ip string, n int, now time.Time) {
+	t.Helper()
+	store := auth.AttemptStore{DB: srv.db}
+	for i := 0; i < n; i++ {
+		if err := store.Record(username, ip, false, now.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestLoginIgnoresSpoofedCFConnectingIPFromNonLoopback(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	now := time.Now().UTC()
+	seedLoginFailures(t, srv, "admin", "10.0.0.8", 5, now)
+
+	rec := httptest.NewRecorder()
+	req := loginRequest(ownerPassword)
+	req.RemoteAddr = "10.0.0.8:9999"
+	req.Header.Set("CF-Connecting-IP", "203.0.113.10")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("spoofed header still used remote IP; status = %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = loginRequest(ownerPassword)
+	req.RemoteAddr = "10.0.0.9:9999"
+	req.Header.Set("CF-Connecting-IP", "203.0.113.10")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("spoofed CF-Connecting-IP locked a different RemoteAddr: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLoginLoopbackUsesValidCFConnectingIP(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	now := time.Now().UTC()
+	seedLoginFailures(t, srv, "admin", "203.0.113.10", 5, now)
+
+	rec := httptest.NewRecorder()
+	req := loginRequest(ownerPassword)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("CF-Connecting-IP", "203.0.113.10")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("loopback+header did not use header IP: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = loginRequest(ownerPassword)
+	req.RemoteAddr = "127.0.0.1:12345"
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("loopback without header used header IP: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLoginLoopbackSpraySkippedWithoutOrInvalidCFConnectingIP(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	now := time.Now().UTC()
+	for i := 0; i < 20; i++ {
+		seedLoginFailures(t, srv, "unknown"+strconv.Itoa(i), "127.0.0.1", 1, now.Add(time.Duration(i)*time.Second))
+	}
+
+	rec := httptest.NewRecorder()
+	req := loginRequest(ownerPassword)
+	req.RemoteAddr = "127.0.0.1:12345"
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("loopback spray without header = %d %s", rec.Code, rec.Body.String())
+	}
+
+	for _, invalid := range []string{"", "not-an-ip", "203.0.113.10,198.51.100.1", "203.0.113.10:443"} {
+		rec = httptest.NewRecorder()
+		req = loginRequest("wrong-password-x")
+		req.RemoteAddr = "127.0.0.1:12345"
+		if invalid != "" {
+			req.Header.Set("CF-Connecting-IP", invalid)
+		}
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("invalid header %q spray-locked loopback: %d %s", invalid, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestLoginLoopbackSprayUsesValidCFConnectingIP(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	now := time.Now().UTC()
+	for i := 0; i < 20; i++ {
+		seedLoginFailures(t, srv, "unknown"+strconv.Itoa(i), "203.0.113.10", 1, now.Add(time.Duration(i)*time.Second))
+	}
+
+	rec := httptest.NewRecorder()
+	req := loginRequest(ownerPassword)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("CF-Connecting-IP", "203.0.113.10")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("loopback+header spray = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLoginXForwardedForNeverAffectsLockout(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	now := time.Now().UTC()
+	for i := 0; i < 20; i++ {
+		seedLoginFailures(t, srv, "unknown"+strconv.Itoa(i), "203.0.113.10", 1, now.Add(time.Duration(i)*time.Second))
+	}
+
+	rec := httptest.NewRecorder()
+	req := loginRequest(ownerPassword)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "203.0.113.10")
+	req.Header.Set("X-Real-IP", "203.0.113.10")
+	req.Header.Set("True-Client-IP", "203.0.113.10")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("forwarded headers affected lockout: %d %s", rec.Code, rec.Body.String())
+	}
+
+	seedLoginFailures(t, srv, "admin", "127.0.0.1", 5, time.Now().UTC().Add(time.Minute))
+	rec = httptest.NewRecorder()
+	req = loginRequest(ownerPassword)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "198.51.100.20")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("X-Forwarded-For bypassed username lockout: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConcurrentLoginReservesFailureBeforeHash(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	const extra = 3
+	n := 5 + extra
+	codes := make([]int, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			req := loginRequest("wrong-password-x")
+			req.RemoteAddr = "10.0.0.8:1234"
+			h.ServeHTTP(rec, req)
+			codes[i] = rec.Code
+		}(i)
+	}
+	wg.Wait()
+	unauthorized, limited := 0, 0
+	for _, code := range codes {
+		switch code {
+		case http.StatusUnauthorized:
+			unauthorized++
+		case http.StatusTooManyRequests:
+			limited++
+		default:
+			t.Fatalf("status %d codes=%v", code, codes)
+		}
+	}
+	if unauthorized != 5 || limited != extra {
+		t.Fatalf("unauthorized=%d limited=%d codes=%v", unauthorized, limited, codes)
 	}
 }

@@ -11,7 +11,7 @@ The Redis console already uses SQLite successfully for one-owner auth, sessions,
 
 Use SQLite via `modernc.org/sqlite` for owner hashes, hashed sessions/CSRF, login attempts, audit events, and operation state. Use WAL, foreign keys, migrations, constrained connections, and online backups.
 
-Authentication attempt state is bounded to 1,000 recent rows. Login uses a normalized username + client-IP stream plus an IP-wide spray query; AUTH-006 reauthentication uses a distinct logical stream in the same table so destructive-action failures cannot lock out login and login spray cannot bypass or satisfy reauth. Attempt-store failures fail closed.
+Authentication attempt state is bounded to 1,000 recent rows. Login uses a normalized username + effective-client-IP stream plus an IP-wide spray query that does not apply to loopback identity; AUTH-006 reauthentication uses a distinct logical stream in the same table so destructive-action failures cannot lock out login and login spray cannot bypass or satisfy reauth. Reserving a failure before password hashing and recording login/reauth success (clear failures + insert success) are each one SQLite transaction. Attempt-store failures fail closed. Concurrent Argon2id hashing is serialized in-process to one, matching this single-writer console.
 
 Owner replacement is one SQLite transaction: update the single owner, revoke that owner's sessions, and insert the `owner.replace` audit event. If any step or commit fails, none of those changes take effect.
 
@@ -44,6 +44,7 @@ Do not migrate these to TEXT unless a later numbered file is required after the 
 - Single-writer/single-instance limitation is explicit.
 - SQLite is not used for project credentials.
 - Bounded shared attempt storage avoids a new migration while preserving separate login and reauth throttle semantics.
+- Failure reservation before Argon2id and success clear+insert cannot interleave as separate statements because those writes commit atomically.
 - Owner replacement cannot leave a new password with old sessions or omit its audit event because those writes commit atomically.
 - Multi-instance HA would require a future storage/coordination ADR and migration.
 - Copying the main DB alone during WAL activity is not a valid backup.

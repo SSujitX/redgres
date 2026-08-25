@@ -96,7 +96,7 @@ func (s *Server) handlePostgresDatabasesCreate(w http.ResponseWriter, r *http.Re
 	sess := sessionFrom(r)
 	meta := map[string]any{"database": body.Database, "owner": body.Owner}
 	if s.postgres == nil {
-		_ = s.audit.Record(sess.Username, "postgres.database.create", body.Database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "postgres.database.create", body.Database, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
@@ -126,7 +126,7 @@ func (s *Server) handlePostgresDatabasesCreate(w http.ResponseWriter, r *http.Re
 	if urls.Direct != "" || urls.Pooled != "" {
 		cred.URLs = &urls
 	}
-	if err := s.audit.Record(sess.Username, "postgres.database.create", created.Database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), map[string]any{"database": created.Database, "owner": created.Owner}); err != nil {
+	if err := s.audit.Record(sess.Username, "postgres.database.create", created.Database, "success", requestID(r), requestClientIP(r), map[string]any{"database": created.Database, "owner": created.Owner}); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
@@ -252,7 +252,7 @@ func (s *Server) handlePostgresConnectionReveal(w http.ResponseWriter, r *http.R
 	}
 	sess := sessionFrom(r)
 	meta := map[string]any{"database": revealed.Database, "owner": revealed.Owner}
-	if err := s.audit.Record(sess.Username, "postgres.credential.reveal", revealed.Database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+	if err := s.audit.Record(sess.Username, "postgres.credential.reveal", revealed.Database, "success", requestID(r), requestClientIP(r), meta); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
@@ -285,7 +285,7 @@ func (s *Server) handlePostgresCredentialsRotate(w http.ResponseWriter, r *http.
 	sess := sessionFrom(r)
 	meta := map[string]any{"database": name}
 	if s.postgres == nil {
-		_ = s.audit.Record(sess.Username, "postgres.credential.rotate", name, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "postgres.credential.rotate", name, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
@@ -295,7 +295,7 @@ func (s *Server) handlePostgresCredentialsRotate(w http.ResponseWriter, r *http.
 	if err != nil {
 		var unsynced postgresadmin.VaultUnsynced
 		if errors.As(err, &unsynced) {
-			_ = s.audit.Record(sess.Username, "postgres.credential.rotate", unsynced.Database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), map[string]any{"database": unsynced.Database, "owner": unsynced.Owner})
+			_ = s.audit.Record(sess.Username, "postgres.credential.rotate", unsynced.Database, "failure", requestID(r), requestClientIP(r), map[string]any{"database": unsynced.Database, "owner": unsynced.Owner})
 		}
 		s.writePostgresError(w, r, err)
 		return
@@ -319,7 +319,7 @@ func (s *Server) handlePostgresCredentialsRotate(w http.ResponseWriter, r *http.
 	if urls.Direct != "" || urls.Pooled != "" {
 		cred.URLs = &urls
 	}
-	if err := s.audit.Record(sess.Username, "postgres.credential.rotate", rotated.Database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), map[string]any{"database": rotated.Database, "owner": rotated.Owner}); err != nil {
+	if err := s.audit.Record(sess.Username, "postgres.credential.rotate", rotated.Database, "success", requestID(r), requestClientIP(r), map[string]any{"database": rotated.Database, "owner": rotated.Owner}); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
@@ -373,7 +373,7 @@ func (s *Server) handlePostgresDatabasesDuplicate(w http.ResponseWriter, r *http
 	sess := sessionFrom(r)
 	meta := map[string]any{"database": body.Database, "owner": body.Owner, "source": source}
 	if s.postgres == nil {
-		_ = s.audit.Record(sess.Username, "postgres.database.duplicate", body.Database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "postgres.database.duplicate", body.Database, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
@@ -403,7 +403,7 @@ func (s *Server) handlePostgresDatabasesDuplicate(w http.ResponseWriter, r *http
 	if urls.Direct != "" || urls.Pooled != "" {
 		cred.URLs = &urls
 	}
-	if err := s.audit.Record(sess.Username, "postgres.database.duplicate", created.Database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), map[string]any{"database": created.Database, "owner": created.Owner, "source": source}); err != nil {
+	if err := s.audit.Record(sess.Username, "postgres.database.duplicate", created.Database, "success", requestID(r), requestClientIP(r), map[string]any{"database": created.Database, "owner": created.Owner, "source": source}); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
@@ -572,7 +572,7 @@ func (s *Server) handlePostgresRowsDelete(w http.ResponseWriter, r *http.Request
 	}
 	sess := sessionFrom(r)
 	meta := postgresRowsDeleteMeta(database, schema, table)
-	clientIP := auth.ClientIP(r.RemoteAddr)
+	clientIP := requestClientIP(r)
 	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword, clientIP, time.Now().UTC()); err != nil {
 		switch {
 		case errors.Is(err, auth.ErrRateLimited):
@@ -592,19 +592,19 @@ func (s *Server) handlePostgresRowsDelete(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), postgresRowsDeleteTimeout)
 	defer cancel()
 	if s.postgres == nil {
-		_ = s.audit.Record(sess.Username, "postgres.rows.delete", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "postgres.rows.delete", database, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
 	deleted, err := s.postgres.DeleteRows(ctx, database, schema, table, body.PrimaryKeyValues)
 	if err != nil {
-		_ = s.audit.Record(sess.Username, "postgres.rows.delete", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "postgres.rows.delete", database, "failure", requestID(r), requestClientIP(r), meta)
 		s.writePostgresError(w, r, err)
 		return
 	}
 	successMeta := postgresRowsDeleteMeta(database, schema, table)
 	successMeta["deleted"] = deleted
-	if err := s.audit.Record(sess.Username, "postgres.rows.delete", database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), successMeta); err != nil {
+	if err := s.audit.Record(sess.Username, "postgres.rows.delete", database, "success", requestID(r), requestClientIP(r), successMeta); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
@@ -644,7 +644,7 @@ func (s *Server) handlePostgresDatabaseTruncate(w http.ResponseWriter, r *http.R
 	}
 	sess := sessionFrom(r)
 	meta := map[string]any{"database": database}
-	clientIP := auth.ClientIP(r.RemoteAddr)
+	clientIP := requestClientIP(r)
 	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword, clientIP, time.Now().UTC()); err != nil {
 		switch {
 		case errors.Is(err, auth.ErrRateLimited):
@@ -664,13 +664,13 @@ func (s *Server) handlePostgresDatabaseTruncate(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithTimeout(r.Context(), postgresTruncateTimeout)
 	defer cancel()
 	if s.postgres == nil {
-		_ = s.audit.Record(sess.Username, "postgres.database.truncate", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "postgres.database.truncate", database, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
 	result, err := s.postgres.Truncate(ctx, database)
 	if err != nil {
-		_ = s.audit.Record(sess.Username, "postgres.database.truncate", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "postgres.database.truncate", database, "failure", requestID(r), requestClientIP(r), meta)
 		s.writePostgresError(w, r, err)
 		return
 	}
@@ -679,7 +679,7 @@ func (s *Server) handlePostgresDatabaseTruncate(w http.ResponseWriter, r *http.R
 		failed = []string{}
 	}
 	successMeta := map[string]any{"database": database, "truncated": result.Truncated, "total_tables": result.TotalTables}
-	if err := s.audit.Record(sess.Username, "postgres.database.truncate", database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), successMeta); err != nil {
+	if err := s.audit.Record(sess.Username, "postgres.database.truncate", database, "success", requestID(r), requestClientIP(r), successMeta); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
@@ -723,7 +723,7 @@ func (s *Server) handlePostgresDatabaseDrop(w http.ResponseWriter, r *http.Reque
 	}
 	sess := sessionFrom(r)
 	meta := map[string]any{"database": database}
-	clientIP := auth.ClientIP(r.RemoteAddr)
+	clientIP := requestClientIP(r)
 	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword, clientIP, time.Now().UTC()); err != nil {
 		switch {
 		case errors.Is(err, auth.ErrRateLimited):
@@ -743,13 +743,13 @@ func (s *Server) handlePostgresDatabaseDrop(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), postgresDropTimeout)
 	defer cancel()
 	if s.postgres == nil {
-		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
 	result, err := s.postgres.Drop(ctx, database)
 	if err != nil {
-		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), requestClientIP(r), meta)
 		s.writePostgresError(w, r, err)
 		return
 	}
@@ -757,7 +757,7 @@ func (s *Server) handlePostgresDatabaseDrop(w http.ResponseWriter, r *http.Reque
 	if result.DroppedRole != "" {
 		successMeta["dropped_role"] = result.DroppedRole
 	}
-	if err := s.audit.Record(sess.Username, "postgres.database.drop", database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), successMeta); err != nil {
+	if err := s.audit.Record(sess.Username, "postgres.database.drop", database, "success", requestID(r), requestClientIP(r), successMeta); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}

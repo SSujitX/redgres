@@ -76,12 +76,92 @@ func ClientIP(remoteAddr string) string {
 	return host
 }
 
+func IsLoopbackIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.IsLoopback()
+}
+
+func parseSingleClientIP(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.Contains(trimmed, ",") {
+		return "", false
+	}
+	if _, _, err := net.SplitHostPort(trimmed); err == nil {
+		return "", false
+	}
+	if net.ParseIP(trimmed) == nil {
+		return "", false
+	}
+	return trimmed, true
+}
+
+// EffectiveClientIP is RemoteAddr host, except when that host is loopback and
+// CF-Connecting-IP is exactly one net.ParseIP-valid address.
+func EffectiveClientIP(remoteAddr, cfConnectingIP string) string {
+	host := ClientIP(remoteAddr)
+	if !IsLoopbackIP(host) {
+		return host
+	}
+	if ip, ok := parseSingleClientIP(cfConnectingIP); ok {
+		return ip
+	}
+	return host
+}
+
+type attemptQuery interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
 func (s AttemptStore) Record(username, ip string, succeeded bool, now time.Time) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := insertAttempt(tx, username, ip, succeeded, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s AttemptStore) ReserveFailure(username, ip string, now time.Time) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	remaining, err := lockoutRemaining(tx, username, ip, now)
+	if err != nil {
+		return err
+	}
+	if remaining > 0 {
+		return RateLimitError{Remaining: remaining}
+	}
+	if err := insertAttempt(tx, username, ip, false, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s AttemptStore) RecordSuccess(username, ip string, now time.Time) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(
+		`DELETE FROM login_attempts WHERE username = ? AND client_ip = ? AND succeeded = 0`,
+		NormalizeUsername(username), ip,
+	); err != nil {
+		return err
+	}
+	if err := insertAttempt(tx, username, ip, true, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func insertAttempt(tx *sql.Tx, username, ip string, succeeded bool, now time.Time) error {
 	cutoff := now.Add(-lockoutWindow).UTC().Format(time.RFC3339Nano)
 	if _, err := tx.Exec(`DELETE FROM login_attempts WHERE attempted_at < ?`, cutoff); err != nil {
 		return err
@@ -92,14 +172,12 @@ func (s AttemptStore) Record(username, ip string, succeeded bool, now time.Time)
 	); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(
+	_, err := tx.Exec(
 		`DELETE FROM login_attempts
 		 WHERE id NOT IN (SELECT id FROM login_attempts ORDER BY id DESC LIMIT ?)`,
 		maxStoredAttempts,
-	); err != nil {
-		return err
-	}
-	return tx.Commit()
+	)
+	return err
 }
 
 func (s AttemptStore) ClearFailures(username, ip string) error {
@@ -111,8 +189,12 @@ func (s AttemptStore) ClearFailures(username, ip string) error {
 }
 
 func (s AttemptStore) LockoutRemaining(username, ip string, now time.Time) (time.Duration, error) {
+	return lockoutRemaining(s.DB, username, ip, now)
+}
+
+func lockoutRemaining(q attemptQuery, username, ip string, now time.Time) (time.Duration, error) {
 	since := now.Add(-lockoutWindow).UTC().Format(time.RFC3339Nano)
-	rows, err := s.DB.Query(
+	rows, err := q.Query(
 		`SELECT succeeded, attempted_at FROM login_attempts
 		 WHERE username = ? AND client_ip = ? AND attempted_at >= ?
 		 ORDER BY attempted_at ASC`,
@@ -162,6 +244,9 @@ func (s AttemptStore) LockoutRemaining(username, ip string, now time.Time) (time
 }
 
 func (s AttemptStore) IPLockoutRemaining(ip string, now time.Time) (time.Duration, error) {
+	if IsLoopbackIP(ip) {
+		return 0, nil
+	}
 	since := now.Add(-lockoutWindow).UTC().Format(time.RFC3339Nano)
 	var failures int
 	var last string
@@ -190,6 +275,14 @@ func (s AttemptStore) IPLockoutRemaining(ip string, now time.Time) (time.Duratio
 
 func (s AttemptStore) RecordReauth(username, ip string, succeeded bool, now time.Time) error {
 	return s.Record(username, reauthIPPrefix+ip, succeeded, now)
+}
+
+func (s AttemptStore) ReserveReauthFailure(username, ip string, now time.Time) error {
+	return s.ReserveFailure(username, reauthIPPrefix+ip, now)
+}
+
+func (s AttemptStore) RecordReauthSuccess(username, ip string, now time.Time) error {
+	return s.RecordSuccess(username, reauthIPPrefix+ip, now)
 }
 
 func (s AttemptStore) ClearReauthFailures(username, ip string) error {

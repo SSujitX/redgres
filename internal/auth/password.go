@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 )
+
+var argon2Mu sync.Mutex
 
 const (
 	AlgorithmArgon2id  = "argon2id"
@@ -81,7 +84,7 @@ func HashWithParams(password string, p Params) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	sum := argon2.IDKey([]byte(password), salt, p.Time, p.Memory, p.Parallelism, p.KeyLen)
+	sum := argon2IDKey([]byte(password), salt, p.Time, p.Memory, p.Parallelism, p.KeyLen)
 	return encode(p, salt, sum), nil
 }
 
@@ -90,7 +93,7 @@ func Verify(encoded, password string) error {
 	if err != nil {
 		return err
 	}
-	computed := argon2.IDKey([]byte(password), salt, p.Time, p.Memory, p.Parallelism, uint32(len(sum)))
+	computed := argon2IDKey([]byte(password), salt, p.Time, p.Memory, p.Parallelism, uint32(len(sum)))
 	if subtle.ConstantTimeCompare(sum, computed) != 1 {
 		return ErrMismatchedHash
 	}
@@ -115,6 +118,12 @@ func ValidatePassword(password, username string) error {
 		return ErrWeakPassword
 	}
 	return nil
+}
+
+func argon2IDKey(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+	argon2Mu.Lock()
+	defer argon2Mu.Unlock()
+	return argon2.IDKey(password, salt, time, memory, threads, keyLen)
 }
 
 func encode(p Params, salt, sum []byte) string {

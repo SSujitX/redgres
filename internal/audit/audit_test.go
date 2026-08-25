@@ -41,6 +41,39 @@ func TestAuditRejectsNestedSecrets(t *testing.T) {
 	}
 }
 
+func TestAuditRejectsNestedSecretUnderAllowedKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redgres.db")
+	db, err := database.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	store := Store{DB: db}
+	for name, metadata := range map[string]map[string]any{
+		"nested_map": {"username": map[string]any{"password": "canary-password-value"}},
+		"nested_array": {"username": []any{
+			map[string]any{"secret": "canary-secret-value"},
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := store.Record("admin", "owner.login", "admin", "success", "aabbccddeeff00112233445566778899", "127.0.0.1", metadata)
+			if !errors.Is(err, ErrUnsafeMetadata) {
+				t.Fatalf("got %v, want ErrUnsafeMetadata", err)
+			}
+			var count int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM audit_events`).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != 0 {
+				t.Fatalf("unsafe audit event inserted: %d", count)
+			}
+		})
+	}
+}
+
 func TestAuditRejectsActionSpecificUnknownKeyAndURLValue(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "redgres.db")
 	db, err := database.Open(path)

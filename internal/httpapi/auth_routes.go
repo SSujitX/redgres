@@ -97,6 +97,20 @@ func sessionFrom(r *http.Request) auth.Session {
 	return sess
 }
 
+func requestClientIP(r *http.Request) string {
+	cf := ""
+	if vals := r.Header.Values("CF-Connecting-IP"); len(vals) == 1 {
+		cf = vals[0]
+	}
+	return auth.EffectiveClientIP(r.RemoteAddr, cf)
+}
+
+func (s *Server) writeLoginRateLimited(w http.ResponseWriter, r *http.Request, remaining time.Duration, username, ip string) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(remaining.Seconds())+1))
+	_ = s.audit.Record(username, "owner.login", username, "rate_limited", requestID(r), ip, map[string]any{"username": username})
+	s.writeError(w, r, http.StatusTooManyRequests, CodeRateLimited, rateLimitedMessage)
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !auth.SameOrigin(r.Header.Get("Origin"), r.Header.Get("Referer"), s.cfg.BaseURL) {
 		s.writeError(w, r, http.StatusForbidden, CodeCSRFInvalid, originFailedMessage)
@@ -111,7 +125,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := auth.NormalizeUsername(body.Username)
-	ip := auth.ClientIP(r.RemoteAddr)
+	ip := requestClientIP(r)
 	store := auth.AttemptStore{DB: s.db}
 	now := time.Now().UTC()
 
@@ -125,64 +139,50 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if auth.ValidateUsername(username) != nil {
 			auditUsername = "invalid_username"
 		}
-		w.Header().Set("Retry-After", strconv.Itoa(int(ipRemaining.Seconds())+1))
-		_ = s.audit.Record(auditUsername, "owner.login", auditUsername, "rate_limited", requestID(r), ip, map[string]any{"username": auditUsername})
-		s.writeError(w, r, http.StatusTooManyRequests, CodeRateLimited, rateLimitedMessage)
+		s.writeLoginRateLimited(w, r, ipRemaining, auditUsername, ip)
 		return
 	}
 	if err := auth.ValidateUsername(username); err != nil {
-		auth.VerifyUnknown(body.Password)
-		if err := store.Record("invalid_username", ip, false, now); err != nil {
+		if err := store.ReserveFailure("invalid_username", ip, now); err != nil {
+			if errors.Is(err, auth.ErrRateLimited) {
+				s.writeLoginRateLimited(w, r, auth.RateLimitRemaining(err), "invalid_username", ip)
+				return
+			}
 			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 			return
 		}
+		auth.VerifyUnknown(body.Password)
 		_ = s.audit.Record("invalid_username", "owner.login", "invalid_username", "failure", requestID(r), ip, map[string]any{"username": "invalid_username"})
 		s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, loginGenericMessage)
 		return
 	}
 
-	remaining, err := store.LockoutRemaining(username, ip, now)
-	if err != nil {
+	owner, lookupErr := auth.LookupOwnerByUsername(s.db, username)
+	if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
-	if remaining > 0 {
-		w.Header().Set("Retry-After", strconv.Itoa(int(remaining.Seconds())+1))
-		_ = s.audit.Record(username, "owner.login", username, "rate_limited", requestID(r), ip, map[string]any{"username": username})
-		s.writeError(w, r, http.StatusTooManyRequests, CodeRateLimited, rateLimitedMessage)
+	if err := store.ReserveFailure(username, ip, now); err != nil {
+		if errors.Is(err, auth.ErrRateLimited) {
+			s.writeLoginRateLimited(w, r, auth.RateLimitRemaining(err), username, ip)
+			return
+		}
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
-
-	owner, lookupErr := auth.LookupOwnerByUsername(s.db, username)
-	if lookupErr != nil {
-		if !errors.Is(lookupErr, sql.ErrNoRows) {
-			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
-			return
-		}
+	if errors.Is(lookupErr, sql.ErrNoRows) {
 		auth.VerifyUnknown(body.Password)
-		if err := store.Record(username, ip, false, now); err != nil {
-			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
-			return
-		}
 		_ = s.audit.Record(username, "owner.login", username, "failure", requestID(r), ip, map[string]any{"username": username})
 		s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, loginGenericMessage)
 		return
 	}
 	if err := auth.Verify(owner.PasswordHash, body.Password); err != nil {
-		if err := store.Record(username, ip, false, now); err != nil {
-			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
-			return
-		}
 		_ = s.audit.Record(owner.Username, "owner.login", username, "failure", requestID(r), ip, map[string]any{"username": username})
 		s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, loginGenericMessage)
 		return
 	}
 
-	if err := store.ClearFailures(username, ip); err != nil {
-		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
-		return
-	}
-	if err := store.Record(username, ip, true, now); err != nil {
+	if err := store.RecordSuccess(username, ip, now); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
@@ -206,7 +206,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r)
-	if err := s.audit.Record(sess.Username, "owner.logout", sess.Username, "success", requestID(r), auth.ClientIP(r.RemoteAddr), map[string]any{"username": sess.Username}); err != nil {
+	if err := s.audit.Record(sess.Username, "owner.logout", sess.Username, "success", requestID(r), requestClientIP(r), map[string]any{"username": sess.Username}); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}

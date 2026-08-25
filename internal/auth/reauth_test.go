@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -96,5 +97,44 @@ func TestReauthenticateFailsClosedWhenAttemptPersistenceFails(t *testing.T) {
 	err := Reauthenticate(db, "admin", "wrong-password-xx", "127.0.0.1", nowUTC())
 	if err == nil || errors.Is(err, ErrReauthRequired) || errors.Is(err, ErrRateLimited) {
 		t.Fatalf("persistence failure mapped to %v", err)
+	}
+}
+
+func TestConcurrentReauthenticateReservesFailureBeforeHash(t *testing.T) {
+	db := testDB(t)
+	mustOwner(t, db)
+	const extra = 3
+	n := lockoutThreshold + extra
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	now := nowUTC()
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = Reauthenticate(db, "admin", "wrong-password-xx", "10.0.0.8", now)
+		}(i)
+	}
+	wg.Wait()
+	mismatch, limited := 0, 0
+	for _, err := range errs {
+		switch {
+		case errors.Is(err, ErrReauthRequired):
+			mismatch++
+		case errors.Is(err, ErrRateLimited):
+			limited++
+		default:
+			t.Fatalf("err %v", err)
+		}
+	}
+	if mismatch != lockoutThreshold || limited != extra {
+		t.Fatalf("mismatch=%d limited=%d", mismatch, limited)
+	}
+	var stored int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM login_attempts WHERE succeeded = 0`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != lockoutThreshold {
+		t.Fatalf("stored failures = %d, want %d", stored, lockoutThreshold)
 	}
 }
