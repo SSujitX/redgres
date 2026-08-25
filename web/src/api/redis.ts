@@ -153,4 +153,40 @@ export async function rotateRedisUser(username: string, csrf: string, init: Requ
   );
 }
 
+export type RedisPatchUserPayload = RedisToggleUserPayload;
+
+export type RedisPatchUserOptions = {
+  keyPattern: string;
+  preset: RedisAclPreset;
+  queueKind?: RedisAclQueueKind;
+};
+
+export async function patchRedisUser(
+  username: string,
+  csrf: string,
+  options: RedisPatchUserOptions,
+  init: RequestInit = {},
+) {
+  const body: {
+    key_pattern: string;
+    preset: RedisAclPreset;
+    queue_kind?: RedisAclQueueKind;
+  } = {
+    key_pattern: options.keyPattern,
+    preset: options.preset,
+  };
+  if (options.preset === "queue-worker") {
+    body.queue_kind = options.queueKind ?? "lists";
+  }
+  return apiRequest<RedisPatchUserPayload & ApiErrorBody>(
+    `/api/v1/redis/users/${encodeURIComponent(username)}`,
+    {
+      ...init,
+      method: "PATCH",
+      csrf,
+      body: JSON.stringify(body),
+    },
+  );
+}
+
 export { errorMessage };

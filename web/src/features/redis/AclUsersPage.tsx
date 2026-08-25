@@ -6,6 +6,7 @@ import {
   errorMessage,
   fetchRedisUser,
   fetchRedisUsers,
+  patchRedisUser,
   rotateRedisUser,
   type RedisAclPreset,
   type RedisAclQueueKind,
@@ -14,6 +15,7 @@ import {
 import { displayText } from "../../text/displayText";
 import CreateAclUserForm from "./CreateAclUserForm";
 import CredentialTicket, { type ShownCredential } from "./CredentialTicket";
+import EditPermissionsDialog from "./EditPermissionsDialog";
 import RotatePasswordDialog from "./RotatePasswordDialog";
 
 const sessionExpired = "Your session has expired. Sign in again to continue.";
@@ -121,6 +123,20 @@ function IsolatedId({ value }: { value: string }) {
   return <span className="bidi-isolate identifier">{displayText(value)}</span>;
 }
 
+function namedPreset(value: string): RedisAclPreset {
+  if (value === "read-only" || value === "queue-worker" || value === "cache-read-write") {
+    return value;
+  }
+  return "cache-read-write";
+}
+
+function namedQueueKind(value: string): RedisAclQueueKind {
+  if (value === "streams" || value === "sorted-sets" || value === "lists") {
+    return value;
+  }
+  return "lists";
+}
+
 function parseCredential(raw: unknown): ShownCredential | null {
   const record = asRecord(raw);
   if (!record) {
@@ -161,10 +177,14 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
   const [rotateOpen, setRotateOpen] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [rotateError, setRotateError] = useState("");
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editError, setEditError] = useState("");
   const selectionAbort = useRef<AbortController | null>(null);
   const listAbort = useRef<AbortController | null>(null);
   const toggleAbort = useRef<AbortController | null>(null);
   const rotateAbort = useRef<AbortController | null>(null);
+  const editAbort = useRef<AbortController | null>(null);
   const inspectorRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -184,6 +204,8 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
       clearTicket();
       setCreateOpen(false);
       setRotateOpen(false);
+      setEditOpen(false);
+      setEditError("");
       setList({ kind: "session_expired" });
       return;
     }
@@ -227,6 +249,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
       selectionAbort.current?.abort();
       toggleAbort.current?.abort();
       rotateAbort.current?.abort();
+      editAbort.current?.abort();
     };
   }, []);
 
@@ -240,6 +263,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     selectionAbort.current?.abort();
     toggleAbort.current?.abort();
     rotateAbort.current?.abort();
+    editAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
     setSelected(username);
@@ -250,6 +274,9 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     setRotateOpen(false);
     setRotating(false);
     setRotateError("");
+    setEditOpen(false);
+    setEditing(false);
+    setEditError("");
     setLoadingDetail(true);
     void loadDetail(username, controller);
   }
@@ -265,6 +292,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     selectionAbort.current?.abort();
     toggleAbort.current?.abort();
     rotateAbort.current?.abort();
+    editAbort.current?.abort();
     setSelected(null);
     setDetail(null);
     setDetailError("");
@@ -273,6 +301,9 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     setRotateOpen(false);
     setRotating(false);
     setRotateError("");
+    setEditOpen(false);
+    setEditing(false);
+    setEditError("");
     setLoadingDetail(false);
   }
 
@@ -286,6 +317,8 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
         clearTicket();
         setCreateOpen(false);
         setRotateOpen(false);
+        setEditOpen(false);
+        setEditError("");
         setDetail(null);
         setDetailError(sessionExpired);
         return;
@@ -357,6 +390,8 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
         clearTicket();
         setCreateOpen(false);
         setRotateOpen(false);
+        setEditOpen(false);
+        setEditError("");
         setList({ kind: "session_expired" });
         return;
       }
@@ -403,6 +438,8 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
         clearTicket();
         setCreateOpen(false);
         setRotateOpen(false);
+        setEditOpen(false);
+        setEditError("");
         setList({ kind: "session_expired" });
         return;
       }
@@ -462,6 +499,8 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
         clearTicket();
         setCreateOpen(false);
         setRotateOpen(false);
+        setEditOpen(false);
+        setEditError("");
         setList({ kind: "session_expired" });
         return;
       }
@@ -499,6 +538,88 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     }
   }
 
+  async function handlePatch(keyPattern: string, preset: RedisAclPreset, queueKind?: RedisAclQueueKind) {
+    if (!detail || detail.protected || list.kind !== "ok" || editing || toggling || rotating || ticket) {
+      return;
+    }
+    const username = detail.username;
+    setEditing(true);
+    setEditError("");
+    setActionError("");
+    editAbort.current?.abort();
+    const controller = new AbortController();
+    editAbort.current = controller;
+    try {
+      const result = await patchRedisUser(
+        username,
+        csrf,
+        { keyPattern, preset, queueKind },
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 401) {
+        clearTicket();
+        setCreateOpen(false);
+        setRotateOpen(false);
+        setEditOpen(false);
+        setEditError("");
+        setList({ kind: "session_expired" });
+        return;
+      }
+      if (result.status === 404) {
+        setEditOpen(false);
+        setDetail(null);
+        setDetailError(errorMessage(result.body, notFound));
+        return;
+      }
+      if (result.status === 403) {
+        setEditError(errorMessage(result.body, protectedCopy));
+        return;
+      }
+      if (result.status === 200) {
+        const parsed = parseDetailUser(result.body.user);
+        if (parsed && parsed.username === username) {
+          setEditOpen(false);
+          setEditError("");
+          setDetail(parsed);
+          setList((current) => {
+            if (current.kind !== "ok") {
+              return current;
+            }
+            return {
+              ...current,
+              users: current.users.map((item) =>
+                item.username === parsed.username
+                  ? {
+                      ...item,
+                      enabled: parsed.enabled,
+                      key_pattern: parsed.key_pattern,
+                      preset: parsed.preset,
+                      protected: parsed.protected,
+                      limited: parsed.limited,
+                    }
+                  : item,
+              ),
+            };
+          });
+          return;
+        }
+      }
+      setEditError(errorMessage(result.body, redisUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setEditError(redisUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setEditing(false);
+      }
+    }
+  }
+
   const listAlert =
     list.kind === "session_expired"
       ? sessionExpired
@@ -523,7 +644,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             </button>
           ) : null}
         </div>
-        <p>Create an ACL user with a named permission preset and a project key prefix, inspect modeled rules, or rotate a non-protected password. Delete is not available in this slice.</p>
+        <p>Create an ACL user with a named permission preset and a project key prefix, inspect modeled rules, edit named-preset permissions, or rotate a non-protected password. Delete is not available in this slice.</p>
       </header>
       {ticket ? <CredentialTicket credential={ticket} onDismiss={dismissTicket} /> : null}
       {createOpen ? (
@@ -551,6 +672,24 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             setRotateError("");
           }}
           onConfirm={() => void handleRotate()}
+        />
+      ) : null}
+      {editOpen && detail ? (
+        <EditPermissionsDialog
+          username={detail.username}
+          keyPattern={detail.key_pattern}
+          preset={namedPreset(detail.preset)}
+          queueKind={namedQueueKind(detail.queue_kind)}
+          error={editError}
+          submitting={editing}
+          onCancel={() => {
+            if (editing) {
+              return;
+            }
+            setEditOpen(false);
+            setEditError("");
+          }}
+          onSubmit={(keyPattern, preset, queueKind) => void handlePatch(keyPattern, preset, queueKind)}
         />
       ) : null}
       {listAlert ? (
@@ -649,7 +788,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
               <button
                 type="button"
                 className="text-button"
-                disabled={toggling}
+                disabled={toggling || editing}
                 onClick={() => void handleToggleEnabled()}
               >
                 {detail.enabled ? "Disable" : "Enable"}
@@ -657,9 +796,9 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
               <button
                 type="button"
                 className="text-button"
-                disabled={rotating || ticket !== null}
+                disabled={rotating || ticket !== null || editing}
                 onClick={() => {
-                  if (rotating || ticket) {
+                  if (rotating || ticket || editing) {
                     return;
                   }
                   setRotateError("");
@@ -667,6 +806,20 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
                 }}
               >
                 Rotate
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                disabled={editing || toggling || rotating || ticket !== null}
+                onClick={() => {
+                  if (editing || toggling || rotating || ticket) {
+                    return;
+                  }
+                  setEditError("");
+                  setEditOpen(true);
+                }}
+              >
+                Edit permissions
               </button>
             </div>
           ) : null}
