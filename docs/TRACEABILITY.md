@@ -1946,8 +1946,10 @@ Implementation files: internal/redisadmin/{presets.go,service.go,errors.go,
  internal/httpapi/{server.go,redis_users_routes.go,redis_users_routes_test.go,
  redis_commands_routes_test.go};
  web/src/{api/redis.ts,features/redis/AclUsersPage.tsx,
- features/redis/EditPermissionsDialog.tsx,App.test.tsx};
- docs/{API,ARCHITECTURE,SECURITY,UX,TRACEABILITY}.md; AGENTS.md
+ features/redis/EditPermissionsDialog.tsx,App.test.tsx,
+ styles/globals.css};
+ docs/{API,ARCHITECTURE,SECURITY,UX,UI_DESIGN_SYSTEM,TRACEABILITY}.md;
+ AGENTS.md
  TRACEABILITY.md / AGENTS.md owned by parent after writer commits.
 Unit: AllowedCommands == NamedPresets union; disjoint from test-only
  dangerous fixture (acl, config, debug, module, shutdown, flushall,
@@ -1969,6 +1971,8 @@ Frontend: Edit dialog Custom only (create stays named-only). GET
  returns custom (does not default custom inspect to cache-read-write).
  PATCH {key_pattern, preset: custom, commands}; no ticket, no password,
  no queue_kind. Login never GET /commands. Create never sends commands.
+ Stacked `.command-checklist` (one row, 44px hit area, `--line` /
+ `--radius-surface`); catalog errors do not mark Key prefix invalid.
 Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  Writer API worktree feat/redis-005-allowlist-api `00549ec`:
   gofmt -w <touched Go>
@@ -2016,10 +2020,27 @@ Reviewer/date: Security review (2026-08-25) on `ed64500` approve Partial;
  Evidence review (2026-08-25) on `ed64500` keep-Partial; nine mapped
  claims supported; no required corrections. API.md unique-sort vs raw
  len>256 sentence aligned in `d6a5b69`.
- Verifier pending on this pin.
+ Verifier (2026-08-25) PASS Partial on master `e595b1c`. Independent
+ re-runs go1.27.0 windows/amd64, Node v25.3.0 (not web/.nvmrc 24.19.0):
+  gofmt -l internal/redisadmin internal/httpapi → empty
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 1.591s; httpapi 16.409s
+  go test -count=1 ./... → ok
+  go test -race -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 3.371s; httpapi 26.705s
+  go vet ./... → no findings (after npm build dist settled)
+  go build -o NUL ./cmd/redgres → success (after dist settled)
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+  npm --prefix web run test:run → Tests 178 passed (178)
+  npm --prefix web run build → tsc + vite 8.2.2 (dist gitignored)
+ inspect* membership unchanged vs `74e41a2`; go.mod unchanged vs
+ `6ac634f`. Forbidden paths empty (21 files, +1380/−111; no siblings,
+ secrets, .env).
+ Not executed: live Redis, §6, representative workloads, viewport/
+ Playwright, gitleaks, govulncheck, CI, Node 24.19.0, clearselectors.
  Local commits: `00549ec` (API), `b07c0de` (UI), `76299b0` (merge UI),
  `ed64500` (docs record), `9f81257` (checklist layout), `d6a5b69`
- (review pin), this UI re-check pin.
+ (review pin), `e595b1c` (UI re-check pin), this verifier record.
  Not pushed.
  Keep REDIS-005 Partial.
 ```
