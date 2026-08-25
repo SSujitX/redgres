@@ -2239,7 +2239,31 @@ Reviewer/date: Security review (2026-08-25) on `9507111` approve Partial;
  (30.70s) and re-run on `6479e61` (29.03s); local-commits now include
  `0edf881` and `b594502`. Mocked UI GET is not live PostgreSQL.
  Optional SECURITY.md/DATA_AND_SECRETS.md GET name omitted (not a
- Partial blocker). Verifier pending.
+ Partial blocker).
+ Verifier (2026-08-25) PASS Partial on master `2a82329`. Independent
+ re-runs go1.27.0 windows/amd64, Node v25.3.0 (not web/.nvmrc 24.19.0):
+  gofmt -l touched Go → empty
+  go test -count=1 ./internal/postgresadmin ./internal/httpapi
+   → ok postgresadmin 0.544s; httpapi 17.340s
+  go test -count=1 ./... → ok (before npm build; re-run after dist
+   settled → ok)
+  go test -race -count=1 ./internal/postgresadmin ./internal/httpapi
+   → ok postgresadmin 1.447s; httpapi 37.003s
+  go vet ./... → no findings (before and after dist)
+  go build -o NUL ./cmd/redgres → success (before and after dist)
+  go list -m github.com/jackc/pgx/v5 → v5.10.0
+  npm --prefix web run test:run → Tests 196 passed (196), 29.27s
+  npm --prefix web run build → tsc 7.0.2 + vite 8.2.2 (dist gitignored)
+  git diff 0edf881..2a82329 -- go.mod go.sum migrations/001_initial.sql
+   → empty
+ Not executed: live PostgreSQL 17/18, §6, Playwright, viewport/zoom,
+ gitleaks, govulncheck, CI, Node 24.19.0, vault decrypt, rotation,
+ REDIS-008, AUTH-006.
+ Local commits: `0edf881` (API freeze), `9507111` (API FF), `5d2f258`
+ (API docs), `18c467f` (UI), `7bfc3a3` (merge UI), `b594502` (UI docs),
+ `38cfc63` (API security pin), `f449ee1` (UI security pin), `6479e61`
+ (UI review pin), `2a82329` (evidence pin), this verifier record.
+ Not pushed.
  Keep PG-012 Partial. Keep REDIS-005 Partial. Not pushed.
 ```
 
