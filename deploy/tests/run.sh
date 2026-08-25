@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# POSIX installer dispatcher tests (OPS-001 / OPS-002 / OPS-003 / OPS-006 Partial).
+# POSIX installer dispatcher tests (OPS-001 / OPS-002 / OPS-003 / OPS-005 / OPS-006 Partial).
 # Prepends failing mutation stubs so a real host call fails the test.
 # Detection stubs print fixture --version stdout and must not append to stub_log.
 set -euo pipefail
@@ -49,7 +49,7 @@ EOF
 
 printf '%s\n' '{"not":"parsed"}' >"${plan_file}"
 
-STUB_NAMES='apt-get apt dnf yum docker dockerd systemctl ufw cloudflared certbot curl wget initdb pg_dropcluster pg_createcluster'
+STUB_NAMES='apt-get apt dnf yum docker dockerd systemctl ufw cloudflared certbot curl wget tar initdb pg_dropcluster pg_createcluster'
 
 write_stub() {
   local name="$1"
@@ -293,6 +293,119 @@ expect_verify_partial() {
   pass "${name}"
 }
 
+expect_update_partial() {
+  local name="$1"
+  if ! assert_no_mutation "${name}"; then
+    return
+  fi
+  if ! assert_no_canary "${name}"; then
+    return
+  fi
+  if [[ "${status}" -ne 0 ]]; then
+    fail "${name}: expected exit 0, got ${status}: ${output}"
+    return
+  fi
+  case "${output}" in
+    *'Inventory (read-only'*)
+      fail "${name}: must not call inventory"
+      return
+      ;;
+    *'result=ok'*)
+      fail "${name}: skips must not be result=ok"
+      return
+      ;;
+    *'data_reversal:'*)
+      fail "${name}: update must not print data_reversal"
+      return
+      ;;
+  esac
+  local missing=''
+  local keyword
+  for keyword in \
+    'Update (read-only --dry-run; not Complete):' \
+    'release: path-ok (unread, not extracted)' \
+    'checksum: skipped (no expected digest key; CONFIGURATION.md has none)' \
+    'extract: skipped (/opt/redgres/releases not written)' \
+    'symlink: skipped (current not switched)' \
+    'sqlite_migrate: skipped' \
+    'systemd: skipped (unit/credentials not written)' \
+    'health_gate: skipped (GET /api/v1/healthz not probed; curl not invoked)' \
+    'postgres_packages: skipped (not part of application update)' \
+    'result=partial'; do
+    case "${output}" in
+      *"${keyword}"*) ;;
+      *) missing="${missing} |${keyword}|" ;;
+    esac
+  done
+  if [[ -n "${missing}" ]]; then
+    fail "${name}: missing:${missing}: ${output}"
+    return
+  fi
+  case "$(tr '\n' ' ' <"${stub_log}")" in
+    *curl*|*tar*)
+      fail "${name}: curl or tar in stub_log"
+      return
+      ;;
+  esac
+  pass "${name}"
+}
+
+expect_rollback_partial() {
+  local name="$1"
+  if ! assert_no_mutation "${name}"; then
+    return
+  fi
+  if ! assert_no_canary "${name}"; then
+    return
+  fi
+  if [[ "${status}" -ne 0 ]]; then
+    fail "${name}: expected exit 0, got ${status}: ${output}"
+    return
+  fi
+  case "${output}" in
+    *'Inventory (read-only'*)
+      fail "${name}: must not call inventory"
+      return
+      ;;
+    *'result=ok'*)
+      fail "${name}: skips must not be result=ok"
+      return
+      ;;
+    *'rel-1'*)
+      fail "${name}: must not print VERSION"
+      return
+      ;;
+  esac
+  local missing=''
+  local keyword
+  for keyword in \
+    'Rollback (read-only --dry-run; not Complete):' \
+    'target: accepted (unread; symlink not switched)' \
+    'schema_compat: skipped (SQLite schema compatibility not checked)' \
+    'symlink: skipped (current not switched)' \
+    'config_restore: skipped' \
+    'systemd: skipped (unit not restarted)' \
+    'health_gate: skipped (GET /api/v1/healthz not probed; curl not invoked)' \
+    'data_reversal: skipped (rollback never reverses PostgreSQL/Redis/vault/credentials/DNS/schema automatically)' \
+    'result=partial'; do
+    case "${output}" in
+      *"${keyword}"*) ;;
+      *) missing="${missing} |${keyword}|" ;;
+    esac
+  done
+  if [[ -n "${missing}" ]]; then
+    fail "${name}: missing:${missing}: ${output}"
+    return
+  fi
+  case "$(tr '\n' ' ' <"${stub_log}")" in
+    *curl*|*tar*)
+      fail "${name}: curl or tar in stub_log"
+      return
+      ;;
+  esac
+  pass "${name}"
+}
+
 # --- --help ---
 run_install --help
 expect_status 'help exits 0' 0
@@ -434,17 +547,71 @@ expect_status 'verify unknown --mode flag exits 1' 1
 run_install backup
 expect_status 'backup subcommand exits 2' 2
 
-run_install update
-expect_status 'update subcommand exits 2' 2
-
-run_install rollback
-expect_status 'rollback subcommand exits 2' 2
-
 run_install postgres-plan
 expect_status 'postgres-plan subcommand exits 2' 2
 
 run_install postgres-extensions apply
 expect_status 'postgres-extensions subcommand exits 2' 2
+
+# --- OPS-005 update --dry-run skip matrix ---
+run_install update --non-interactive --dry-run --release "${config_file}"
+expect_update_partial 'update dry-run skip matrix exits 0'
+
+run_install update
+expect_status 'update without flags exits 1' 1
+
+run_install update --non-interactive --release "${config_file}"
+expect_status 'update without --dry-run exits 2' 2
+case "${output}" in
+  *'Inventory (read-only'*)
+    fail 'update without --dry-run must not inventory'
+    ;;
+  *)
+    pass 'update without --dry-run skips inventory'
+    ;;
+esac
+
+run_install update --non-interactive --dry-run
+expect_status 'update missing --release exits 1' 1
+
+run_install update --non-interactive --dry-run --release "${tmpdir}/missing.tar.gz"
+expect_status 'update --release missing path exits 1' 1
+
+run_install update --non-interactive --dry-run --release "${tmpdir}"
+expect_status 'update --release directory exits 1' 1
+
+run_install update --non-interactive --dry-run --release "${config_file}" --config "${config_file}"
+expect_status 'update unknown --config flag exits 1' 1
+
+run_install update --non-interactive --dry-run --release "${config_file}" --mode existing-postgres
+expect_status 'update unknown --mode flag exits 1' 1
+
+# --- OPS-005 rollback --dry-run skip matrix ---
+run_install rollback --non-interactive --dry-run --to rel-1
+expect_rollback_partial 'rollback dry-run skip matrix exits 0'
+
+run_install rollback
+expect_status 'rollback without flags exits 1' 1
+
+run_install rollback --non-interactive --to rel-1
+expect_status 'rollback without --dry-run exits 2' 2
+case "${output}" in
+  *'Inventory (read-only'*)
+    fail 'rollback without --dry-run must not inventory'
+    ;;
+  *)
+    pass 'rollback without --dry-run skips inventory'
+    ;;
+esac
+
+run_install rollback --non-interactive --dry-run
+expect_status 'rollback missing --to exits 1' 1
+
+run_install rollback --non-interactive --dry-run --to /abs
+expect_status 'rollback --to absolute path exits 1' 1
+
+run_install rollback --non-interactive --dry-run --to ..
+expect_status 'rollback --to .. exits 1' 1
 
 # --- valid flags without --dry-run: mutation not implemented (before inventory) ---
 DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fail-closed installer dispatcher. OPS-001 / OPS-002 / OPS-003 / OPS-006 Partial: no host mutation.
+# Fail-closed installer dispatcher. OPS-001 / OPS-002 / OPS-003 / OPS-005 / OPS-006 Partial: no host mutation.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,6 +9,8 @@ source "${script_dir}/lib/common.sh"
 source "${script_dir}/lib/inventory.sh"
 # shellcheck disable=SC1091
 source "${script_dir}/lib/verify.sh"
+# shellcheck disable=SC1091
+source "${script_dir}/lib/release.sh"
 
 usage() {
   cat <<'EOF'
@@ -20,17 +22,21 @@ Usage:
       [--redis-version 8.2|8.8] [--expect-redis-series 8.2|8.8]
       [--config PATH] [--extension-plan PATH] [--approve-postgres-restart]
   deploy/install.sh verify --non-interactive --dry-run --config PATH
+  deploy/install.sh update --non-interactive --dry-run --release PATH
+  deploy/install.sh rollback --non-interactive --dry-run --to VERSION
 
 This Partial prints the planned stage list on --dry-run and inventories PATH
 host --version for existing PostgreSQL/Redis/PgBouncer. verify --dry-run prints
 a skip matrix (result=partial); it does not probe DNS/Cloudflare/public TLS.
+update/rollback --dry-run print skip matrices (result=partial); they do not
+extract, switch current, migrate SQLite, write systemd, or probe healthz.
 It does not install packages, pull images, write systemd, open a firewall, or
 change DNS/Cloudflare. It does not start servers, source --config, call curl,
 or run SQL SHOW / Redis INFO.
 
-Exit 0: --help, valid --non-interactive --dry-run plan, or verify skip matrix
+Exit 0: --help, valid --non-interactive --dry-run plan, or skip matrix
 Exit 1: unsupported, incomplete, missing, unparseable, or mismatched selection
-Exit 2: mutation install, live verify, or other subcommand not implemented
+Exit 2: mutation install, live verify/update/rollback, or other subcommand not implemented
 
 Majors/series only (not Hub tags). latest and latest-tested are rejected.
 EOF
@@ -127,7 +133,97 @@ if [[ "${1:-}" == "verify" ]]; then
   exit 0
 fi
 
-if [[ "${1:-}" == "backup" || "${1:-}" == "update" || "${1:-}" == "rollback" || "${1:-}" == "postgres-plan" || "${1:-}" == "postgres-extensions" ]]; then
+if [[ "${1:-}" == "update" ]]; then
+  shift
+  update_dry_run=0
+  update_non_interactive=0
+  update_release_path=''
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --non-interactive)
+        update_non_interactive=1
+        shift
+        ;;
+      --dry-run)
+        update_dry_run=1
+        shift
+        ;;
+      --release)
+        [[ $# -ge 2 ]] || redgres_die "missing value for --release"
+        update_release_path="$2"
+        shift 2
+        ;;
+      -*)
+        redgres_die "unknown flag: $1"
+        ;;
+      *)
+        redgres_die "unknown argument: $1"
+        ;;
+    esac
+  done
+  if [[ "${update_non_interactive}" -ne 1 ]]; then
+    redgres_die "--non-interactive is required"
+  fi
+  if [[ -z "${update_release_path}" ]]; then
+    redgres_die "--release is required"
+  fi
+  # Existence only. Never source, eval, cat, extract, or print contents.
+  if [[ ! -f "${update_release_path}" ]]; then
+    redgres_die "--release must be an existing regular file"
+  fi
+  if [[ "${update_dry_run}" -ne 1 ]]; then
+    redgres_not_implemented "update without --dry-run is not implemented"
+  fi
+  redgres_update_dry_run
+  exit 0
+fi
+
+if [[ "${1:-}" == "rollback" ]]; then
+  shift
+  rollback_dry_run=0
+  rollback_non_interactive=0
+  rollback_to=''
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --non-interactive)
+        rollback_non_interactive=1
+        shift
+        ;;
+      --dry-run)
+        rollback_dry_run=1
+        shift
+        ;;
+      --to)
+        [[ $# -ge 2 ]] || redgres_die "missing value for --to"
+        rollback_to="$2"
+        shift 2
+        ;;
+      -*)
+        redgres_die "unknown flag: $1"
+        ;;
+      *)
+        redgres_die "unknown argument: $1"
+        ;;
+    esac
+  done
+  if [[ "${rollback_non_interactive}" -ne 1 ]]; then
+    redgres_die "--non-interactive is required"
+  fi
+  if [[ -z "${rollback_to}" ]]; then
+    redgres_die "--to is required"
+  fi
+  # Path-safe token only. Never print VERSION.
+  if ! redgres_rollback_version_ok "${rollback_to}"; then
+    redgres_die "--to must be a path-safe version token"
+  fi
+  if [[ "${rollback_dry_run}" -ne 1 ]]; then
+    redgres_not_implemented "rollback without --dry-run is not implemented"
+  fi
+  redgres_rollback_dry_run
+  exit 0
+fi
+
+if [[ "${1:-}" == "backup" || "${1:-}" == "postgres-plan" || "${1:-}" == "postgres-extensions" ]]; then
   redgres_not_implemented "subcommand ${1} is not implemented"
 fi
 

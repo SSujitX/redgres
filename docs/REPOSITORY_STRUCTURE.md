@@ -112,6 +112,7 @@ Redgres/
 │   │   ├── common.sh
 │   │   ├── inventory.sh
 │   │   ├── verify.sh
+│   │   ├── release.sh
 │   │   ├── checks.sh
 │   │   ├── logging.sh
 │   │   ├── secrets.sh

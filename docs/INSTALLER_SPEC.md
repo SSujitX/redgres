@@ -12,11 +12,13 @@ sudo ./deploy/install.sh postgres-plan --config /root/redgres/install.env --exte
 sudo ./deploy/install.sh postgres-extensions apply --config /root/redgres/install.env --extension-plan /root/redgres/postgres-extensions.json --approve-postgres-restart
 sudo ./deploy/install.sh verify --config /root/redgres/install.env
 sudo ./deploy/install.sh backup --config /root/redgres/install.env
-sudo ./deploy/install.sh update --release /root/redgres/redgres_VERSION_linux_amd64.tar.gz
-sudo ./deploy/install.sh rollback --to VERSION
+sudo ./deploy/install.sh update --non-interactive --dry-run --release /root/redgres/redgres_VERSION_linux_amd64.tar.gz
+sudo ./deploy/install.sh rollback --non-interactive --dry-run --to VERSION
 ```
 
 `install.sh` dispatches to version-controlled modules. It must support `--dry-run` for safe checks where feasible and `--non-interactive` only when every required decision is explicit.
+
+**This Partial (OPS-005):** `update --non-interactive --dry-run --release PATH` and `rollback --non-interactive --dry-run --to VERSION` print skip matrices (`result=partial`). `--release` must be an existing regular file (`[[ -f ]]`) and is never sourced, extracted, checksummed, or printed. `--to VERSION` must be a path-safe token (no `/`, `.` or `..` as a path component, no NUL) and is never printed. Live update/rollback without `--dry-run` exits 2. This Partial is not Complete.
 
 The initial selections and defaults are defined in [COMPATIBILITY.md](COMPATIBILITY.md). Interactive setup presents only versions supported by the current Redgres release. Non-interactive fresh setup requires explicit versions. `latest-tested` may resolve only through reviewed release metadata and must be converted to an exact version before mutation; upstream `latest` tags are forbidden.
 
@@ -44,7 +46,7 @@ The installer does not guess zones, delete records, generate publicly trusted cr
 6. **Redis** — detect or install the selected supported series, validate capabilities, Compose and persistent mounts; never replace a named volume silently.
 7. **PostgreSQL/PgBouncer** — apply independent existing/fresh lifecycles; fresh bootstrap only for the selected supported major; existing mode defaults to preserve; validate an optional extension plan, exact packages, preload merge and restart impact under [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md).
 8. **TLS/DNS** — issue/validate raw-service certificates and renewal hooks; configure declared DNS records/routes only.
-9. **Application release** — verify artifact checksum, install immutable release, migrate SQLite, configure systemd credentials/unit.
+9. **Application release** — verify artifact checksum, install immutable release, migrate SQLite, configure systemd credentials/unit. **This Partial (OPS-005):** `update --non-interactive --dry-run --release PATH` and `rollback --non-interactive --dry-run --to VERSION` only; PATH must be an existing regular file (`[[ -f ]]`) and is never sourced, evaluated, extracted, checksummed, or printed. VERSION is a path-safe token (no `/`, `.` or `..` as a path component, no NUL) and is never printed. Prints an explicit skip matrix (`result=partial`). Update does not write `/opt/redgres/releases`, does not switch `current`, does not migrate SQLite, does not write systemd units/credentials, does not probe GET `/api/v1/healthz` (curl not invoked), and does not install PostgreSQL packages. Rollback does not switch the symlink, does not check SQLite schema compatibility, does not restore config, does not restart systemd, does not probe healthz, and never reverses PostgreSQL/Redis/vault/credentials/DNS/schema. Missing `--non-interactive`, missing/non-file `--release`, missing/unsafe `--to`, or unknown flags (including `--config`/`--mode` on update) exit 1. Live update/rollback without `--dry-run` exits 2. Does not call tar, ln, sha256sum, curl, gpg, pg_dump, pg_restore, or redis-cli. Checksum is skipped because [CONFIGURATION.md](CONFIGURATION.md) has no expected digest key. This Partial is not Complete.
 10. **Cloudflare** — install/validate cloudflared and routes; token stays protected.
 11. **Firewall** — calculate intended rules, preserve SSH access, apply, then verify listeners externally and locally.
 12. **End-to-end verify** — run [TESTING.md](TESTING.md) deployment checks. **This Partial (OPS-003):** `verify --non-interactive --dry-run --config PATH` only; PATH must be an existing regular file (`[[ -f ]]`) and is never sourced, evaluated, or printed. Prints an explicit skip matrix (`result=partial`) for DNS, Cloudflare Tunnel/Access/routes, public TLS, GET `/api/v1/healthz` (curl not invoked), GET `/api/v1/status` auth boundaries, live bindings (intended redgres `127.0.0.1:8790`), cluster SHOW/INFO, and backup prerequisites (no named backup keys; OPS-004). Does not call inventory, curl, wget, cloudflared, or certbot. Live verify without `--dry-run` exits 2. Missing `--non-interactive`, missing/non-file `--config`, or unknown flags (including `--mode`) exit 1. DNS/Cloudflare/public TLS remain skipped; this Partial is not Complete.
@@ -98,6 +100,8 @@ The script uses strict shell mode, explicit paths, traps, and temporary director
 ## Rollback limits
 
 The installer automatically rolls back a failed application symlink/unit deployment. It may restore a configuration file it changed after validation. It does not automatically undo package upgrades, SQL migrations, PostgreSQL roles/databases, Redis ACL mutations, credential rotations, DNS propagation, or production data.
+
+**This Partial (OPS-005):** `rollback --non-interactive --dry-run --to VERSION` prints `data_reversal: skipped` and does not switch `current`, restore config, restart systemd, or probe health. Application rollback remains binary/config only; it never reverses PostgreSQL/Redis/vault/credentials/DNS/schema automatically. Live rollback without `--dry-run` exits 2. This Partial is not Complete.
 
 ## Acceptance tests
 
