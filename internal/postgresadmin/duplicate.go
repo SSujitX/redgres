@@ -17,8 +17,9 @@ WHERE d.datname = $1
 `
 
 const cloneNamespaceSQL = `
-SELECT n.nspname, pg_catalog.pg_get_userbyid(n.nspowner)
+SELECT n.nspname, pg_catalog.pg_get_userbyid(n.nspowner), COALESCE(r.rolsuper, false)
 FROM pg_catalog.pg_namespace n
+LEFT JOIN pg_catalog.pg_roles r ON r.oid = n.nspowner
 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
   AND n.nspname !~ '^pg_(toast|temp)'
   AND pg_catalog.pg_get_userbyid(n.nspowner) <> $1
@@ -36,9 +37,11 @@ SELECT
 	n.nspname,
 	c.relname,
 	c.relkind,
-	pg_catalog.pg_get_userbyid(c.relowner)
+	pg_catalog.pg_get_userbyid(c.relowner),
+	COALESCE(r.rolsuper, false)
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+LEFT JOIN pg_catalog.pg_roles r ON r.oid = c.relowner
 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
   AND n.nspname !~ '^pg_(toast|temp)'
   AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', 'i', 'I')
@@ -68,9 +71,11 @@ const cloneTypeSQL = `
 SELECT
 	n.nspname,
 	t.typname,
-	pg_catalog.pg_get_userbyid(t.typowner)
+	pg_catalog.pg_get_userbyid(t.typowner),
+	COALESCE(r.rolsuper, false)
 FROM pg_catalog.pg_type t
 JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+LEFT JOIN pg_catalog.pg_roles r ON r.oid = t.typowner
 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
   AND t.typtype IN ('b', 'c', 'd', 'e', 'r')
   AND NOT (t.typlen = -1 AND t.typelem <> 0)
@@ -97,9 +102,11 @@ SELECT
 	p.proname,
 	pg_catalog.pg_get_function_identity_arguments(p.oid),
 	p.prokind,
-	pg_catalog.pg_get_userbyid(p.proowner)
+	pg_catalog.pg_get_userbyid(p.proowner),
+	COALESCE(r.rolsuper, false)
 FROM pg_catalog.pg_proc p
 JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+LEFT JOIN pg_catalog.pg_roles r ON r.oid = p.proowner
 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
   AND pg_catalog.pg_get_userbyid(p.proowner) <> $1
   AND NOT EXISTS (
@@ -128,7 +135,7 @@ func formatCreateDatabaseTemplate(database, source, owner string) (string, error
 }
 
 func formatAlterSchemaOwner(schema, newOwner string) (string, error) {
-	quotedSchema, err := QuoteIdentifier(schema)
+	quotedSchema, err := QuoteCatalogIdentifier(schema)
 	if err != nil {
 		return "", err
 	}
@@ -144,11 +151,11 @@ func formatAlterRelationOwner(relkind, schema, name, newOwner string) (string, e
 	if !ok {
 		return "", ErrUnavailable
 	}
-	quotedSchema, err := QuoteIdentifier(schema)
+	quotedSchema, err := QuoteCatalogIdentifier(schema)
 	if err != nil {
 		return "", err
 	}
-	quotedName, err := QuoteIdentifier(name)
+	quotedName, err := QuoteCatalogIdentifier(name)
 	if err != nil {
 		return "", err
 	}
@@ -160,11 +167,11 @@ func formatAlterRelationOwner(relkind, schema, name, newOwner string) (string, e
 }
 
 func formatAlterTypeOwner(schema, name, newOwner string) (string, error) {
-	quotedSchema, err := QuoteIdentifier(schema)
+	quotedSchema, err := QuoteCatalogIdentifier(schema)
 	if err != nil {
 		return "", err
 	}
-	quotedName, err := QuoteIdentifier(name)
+	quotedName, err := QuoteCatalogIdentifier(name)
 	if err != nil {
 		return "", err
 	}
@@ -180,11 +187,11 @@ func formatAlterRoutineOwner(prokind, schema, name, identityArgs, newOwner strin
 	if kind == "" {
 		kind = "ALTER FUNCTION"
 	}
-	quotedSchema, err := QuoteIdentifier(schema)
+	quotedSchema, err := QuoteCatalogIdentifier(schema)
 	if err != nil {
 		return "", err
 	}
-	quotedName, err := QuoteIdentifier(name)
+	quotedName, err := QuoteCatalogIdentifier(name)
 	if err != nil {
 		return "", err
 	}
@@ -231,6 +238,25 @@ var cloneProcKindSQL = map[string]string{
 
 func skipCloneObjectOwner(policy Policy, owner string) bool {
 	return policy.OwnerDenied(owner)
+}
+
+func skipCloneTransferOwner(skipOwner func(string) bool, owner string, ownerIsSuperuser bool) bool {
+	if ownerIsSuperuser {
+		return true
+	}
+	return skipOwner != nil && skipOwner(owner)
+}
+
+func formatGrantCatalogRole(owner, admin string) (string, error) {
+	quotedOwner, err := QuoteCatalogIdentifier(owner)
+	if err != nil {
+		return "", err
+	}
+	quotedAdmin, err := QuoteIdentifier(admin)
+	if err != nil {
+		return "", err
+	}
+	return "GRANT " + quotedOwner + " TO " + quotedAdmin + " WITH INHERIT TRUE, SET TRUE", nil
 }
 
 func (s *Service) Duplicate(ctx context.Context, source, database, owner string) (CreatedDatabase, error) {
@@ -513,7 +539,7 @@ func (c PoolCatalog) alterCloneOwner(ctx context.Context, conn *pgx.Conn, curren
 		return nil
 	}
 	if !skipGrantSetRole(admin, currentOwner) {
-		grant, err := formatGrantSetRole(currentOwner, admin)
+		grant, err := formatGrantCatalogRole(currentOwner, admin)
 		if err != nil {
 			return err
 		}
@@ -535,12 +561,16 @@ func (c PoolCatalog) transferCloneNamespaces(ctx context.Context, conn *pgx.Conn
 	defer rows.Close()
 	for rows.Next() {
 		var schema, oldOwner string
-		if err := rows.Scan(&schema, &oldOwner); err != nil {
+		var ownerIsSuperuser bool
+		if err := rows.Scan(&schema, &oldOwner, &ownerIsSuperuser); err != nil {
 			return ErrUnavailable
+		}
+		if skipCloneTransferOwner(skipOwner, oldOwner, ownerIsSuperuser) {
+			continue
 		}
 		sql, err := formatAlterSchemaOwner(schema, newOwner)
 		if err != nil {
-			continue
+			return err
 		}
 		if err := c.alterCloneOwner(ctx, conn, oldOwner, admin, sql, skipOwner); err != nil {
 			return err
@@ -560,15 +590,19 @@ func (c PoolCatalog) transferCloneRelations(ctx context.Context, conn *pgx.Conn,
 	defer rows.Close()
 	for rows.Next() {
 		var schema, name, relkind, oldOwner string
-		if err := rows.Scan(&schema, &name, &relkind, &oldOwner); err != nil {
+		var ownerIsSuperuser bool
+		if err := rows.Scan(&schema, &name, &relkind, &oldOwner, &ownerIsSuperuser); err != nil {
 			return ErrUnavailable
 		}
-		if len(relkind) != 1 {
+		if skipCloneTransferOwner(skipOwner, oldOwner, ownerIsSuperuser) {
 			continue
+		}
+		if len(relkind) != 1 {
+			return ErrUnavailable
 		}
 		sql, err := formatAlterRelationOwner(relkind, schema, name, newOwner)
 		if err != nil {
-			continue
+			return err
 		}
 		if err := c.alterCloneOwner(ctx, conn, oldOwner, admin, sql, skipOwner); err != nil {
 			return err
@@ -588,12 +622,16 @@ func (c PoolCatalog) transferCloneTypes(ctx context.Context, conn *pgx.Conn, new
 	defer rows.Close()
 	for rows.Next() {
 		var schema, name, oldOwner string
-		if err := rows.Scan(&schema, &name, &oldOwner); err != nil {
+		var ownerIsSuperuser bool
+		if err := rows.Scan(&schema, &name, &oldOwner, &ownerIsSuperuser); err != nil {
 			return ErrUnavailable
+		}
+		if skipCloneTransferOwner(skipOwner, oldOwner, ownerIsSuperuser) {
+			continue
 		}
 		sql, err := formatAlterTypeOwner(schema, name, newOwner)
 		if err != nil {
-			continue
+			return err
 		}
 		if err := c.alterCloneOwner(ctx, conn, oldOwner, admin, sql, skipOwner); err != nil {
 			return err
@@ -613,15 +651,19 @@ func (c PoolCatalog) transferCloneRoutines(ctx context.Context, conn *pgx.Conn, 
 	defer rows.Close()
 	for rows.Next() {
 		var schema, name, identityArgs, prokind, oldOwner string
-		if err := rows.Scan(&schema, &name, &identityArgs, &prokind, &oldOwner); err != nil {
+		var ownerIsSuperuser bool
+		if err := rows.Scan(&schema, &name, &identityArgs, &prokind, &oldOwner, &ownerIsSuperuser); err != nil {
 			return ErrUnavailable
 		}
-		if len(prokind) != 1 {
+		if skipCloneTransferOwner(skipOwner, oldOwner, ownerIsSuperuser) {
 			continue
+		}
+		if len(prokind) != 1 {
+			return ErrUnavailable
 		}
 		sql, err := formatAlterRoutineOwner(prokind, schema, name, identityArgs, newOwner)
 		if err != nil {
-			continue
+			return err
 		}
 		if err := c.alterCloneOwner(ctx, conn, oldOwner, admin, sql, skipOwner); err != nil {
 			return err

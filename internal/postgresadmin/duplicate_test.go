@@ -383,6 +383,57 @@ func TestServiceDuplicateSkipProtectedOwners(t *testing.T) {
 	}
 }
 
+func TestSkipCloneTransferOwnerSuperuser(t *testing.T) {
+	skip := func(owner string) bool {
+		return skipCloneObjectOwner(NewPolicy(config.Config{PostgresUser: "redgres_console"}), owner)
+	}
+	if !skipCloneTransferOwner(skip, "app_project_a", true) {
+		t.Fatal("superuser object owner must skip")
+	}
+	if skipCloneTransferOwner(skip, "app_project_a", false) {
+		t.Fatal("project owner must not skip")
+	}
+	if !skipCloneTransferOwner(skip, "postgres", false) {
+		t.Fatal("denied owner must skip")
+	}
+}
+
+func TestFormatAlterRelationOwnerQuotesCatalogNames(t *testing.T) {
+	got, err := formatAlterRelationOwner("r", "public", "Order", "app_project_a_copy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `ALTER TABLE "public"."Order" OWNER TO "app_project_a_copy"` {
+		t.Fatalf("sql = %s", got)
+	}
+	hyphen, err := formatAlterRelationOwner("r", "public", "user-data", "app_project_a_copy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hyphen != `ALTER TABLE "public"."user-data" OWNER TO "app_project_a_copy"` {
+		t.Fatalf("sql = %s", hyphen)
+	}
+	if _, err := formatAlterRelationOwner("r", "public", "", "app_project_a_copy"); err == nil {
+		t.Fatal("empty catalog name must fail closed")
+	}
+	if _, err := formatAlterRelationOwner("r", "public", "a\x00b", "app_project_a_copy"); err == nil {
+		t.Fatal("NUL catalog name must fail closed")
+	}
+}
+
+func TestFormatGrantCatalogRoleQuotesOwner(t *testing.T) {
+	got, err := formatGrantCatalogRole("Order", "redgres_console")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `GRANT "Order" TO "redgres_console" WITH INHERIT TRUE, SET TRUE` {
+		t.Fatalf("sql = %s", got)
+	}
+	if _, err := formatGrantCatalogRole("", "redgres_console"); err == nil {
+		t.Fatal("empty catalog owner must fail closed")
+	}
+}
+
 func TestPoolCatalogDuplicateNilPoolIsUnavailable(t *testing.T) {
 	var c PoolCatalog
 	if _, err := c.OwnershipSnapshot(context.Background(), "project_a"); !errors.Is(err, ErrUnavailable) {
