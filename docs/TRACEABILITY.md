@@ -2509,9 +2509,38 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  Parent rerun worktree before merge:
   gofmt -l → empty
   go test -count=1 ./internal/secrets → ok 0.398s
-Local commits: `2bd4e40` (freeze), `1268dbf` (impl). Reviews pending. Not pushed.
+ Parent rerun master `cec6587` after TRACEABILITY pin:
+  gofmt -l internal/secrets → empty
+  go test -count=1 ./internal/secrets → ok 0.390s
+  go test -race -count=1 ./internal/secrets → ok 1.603s
+  go test -count=1 ./... → ok (secrets 0.576s; httpapi 21.030s)
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/jackc/pgx/v5 → v5.10.0
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+Local commits: `2bd4e40` (freeze), `1268dbf` (impl), `cec6587` (docs
+ record). Security pin this commit. Evidence/verifier pending. Not pushed.
 Keep PG-005 Partial. Keep PLAT-001 Partial. Keep PG-012 Partial.
  Keep REDIS-005 Partial. Do not mark Complete.
+```
+
+## PG-005 Fernet/KDF security pin (2026-08-25)
+
+```text
+Requirement: PG-005 Partial (in-process Fernet/KDF decrypt gate only)
+Decision/ADR: ADR-004; freeze `2bd4e40`
+Reviewer/date: Security review (2026-08-25) on `cec6587` approve Partial;
+ no Critical/High/Medium/Low. HMAC over version||timestamp||IV||ciphertext
+ with subtle.ConstantTimeCompare; PKCS#7 only after HMAC; single
+ ErrInvalidToken; canary SESSION_SECRET/key/token/plaintext absent from
+ err.Error(); no env/config/HTTP/PostgreSQL; no fernet-go; testdata is fake
+ canary not production ciphertext; no TTL is intentional. Questions
+ (non-blocking): failure-class timing; optional timestamp/IV/MAC tampers;
+ heap remnants of plaintext/key. Reviewer did not re-run go test.
+Keep PG-005 Partial. Gate 4 copied production ciphertext, GET masked
+ metadata, POST reveal, vault SQL, and REDGRES_LEGACY_VAULT_SECRET_FILE
+ remain Complete blockers, not defects of this gate.
+Evidence/verifier pending. Not pushed.
 ```
 
 
