@@ -2427,7 +2427,8 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
  govulncheck, Node 24.19.0
 Local commits: `1a528cd` (freeze), `33087b6` (API), `fb0c6ce` (UI),
  `28faa83` (merge UI), `bf47017` (docs record), `46fdf6c` (UI review pin),
- `a0240d8` (security pin), this evidence pin. Not pushed.
+ `a0240d8` (security pin), `6ca659f` (evidence pin), this verifier record.
+ Not pushed.
 Reviewer/date: Security review (2026-08-25) on `bf47017`/`33087b6`/`28faa83`
  approve Partial; no Critical/High/Medium. GET /session session-gated hrefs;
  GET /status session + platform.read; no CSRF/audit; no-store; 401 omits
@@ -2444,8 +2445,28 @@ Reviewer/date: Security review (2026-08-25) on `bf47017`/`33087b6`/`28faa83`
  Explicitly NOT viewport/zoom sign-off.
  Evidence review (2026-08-25) on `a0240d8` keep-Partial / reject-Complete.
  Parent-executed: focused Go config/platform/httpapi + npm test:run 208.
- Writer-only (not parent-executed): `go test ./...`, vet, build, `go list -m`,
- `npm run build`. Hygiene: `a0240d8` added to local-commits. Verifier pending.
+ Writer-only at evidence time: `go test ./...`, vet, build, `go list -m`,
+ `npm run build`. Hygiene: `a0240d8` added to local-commits.
+ Verifier (2026-08-25) PASS Partial on master `6ca659f`. Independent
+ re-runs go1.27.0 windows/amd64, Node v25.3.0 (not web/.nvmrc 24.19.0):
+  gofmt -l touched Go → empty
+  go test -count=1 ./internal/config ./internal/platform ./internal/httpapi
+   → ok config 0.617s; platform 0.438s; httpapi 18.012s
+  go test -count=1 ./... → ok
+  go test -race -count=1 ./internal/config ./internal/platform
+   ./internal/httpapi
+   → ok config 1.736s; platform 1.358s; httpapi 31.897s
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/jackc/pgx/v5 → v5.10.0
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+  npm --prefix web run test:run → Tests 208 passed (208)
+  npm --prefix web run build → tsc + vite 8.2.2 (dist gitignored)
+  go.mod and migrations/001_initial.sql vs 1a528cd → unchanged
+  Go re-run after dist settled → gofmt empty; vet clean;
+   go test ./internal/web ok 0.396s; build success
+ Not executed: live pgAdmin/RedisInsight, Playwright, viewport/zoom,
+ gitleaks, govulncheck, CI, COMPATIBILITY.md §6, Node 24.19.0.
 Keep PLAT-001 Partial. Keep PG-012 Partial. Keep REDIS-005 Partial.
  Do not mark Complete.
 ```
