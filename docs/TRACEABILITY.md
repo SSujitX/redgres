@@ -5360,6 +5360,10 @@ Integration tests: none — skip matrix only; curl not invoked;
  do not assert live 200 healthz or symlink switch.
 Security tests: canary env/config not printed; --release not
  sourced; VERSION not printed; no secret dump.
+ Independent redgres-security-reviewer Approve Partial /
+ reject Complete on `8bbbdbe` (no Critical/High/Medium; Low
+ test-net gaps only: stub ln/sha256sum/gpg, `--to .`, rollback
+ unknown --config/--mode).
 Limitations: result=partial is required so exit 0 is not Complete.
  Live update/rollback without --dry-run remain exit 2. OPS-004
  backup remains Planned (exit 2). bash argv cannot carry NUL.
