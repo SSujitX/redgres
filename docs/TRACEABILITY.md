@@ -2833,4 +2833,38 @@ Reviewer/date: UI review (2026-08-25) on `22f12f4` approve Partial UI;
 Keep PG-004 Partial. Keep PG-005 Partial. Verifier pending. Not pushed.
 ```
 
+## PG-004/PG-005 masked connection GET verifier PASS Partial (2026-08-25)
+
+```text
+Requirement: PG-004/PG-005 Partial (GET masked connection metadata; no reveal/decrypt)
+Decision/ADR: ADR-004; freeze `99986a1`
+Verifier/date: independent redgres-verifier (2026-08-25) on `f8bc9a3`
+HEAD: `f8bc9a3df37648a13721b71321b5bf11c887c053` (clean worktree)
+Verdict: PASS Partial. Keep PG-004 Partial. Keep PG-005 Partial. Reject Complete.
+Security/UI/evidence reviews accepted as already pinned; not re-run.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/postgresadmin ./internal/httpapi ./internal/config
+ → ok postgresadmin 1.012s; httpapi 25.356s; config 0.545s
+ go test -count=1 ./... → all ok (httpapi 25.942s; cmd/redgres 5.158s;
+ postgresadmin 2.162s; web 0.630s; migrations no tests)
+ go test -race -count=1 ./internal/postgresadmin ./internal/config
+ → ok postgresadmin 3.275s; config 2.922s
+ go vet ./... → no findings
+ go build -o NUL ./cmd/redgres → success
+ go list -m github.com/jackc/pgx/v5 → v5.10.0
+ go list -m github.com/redis/go-redis/v9 → v9.22.0
+ npm --prefix web run test:run → Tests 222 passed (222), 36.80s
+ npm --prefix web run build → success (ignored internal/web/dist/app/)
+Unexecuted: live PostgreSQL 17/18, Playwright viewports, Gate 4, POST reveal,
+ REDGRES_LEGACY_VAULT_SECRET_FILE, CI, Node 24.19.0, go test -race ./...
+Slice diff 99986a1..f8bc9a3: 15 files, no .env/.db/certs/secret files.
+Known limitations unchanged: POST reveal, Gate 4 copied production ciphertext,
+ live PostgreSQL 17/18, Playwright viewports outstanding;
+ POST /connection/reveal is 404 (unregistered) not 405.
+Not pushed.
+Keep PG-004 Partial. Keep PG-005 Partial. Do not mark Complete.
+```
+
 
