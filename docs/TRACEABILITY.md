@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 Partial: in-handler `Reauthenticate` on `DELETE /api/v1/redis/users/{username}` only (no `POST /api/v1/auth/reauth`, no AUTH-005 `login_attempts` increment) | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; no POST rotate); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET (no decrypt/reveal); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs; PG-003/006/008–011 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin`, `internal/secrets` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page + vault existence (`missing_password_count` when ok) + `rotation_eligible` (diagnostic; no POST rotate); PG-005 Partial: in-process Fernet/KDF fixtures plus HTTP vault existence GET plus masked connection GET plus POST `/connection/reveal` (no Gate 4, no create/rotate); PG-004 Partial: GET `/api/v1/postgres/databases/{db}/connection` masked URLs (no decrypt); PG-003/006/008–011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI; REDIS-008 Partial: `DELETE /api/v1/redis/users/{username}` (`ACL LIST` + one `ACL DELUSER`) + inspector Delete danger dialog (no live Redis, no Playwright, no CLIENT KILL, keys not deleted) | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -3232,6 +3232,75 @@ No secret artifacts in 372fbfa..HEAD. Prior UI `062fb4c`, security
 Keep REDIS-008 Partial. Keep AUTH-006 Partial. Keep PG-012 Partial.
  Keep PG-004 Partial. Keep PG-005 Partial.
  Not pushed.
+```
+
+## PG-005 POST connection reveal Partial (2026-08-25)
+
+```text
+Requirement: PG-005 Partial (POST /api/v1/postgres/databases/{db}/connection/reveal
+ + inspector Reveal ticket). Keep PG-005 Partial. Keep PG-004 Partial (GET
+ /connection still no decrypt). Keep PG-012 / REDIS-008 / AUTH-006 Partial.
+ Do not mark Complete. No Gate 4, no live PostgreSQL, no POST rotate/create,
+ no POST /api/v1/auth/reauth, no ensure_vault, no GET decrypt.
+Decision/ADR: ADR-004; freeze `cece386`. AUTH-006 does not apply.
+Source: database-app load_role_password / reveal_database_connection_url at
+ 1c3e8e2 (read-only). Did not copy ensure_vault, sibling 404-on-InvalidToken,
+ FastAPI no-CSRF, or {direct_url, has_saved_password}. Fixtures
+ internal/secrets/testdata/python49.json (cryptography==49.0.0).
+Implementation files: internal/config/{config.go,postgres.go,postgres_test.go};
+ internal/postgresadmin/{adapter.go,connection.go,memory.go,service.go,types.go,
+ reveal_test.go,vault_file_test.go,connection_test.go,service_test.go};
+ internal/httpapi/{server.go,postgres_routes.go,postgres_routes_test.go,
+ postgres_reveal_routes_test.go};
+ web/src/api/postgres.ts; web/src/features/postgres/DatabasesPage.tsx;
+ web/src/features/redis/CredentialTicket.tsx (kind=postgres; Redis copy
+ unchanged); web/src/features/pages/Placeholders.tsx (csrf to DatabasesPage);
+ web/src/App.test.tsx.
+Unit/HTTP: vault file not in PostgresConfigured/postgresAnySet; production
+ 0600; empty/unreadable named env var; Open stores derived key and wipes raw
+ secret. Reveal: python49 ASCII decrypt; missing row 404; vault/secret/invalid
+ token 503; empty owner 404; protected never SELECT; GET connection still
+ SavedRoleNames only. HTTP: 401; 403 CSRF; 400 invalid name no audit; 404;
+ 503 canary absent; 200 {request_id} + one_time false + username=owner +
+ password + omitted-or-present urls; audit metadata database+owner only;
+ audit-fail 503 no credential; POST /connection 405; GET /reveal 405.
+UI: present shows Reveal text-button; missing/not_available/loading hide;
+ no confirm dialog; CSRF + encodeURIComponent + empty body; 200 PostgreSQL
+ alertdialog frozen title/copy; Direct/Pooled URL copy only when keys present;
+ no setItem; 401/404/503 no leftover password/no ticket; Security overview
+ still no Reveal; login/search never POST reveal; Redis tickets still shown now.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ Writer API feat/pg-005-reveal-api `7bfb569`:
+  gofmt -l cmd internal migrations → empty
+  go test -count=1 ./internal/config ./internal/postgresadmin ./internal/httpapi
+   → ok config 1.972s; postgresadmin 1.592s; httpapi 107.222s
+  go test -count=1 ./... → ok (httpapi 56.592s)
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+ Writer UI feat/pg-005-reveal-ui `ad2046a`:
+  npm --prefix web run test:run → Tests 252 passed (252), 49.10s
+  npm --prefix web run build → tsc + vite 8.2.2 (dist gitignored)
+ Parent after merges `9e00819` (API) `d9a797e` (UI):
+  gofmt -l cmd internal migrations → empty
+  go test -count=1 ./internal/config ./internal/postgresadmin ./internal/httpapi
+   → ok config 0.942s; postgresadmin 1.550s; httpapi 60.746s
+  go test -count=1 ./... → all ok (httpapi 50.728s; cmd/redgres 5.355s;
+   postgresadmin 2.024s; web 1.204s; migrations no tests)
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  npm --prefix web run test:run → Tests 252 passed (252), 50.21s
+Not run: live PostgreSQL 17/18, Gate 4, COMPATIBILITY.md §6, Playwright,
+ gitleaks, govulncheck, CI, race, Node 24.19.0.
+Known limitations: AUTH-006 does not apply. POSIX 0600 vault-file tests skip
+ on Windows. Reveal SELECTs ciphertext before checking empty vaultKey
+ (still 503). Page header still says “Passwords are not revealed.”
+Local commits: `cece386` (freeze), `7bfb569` (API), `9e00819` (merge API),
+ `ad2046a` (UI), `d9a797e` (merge UI), this docs record.
+ Not pushed.
+Reviewer/date: pending parent/security/verifier. Keep Partial.
+Keep PG-005 Partial. Keep PG-004 Partial. Keep PG-012 Partial.
+ Keep REDIS-008 Partial. Keep AUTH-006 Partial. Do not mark Complete.
 ```
 
 
