@@ -3905,8 +3905,9 @@ Local commits: `376f11e` (freeze), `382e801` (API), `158da45` (UI),
  Not pushed.
 Reviewer/date: UI Approve Partial on `26a2a62` (pin `a10e0d9`);
  security Approve Partial with conditions on `26a2a62` (pin `e10cc08`);
- catalog quoting / superuser-skip correction this change; security
- re-review / evidence / verifier still pending. Keep Partial.
+ catalog quoting / superuser-skip correction `1c0ad73`/`7d3b5a8`;
+ security re-review Approve Partial on `7d3b5a8` (this pin); evidence /
+ verifier still pending. Keep Partial.
 Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial.
  Keep PG-005 Partial. Keep PG-006 Partial. Keep PG-012 Partial.
  Keep REDIS-008 Partial. Keep AUTH-006 Partial. Do not mark Complete.
@@ -4006,13 +4007,43 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  go test -count=1 ./internal/httpapi → ok 28.726s
  go test -count=1 ./... → all ok (httpapi 29.256s; postgresadmin 1.241s)
  go vet ./... → no findings
-Reviewer/date: security re-review pending on this commit. UI pin `a10e0d9`
- unchanged (no UI diff). Evidence / verifier still pending.
+Reviewer/date: security re-review Approve Partial on `7d3b5a8` (following
+ pin). UI pin `a10e0d9` unchanged (no UI diff). Evidence / verifier still
+ pending.
 Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
  Partial. Keep PG-006 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
  Keep AUTH-006 Partial.
 Not pushed.
 ```
+
+## PG-010 POST duplicate security re-review pin (2026-08-25)
+
+```text
+Requirement: PG-010 Partial (POST /api/v1/postgres/databases/{db}/duplicate
+ TEMPLATE clone + unique owner + vault INSERT + clone-only compensation +
+ inspector Duplicate). Keep PG-003 Partial. Keep PG-004 Partial. Keep
+ PG-005 Partial. Keep PG-006 Partial.
+Decision/ADR: ADR-004; freeze `376f11e` plus API.md step 18 catalog quoting.
+ AUTH-006 does not apply.
+Reviewer/date: security re-review (2026-08-25) on `7d3b5a8` (`376f11e..7d3b5a8`;
+ correction `26a2a62..7d3b5a8`) Approve Partial. No Critical/High/Medium.
+ Prior Medium closed: QuoteCatalogIdentifier (empty/NUL fail; Sanitize
+ without HTTP allow-list); formatAlter* catalog names; transfer loops
+ return quoting errors (no continue); Duplicate compensates. Condition 1
+ closed. Condition 2 closed: clone SQLs LEFT JOIN pg_roles.rolsuper;
+ skipCloneTransferOwner skips superuser before GRANT … SET TRUE.
+ HTTP names still ValidateIdentifier + QuoteIdentifier. AUTH-006 does not
+ apply. UI pin `a10e0d9` stands (no UI diff).
+ Lows (non-blocking): leftover GRANT SET TRUE on non-skipped owners;
+ pg_get_function_identity_arguments interpolated; unknown 1-char prokind
+ defaults to ALTER FUNCTION (SQL error → compensate); compensated failures
+ not audited; TEMPLATE datacl not stripped of source CONNECT.
+Keep PG-010 Partial. Do not mark Complete. Evidence / verifier still pending.
+ Gate 4, live PostgreSQL 17/18, Playwright, 202/operations remain Complete
+ blockers.
+Not pushed.
+```
+
 
 
 
