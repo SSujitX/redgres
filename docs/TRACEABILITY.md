@@ -5,7 +5,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | Requirement group | Design source | Planned implementation | Test evidence | Status |
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
-| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
+| PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page (no vault/rotation); PG-003–006/008–011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete); REDIS-008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
@@ -2364,6 +2364,71 @@ Reviewer/date: Security review (2026-08-25) on `01d91be`/`df8a9c2`/`1966cf4`
  govulncheck, CI, Node 24.19.0.
  Keep PLAT-001 Partial. Keep PG-012 Partial. Keep REDIS-005 Partial.
  Not pushed.
+```
+
+## Optional expert tool links (2026-08-25)
+
+```text
+Requirement: PLAT-001 Partial (optional REDGRES_PGADMIN_URL /
+ REDGRES_REDISINSIGHT_URL; GET /api/v1/session hrefs; GET /api/v1/status
+ presence; Overview pgAdmin/RedisInsight anchors). No fetch/ping/proxy/embed.
+Decision/ADR: ADR-001; freeze `1a528cd` (API, CONFIGURATION, ARCHITECTURE,
+ SECURITY, UX)
+Source characterization: redis-ui session field is top-level redisinsight_url
+ with no URL validation (ConnectionRail target=_blank rel=noreferrer). Redgres
+ uses nested tool_links, validates http(s), rejects userinfo/fragment/
+ javascript/data/file/relative, production https-only, rel=noopener noreferrer.
+Implementation files: internal/config/{config.go,tool_links.go};
+ internal/platform/status.go; internal/httpapi/{auth_routes.go,status_routes.go};
+ web/src/api/auth.ts; web/src/App.tsx; web/src/components/shell/AppShell.tsx;
+ web/src/features/overview/OverviewPage.tsx; web/src/styles/shell.css;
+ web/src/App.test.tsx
+Unit tests: config empty/whitespace/alone/both/path+query/production optional
+ https/production http reject/userinfo/javascript/data/file/relative/fragment/
+ error omits URL; platform Collect false→not_configured true→ok, independent
+ of postgres/redis down, never unavailable/not_implemented; httpapi login has
+ no tool_links; session {} default, omits empty keys, both hrefs; GET session
+ not audited, no-store; status 401 omits components; default not_configured;
+ one-or-both set → ok without URLs in JSON; healthz unchanged; canary host
+ omitted from status; App.test missing/{} no anchors, one/both hrefs +
+ Reachable, storage, 401, login never /status/healthz, post-login GET /session
+ CSRF vs login token, Refresh does not GET /session
+Integration tests: none run (no live pgAdmin/RedisInsight claimed)
+Security tests: userinfo/javascript/data/file/fragment rejected without
+ echoing URL; status/healthz omit hrefs; GET session not audited;
+ Cache-Control no-store; no server fetch of tool URLs
+Deployment/migration impact: production serve still boots without these keys.
+ go.mod pgx v5.10.0 and go-redis v9.22.0 unchanged. migrations/001_initial.sql
+ unchanged. cmd/redgres unchanged.
+Known limitations: jsdom is not viewport/zoom; URLs are never probed; ok means
+ at least one URL is set; Placeholders.tsx unused OverviewPage path without
+ toolLinks (AppShell renders OverviewPage directly); no default hostnames
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0):
+ Writer API feat/plat-001-tool-links-api `33087b6`:
+  gofmt -l touched Go → empty
+  go test -count=1 ./internal/config ./internal/platform ./internal/httpapi
+   → ok config 0.522s; platform 0.394s; httpapi 19.039s
+  go test -count=1 ./... → ok
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/jackc/pgx/v5 → v5.10.0
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+ Parent rerun API worktree before merge:
+  gofmt -l → empty
+  go test -count=1 ./internal/config ./internal/platform ./internal/httpapi
+   → ok config 0.512s; platform 0.419s; httpapi 21.768s
+ Writer UI feat/plat-001-tool-links-ui `fb0c6ce`:
+  npm --prefix web run test:run → Tests 208 passed (208)
+  npm --prefix web run build → tsc + vite 8.2.2 (dist gitignored)
+ Parent rerun UI worktree before merge:
+  npm --prefix web run test:run → Tests 208 passed (208)
+ Not run: race, Playwright, viewport/zoom, live expert tools, CI, gitleaks,
+ govulncheck, Node 24.19.0
+Local commits: `1a528cd` (freeze), `33087b6` (API), `fb0c6ce` (UI),
+ `28faa83` (merge UI). Reviews pending. Not pushed.
+Keep PLAT-001 Partial. Keep PG-012 Partial. Keep REDIS-005 Partial.
+ Do not mark Complete.
 ```
 
 
