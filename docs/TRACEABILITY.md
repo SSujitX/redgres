@@ -2791,4 +2791,23 @@ Local commits: `99986a1` (freeze), `20addbf` (API), `80c958d` (UI),
 Keep PG-004 Partial. Keep PG-005 Partial. Do not mark Complete.
 ```
 
+## PG-004/PG-005 masked connection security pin (2026-08-25)
+
+```text
+Requirement: PG-004/PG-005 Partial (GET masked connection metadata; no reveal/decrypt)
+Decision/ADR: ADR-004; freeze `99986a1`
+Reviewer/date: Security review (2026-08-25) on `22f12f4` approve Partial;
+ no Critical/High/Medium. Session + postgres.read; no CSRF; no audit;
+ no-store; omit URLs unless present + public host + matching port; never
+ copies admin host/port; SavedRoleNames still role_name only; 401 omits
+ keys; POST /connection 405; POST /connection/reveal unregistered 404;
+ UI memory-only, no auto-copy, clear on selection/logout. Residual Lows
+ (non-blocking): loadConnection does not match body.database to selected
+ (AbortController); public host validation same as Redis. Reviewer did
+ not re-run go test.
+Keep PG-004 Partial. Keep PG-005 Partial. POST reveal and Gate 4 remain
+ Complete blockers.
+Not pushed.
+```
+
 
