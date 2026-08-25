@@ -6,7 +6,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 |---|---|---|---|---|
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer `SHOW VERSION` Ping, optional tool-link session hrefs + status presence, no live matrix); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
-| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page (no vault/rotation); PG-003–006/008–011 not started | Partial |
+| PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-012 Partial: GET `/api/v1/postgres/security` cluster overview + Security overview page (no vault/rotation); PG-005 Partial: in-process Fernet/KDF fixtures in `internal/secrets` (no HTTP reveal/vault SQL); PG-003/004/006/008–011 not started | Partial |
 | REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete); REDIS-008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
@@ -2469,6 +2469,49 @@ Reviewer/date: Security review (2026-08-25) on `bf47017`/`33087b6`/`28faa83`
  gitleaks, govulncheck, CI, COMPATIBILITY.md §6, Node 24.19.0.
 Keep PLAT-001 Partial. Keep PG-012 Partial. Keep REDIS-005 Partial.
  Do not mark Complete.
+```
+
+## PG-005 in-process Fernet/KDF gate (2026-08-25)
+
+```text
+Requirement: PG-005 Partial (in-process Fernet/KDF decrypt gate only; no HTTP
+ reveal, vault SQL, or copied production ciphertext)
+Decision/ADR: ADR-004; freeze `2bd4e40`
+Source characterization: database-app modules/credential_vault.py _cipher at
+ 1c3e8e2; official Fernet spec; cryptography 49.0.0 fernet.py (ttl=None does
+ not consider age). Compatibility research confirmed padded URLEncoding, no
+ TTL, no fernet-go tag, PyPI 50.0.0 Fernet recipe unchanged.
+Implementation files: internal/secrets/{fernet.go,kdf.go,fernet_test.go};
+ internal/secrets/testdata/{python49.json,README.md};
+ docs/ARCHITECTURE.md; docs/DATA_AND_SECRETS.md; docs/REPOSITORY_STRUCTURE.md
+Unit tests: ASCII/Unicode decrypt; KDF exact vs Python 49; wrong-key; flipped
+ ciphertext bit; truncated; invalid Base64; wrong version; 2010 timestamp
+ succeeds; canary SESSION_SECRET/key/token/plaintext absent from err.Error()
+Integration tests: none — no vault SQL/HTTP; go test does not invoke Python
+Security tests: single ErrInvalidToken; constant-time HMAC; PKCS#7 fail-closed
+Deployment/migration impact: none. No env, config, PostgreSQL, or HTTP.
+ go.mod unchanged (pgx v5.10.0, go-redis v9.22.0).
+Known limitations: Gate 2 Go-encrypt→Python not this slice; Gate 4 copied
+ production ciphertext outstanding; no reveal route; no
+ REDGRES_LEGACY_VAULT_SECRET_FILE; token decode accepts missing Base64 padding
+ (Python-lenient). Optional unadded tests: RawURLEncoding negative; independent
+ HMAC tampers of timestamp/IV/MAC.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
+ Writer feat/pg-005-fernet-kdf `1268dbf`:
+  gofmt -l internal/secrets/*.go → empty
+  go test -count=1 ./internal/secrets → ok 0.365s
+  go test -count=1 ./... → ok
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go test -race -count=1 ./internal/secrets → ok 1.548s
+  go list -m github.com/jackc/pgx/v5 → v5.10.0
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+ Parent rerun worktree before merge:
+  gofmt -l → empty
+  go test -count=1 ./internal/secrets → ok 0.398s
+Local commits: `2bd4e40` (freeze), `1268dbf` (impl). Reviews pending. Not pushed.
+Keep PG-005 Partial. Keep PLAT-001 Partial. Keep PG-012 Partial.
+ Keep REDIS-005 Partial. Do not mark Complete.
 ```
 
 
