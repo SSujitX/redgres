@@ -88,6 +88,17 @@ function isRedisPresetsUrl(url: string): boolean {
   return url === "/api/v1/redis/presets" || url.startsWith("/api/v1/redis/presets?");
 }
 
+function isRedisCommandsUrl(url: string): boolean {
+  return url === "/api/v1/redis/commands" || url.startsWith("/api/v1/redis/commands?");
+}
+
+function redisAclCommandsOk(commands: string[] = ["echo", "get", "ping", "set"]) {
+  return jsonResponse(200, {
+    commands,
+    request_id: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  });
+}
+
 function redisAclPatch200(extra: Record<string, unknown> = {}) {
   return jsonResponse(200, {
     user: {
@@ -3316,6 +3327,7 @@ describe("App session and login", () => {
     render(<App />);
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/redis/users"))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isRedisCommandsUrl(String(call[0])))).toBe(true);
   });
 
   it("shows honest Redis ACL search states from the ACL users page", async () => {
@@ -3805,6 +3817,7 @@ describe("App session and login", () => {
     expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/redis/users"))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isRedisCommandsUrl(String(call[0])))).toBe(true);
   });
 
   it("shows Disable on a non-protected inspector when the ACL list is ok", async () => {
@@ -4835,13 +4848,15 @@ describe("App session and login", () => {
     expect(within(dialog).getByLabelText("Permission preset")).toHaveDisplayValue("Read only");
     expect(within(dialog).getByLabelText("Permission preset")).toHaveValue("read-only");
     expect(within(dialog).queryByLabelText("Queue type")).not.toBeInTheDocument();
-    expect(within(dialog).queryByRole("option", { name: "Custom" })).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText("Commands")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("option", { name: "Custom" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("group", { name: "Commands" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isRedisCommandsUrl(String(call[0])))).toBe(true);
   });
 
-  it("defaults a custom inspect preset to cache-read-write with no Custom option", async () => {
-    stubFetch((url) => {
+  it("prefills Custom from inspect commands intersected with the catalog and drops unknown names", async () => {
+    const fetch = stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-custom".padEnd(64, "0") });
       }
@@ -4849,7 +4864,14 @@ describe("App session and login", () => {
         return redisAclListOk([redisAclListItem({ preset: "custom", rule_fidelity: "limited" })]);
       }
       if (isRedisUserDetailUrl(url, "project_a")) {
-        return redisAclDetailOk({ preset: "custom", rule_fidelity: "limited" });
+        return redisAclDetailOk({
+          preset: "custom",
+          rule_fidelity: "limited",
+          commands: ["get", "unknown-cmd", "ping"],
+        });
+      }
+      if (isRedisCommandsUrl(url)) {
+        return redisAclCommandsOk(["echo", "get", "ping", "set"]);
       }
       return unknownApi(url);
     });
@@ -4859,11 +4881,20 @@ describe("App session and login", () => {
     fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
-    expect(within(dialog).getByLabelText("Permission preset")).toHaveDisplayValue("Cache read/write");
-    expect(within(dialog).getByLabelText("Permission preset")).toHaveValue("cache-read-write");
-    expect(within(dialog).queryByRole("option", { name: "Custom" })).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Permission preset")).toHaveDisplayValue("Custom");
+    expect(within(dialog).getByLabelText("Permission preset")).toHaveValue("custom");
     expect(within(dialog).queryByLabelText("Queue type")).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText("Commands")).not.toBeInTheDocument();
+    expect(await within(dialog).findByRole("checkbox", { name: "get" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "ping" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "echo" })).not.toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "set" })).not.toBeChecked();
+    expect(within(dialog).queryByRole("checkbox", { name: "unknown-cmd" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("textbox", { name: "Commands" })).not.toBeInTheDocument();
+    const commandsCall = fetch.mock.calls.find((call) => isRedisCommandsUrl(String(call[0])));
+    expect(commandsCall?.[0]).toBe("/api/v1/redis/commands");
+    expect(String(commandsCall?.[1]?.method ?? "GET").toUpperCase()).toBe("GET");
+    expect(new Headers(commandsCall?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+    expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
   });
 
   it("includes queue_kind only for queue-worker and never sends password or commands", async () => {
@@ -4930,6 +4961,7 @@ describe("App session and login", () => {
     expect(patchBodies[1]).not.toHaveProperty("commands");
     expect(patchBodies[1]).not.toHaveProperty("username");
     expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isRedisCommandsUrl(String(call[0])))).toBe(true);
   });
 
   it("PATCHes permissions with CSRF and encodeURIComponent and no GET /presets", async () => {
@@ -4973,6 +5005,7 @@ describe("App session and login", () => {
     expect(body).not.toHaveProperty("username");
     expect(body).not.toHaveProperty("queue_kind");
     expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isRedisCommandsUrl(String(call[0])))).toBe(true);
   });
 
   it("applies a 200 PATCH payload to inspector and the matching ledger row without a ticket", async () => {
@@ -5291,6 +5324,131 @@ describe("App session and login", () => {
     expect(
       fetch.mock.calls.every((call) => String(call[1]?.method ?? "").toUpperCase() !== "PATCH"),
     ).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isRedisCommandsUrl(String(call[0])))).toBe(true);
     expect(screen.queryByRole("button", { name: "Edit permissions" })).not.toBeInTheDocument();
+  });
+
+  it("prefills the named inspect command set when the operator switches to Custom", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-switch".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ commands: ["get", "set"] });
+      }
+      if (isRedisCommandsUrl(url)) {
+        return redisAclCommandsOk(["echo", "get", "ping", "set"]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
+    expect(within(dialog).getByLabelText("Permission preset")).toHaveValue("cache-read-write");
+    expect(fetch.mock.calls.every((call) => !isRedisCommandsUrl(String(call[0])))).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText("Permission preset"), { target: { value: "custom" } });
+    expect(await within(dialog).findByRole("checkbox", { name: "get" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "set" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "echo" })).not.toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "ping" })).not.toBeChecked();
+    expect(fetch.mock.calls.some((call) => isRedisCommandsUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+  });
+
+  it("PATCHes Custom with CSRF, catalog commands, and no password or queue_kind", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-cmds".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem({ preset: "custom" })]);
+      }
+      if (isRedisUserPatch(url, "project_a", init)) {
+        return redisAclPatch200({ preset: "custom", commands: ["echo", "get", "ping"] });
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({
+          preset: "custom",
+          commands: ["get", "unknown-cmd", "ping"],
+        });
+      }
+      if (isRedisCommandsUrl(url)) {
+        return redisAclCommandsOk(["echo", "get", "ping", "set"]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
+    fireEvent.click(await within(dialog).findByRole("checkbox", { name: "echo" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isRedisUserPatch(String(call[0]), "project_a", call[1]))).toBe(true);
+    });
+    const patchCall = fetch.mock.calls.find((call) => isRedisUserPatch(String(call[0]), "project_a", call[1]));
+    expect(patchCall?.[0]).toBe(`/api/v1/redis/users/${encodeURIComponent("project_a")}`);
+    expect(new Headers(patchCall?.[1]?.headers).get("X-CSRF-Token")).toBe("acl-patch-cmds".padEnd(64, "0"));
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    expect(body).toEqual({ key_pattern: "project_a:*", preset: "custom", commands: ["echo", "get", "ping"] });
+    expect(body).not.toHaveProperty("password");
+    expect(body).not.toHaveProperty("queue_kind");
+    expect(body).not.toHaveProperty("username");
+    expect(body).not.toHaveProperty("categories");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it.each([
+    {
+      status: 401,
+      body: { error: { code: "unauthorized", message: "Authentication required" } },
+      copy: "Your session has expired. Sign in again to continue.",
+    },
+    {
+      status: 503,
+      body: { error: { code: "dependency_unavailable", message: "Redis is unavailable." } },
+      copy: "Redis is unavailable.",
+    },
+  ] as const)("disables Save and invents no commands when GET /commands is $status", async ({ status, body, copy }) => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: `acl-cmds-${status}`.padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem({ preset: "custom" })]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ preset: "custom", commands: ["get", "set"] });
+      }
+      if (isRedisCommandsUrl(url)) {
+        return jsonResponse(status, body);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(copy);
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox", { name: "get" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox", { name: "set" })).not.toBeInTheDocument();
+    expect(fetch.mock.calls.some((call) => isRedisCommandsUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => String(call[1]?.method ?? "").toUpperCase() !== "PATCH")).toBe(true);
   });
 });
