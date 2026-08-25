@@ -1638,12 +1638,13 @@ Known limitations: SETUSER-then-audit-fail leftover toggle;
  no rotate; no viewport sign-off; REDIS-003 residuals unchanged.
 Reviewer/date: Security review (2026-08-25) approve Partial; no
  Critical/High/Medium. L1 GetUser/SETUSER recreate race accepted
- unfixed. Evidence review (2026-08-25) docs-correction-required then
- keep-Partial (`014e0dc`). UI review still pending. Verifier pending.
- Do not mark Complete (rotate missing).
+ unfixed. UI review (2026-08-25) approve Partial UI; no Critical/High.
+ Explicitly NOT viewport/zoom sign-off. Evidence review (2026-08-25)
+ docs-correction-required then keep-Partial (`014e0dc`). Verifier
+ pending. Do not mark Complete (rotate missing).
  Local commits: `beaa606` (API), `8158c6a` (UI), `6ecd075` (merge UI),
  `8eac4eb` (docs record), `74af2c4` (parent test results), `014e0dc`
- (catalog implemented). Not pushed.
+ (catalog implemented), `c45f05f` (security approve). Not pushed.
 ```
 
 
