@@ -68,8 +68,16 @@ type MemoryCatalog struct {
 	UpsertCredentialErr           error
 	UpsertFailTimes               int
 	DeleteCredentialCalls         int
+	DeleteCredentialErr           error
 	DropDatabaseCalls             int
+	DropCalls                     int
+	LastDropSQL                   string
+	LastDropName                  string
+	DropErr                       error
+	DropStarted                   chan struct{}
+	DropHold                      chan struct{}
 	DropRoleCalls                 int
+	DropRoleErr                   error
 	CreatedRoles                  []string
 	CreatedDatabases              []string
 	InsertedVault                 []string
@@ -487,12 +495,45 @@ func (m *MemoryCatalog) UpsertCredential(_ context.Context, role, encrypted stri
 func (m *MemoryCatalog) DeleteCredential(_ context.Context, role string) error {
 	m.DeleteCredentialCalls++
 	m.DeletedVault = append(m.DeletedVault, role)
+	if m.DeleteCredentialErr != nil {
+		return m.DeleteCredentialErr
+	}
 	return nil
 }
 
 func (m *MemoryCatalog) TerminateAndDropDatabase(_ context.Context, database string) error {
 	m.DropDatabaseCalls++
 	m.DroppedDatabases = append(m.DroppedDatabases, database)
+	filtered := m.Rows[:0]
+	for _, row := range m.Rows {
+		if row.Name != database {
+			filtered = append(filtered, row)
+		}
+	}
+	m.Rows = filtered
+	return nil
+}
+
+func (m *MemoryCatalog) DropDatabase(_ context.Context, database string) error {
+	sql, err := formatOperatorDropDatabase(database)
+	if err != nil {
+		return err
+	}
+	m.LastDropSQL = sql
+	m.LastDropName = database
+	m.DropCalls++
+	if m.DropStarted != nil {
+		select {
+		case m.DropStarted <- struct{}{}:
+		default:
+		}
+	}
+	if m.DropHold != nil {
+		<-m.DropHold
+	}
+	if m.DropErr != nil {
+		return m.DropErr
+	}
 	filtered := m.Rows[:0]
 	for _, row := range m.Rows {
 		if row.Name != database {
@@ -516,6 +557,9 @@ func (m *MemoryCatalog) OwnedDatabaseCount(context.Context, string) (int, error)
 func (m *MemoryCatalog) DropRole(_ context.Context, owner string) error {
 	m.DropRoleCalls++
 	m.DroppedRoles = append(m.DroppedRoles, owner)
+	if m.DropRoleErr != nil {
+		return m.DropRoleErr
+	}
 	return nil
 }
 

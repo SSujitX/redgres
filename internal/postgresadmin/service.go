@@ -20,6 +20,8 @@ type Service struct {
 	duplicating map[string]struct{}
 	truncateMu  sync.Mutex
 	truncating  map[string]struct{}
+	dropMu      sync.Mutex
+	dropping    map[string]struct{}
 }
 
 func NewService(catalog Catalog, policy Policy) *Service {

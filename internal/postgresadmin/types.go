@@ -46,6 +46,7 @@ type Catalog interface {
 	UpsertCredential(ctx context.Context, role, encrypted string) error
 	DeleteCredential(ctx context.Context, role string) error
 	TerminateAndDropDatabase(ctx context.Context, database string) error
+	DropDatabase(ctx context.Context, database string) error
 	OwnedDatabaseCount(ctx context.Context, owner string) (int, error)
 	DropRole(ctx context.Context, owner string) error
 	OwnershipSnapshot(ctx context.Context, database string) (OwnershipSnapshot, error)
@@ -70,6 +71,7 @@ type Inventory interface {
 	PrimaryKey(ctx context.Context, database, schema, table string) ([]string, error)
 	DeleteRows(ctx context.Context, database, schema, table string, values []any) (int64, error)
 	Truncate(ctx context.Context, database string) (TruncateResult, error)
+	Drop(ctx context.Context, database string) (DropResult, error)
 	SecurityOverview(ctx context.Context) (SecurityOverview, error)
 	Connection(ctx context.Context, name string) (Connection, error)
 	Reveal(ctx context.Context, name string) (RevealedConnection, error)
@@ -159,6 +161,12 @@ type TruncateResult struct {
 	Truncated   int
 	Failed      []string
 	TotalTables int
+}
+
+type DropResult struct {
+	Dropped     string
+	Owner       string
+	DroppedRole string
 }
 
 const (

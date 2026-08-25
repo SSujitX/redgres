@@ -15,8 +15,8 @@ func (s *Service) Truncate(ctx context.Context, database string) (TruncateResult
 	if s == nil || s.catalog == nil {
 		return empty, ErrUnavailable
 	}
-	if !s.tryLockTruncate(database) {
-		return empty, TruncateInProgress{}
+	if err := s.lockTruncate(database); err != nil {
+		return empty, err
 	}
 	defer s.unlockTruncate(database)
 	if s.policy.DatabaseDenied(database) {
@@ -49,17 +49,23 @@ func (s *Service) Truncate(ctx context.Context, database string) (TruncateResult
 	return TruncateResult{Truncated: n, Failed: []string{}, TotalTables: n}, nil
 }
 
-func (s *Service) tryLockTruncate(database string) bool {
+func (s *Service) lockTruncate(database string) error {
+	// Lock order: truncateMu then dropMu.
 	s.truncateMu.Lock()
+	s.dropMu.Lock()
+	defer s.dropMu.Unlock()
 	defer s.truncateMu.Unlock()
+	if _, held := s.dropping[database]; held {
+		return DropInProgress{}
+	}
 	if s.truncating == nil {
 		s.truncating = map[string]struct{}{}
 	}
 	if _, held := s.truncating[database]; held {
-		return false
+		return TruncateInProgress{}
 	}
 	s.truncating[database] = struct{}{}
-	return true
+	return nil
 }
 
 func (s *Service) unlockTruncate(database string) {

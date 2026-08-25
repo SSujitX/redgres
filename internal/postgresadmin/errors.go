@@ -20,6 +20,12 @@ const duplicateInProgressMessage = "A database duplicate is already in progress.
 
 const truncateInProgressMessage = "A truncate is already in progress."
 
+const dropInProgressMessage = "A drop is already in progress."
+
+const roleDropFailedMessage = "The database was dropped but the project role could not be removed."
+
+const vaultDeleteFailedMessage = "The database and role were dropped but the vault row could not be removed."
+
 const tableListTruncatedMessage = "Table list is truncated. Truncate cannot run."
 
 const isolationChangedMessage = "The source database ownership or CONNECT ACL changed during duplicate. The clone was rolled back."
@@ -46,6 +52,39 @@ func (TruncateInProgress) Error() string {
 
 func (TruncateInProgress) Unwrap() error {
 	return ErrOperationInProgress
+}
+
+// DropInProgress is a 409 distinct from truncate/rotate/duplicate copy.
+type DropInProgress struct{}
+
+func (DropInProgress) Error() string {
+	return dropInProgressMessage
+}
+
+func (DropInProgress) Unwrap() error {
+	return ErrOperationInProgress
+}
+
+// RoleDropFailed is a 503 after DROP DATABASE succeeded but DROP ROLE failed.
+type RoleDropFailed struct{}
+
+func (RoleDropFailed) Error() string {
+	return roleDropFailedMessage
+}
+
+func (RoleDropFailed) Unwrap() error {
+	return ErrUnavailable
+}
+
+// VaultDeleteFailed is a 503 after DROP ROLE succeeded but vault DELETE failed.
+type VaultDeleteFailed struct{}
+
+func (VaultDeleteFailed) Error() string {
+	return vaultDeleteFailedMessage
+}
+
+func (VaultDeleteFailed) Unwrap() error {
+	return ErrUnavailable
 }
 
 // TableListTruncated is a 409 conflict when GET-tables would be truncated.

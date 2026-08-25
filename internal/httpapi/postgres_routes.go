@@ -32,6 +32,12 @@ const postgresTruncateOffMessage = "Truncate is turned off."
 const postgresTruncateConfirmMessage = "Type the exact database name to confirm truncate"
 const postgresTruncateInProgressMessage = "A truncate is already in progress."
 const postgresTruncateTableListMessage = "Table list is truncated. Truncate cannot run."
+const postgresDropTimeout = 30 * time.Second
+const postgresDropOffMessage = "Drop is turned off."
+const postgresDropConfirmMessage = "Type the exact database name to confirm drop"
+const postgresDropInProgressMessage = "A drop is already in progress."
+const postgresDropRoleFailedMessage = "The database was dropped but the project role could not be removed."
+const postgresDropVaultFailedMessage = "The database and role were dropped but the vault row could not be removed."
 
 type postgresListBody struct {
 	postgresadmin.ListResult
@@ -679,6 +685,80 @@ func (s *Server) handlePostgresDatabaseTruncate(w http.ResponseWriter, r *http.R
 	})
 }
 
+type postgresDropRequest struct {
+	DatabaseConfirmation string `json:"database_confirmation"`
+	OwnerPassword        string `json:"owner_password"`
+}
+
+type postgresDropResponse struct {
+	Dropped     string `json:"dropped"`
+	DroppedRole string `json:"dropped_role,omitempty"`
+	RequestID   string `json:"request_id"`
+}
+
+func (s *Server) handlePostgresDatabaseDrop(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.FeaturePostgresDrop {
+		s.writeError(w, r, http.StatusForbidden, CodeForbidden, postgresDropOffMessage)
+		return
+	}
+	database, err := decodePathIdentifier(chi.URLParam(r, "db"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid database name")
+		return
+	}
+	var body postgresDropRequest
+	if err := decodeJSON(r, &body); err != nil {
+		s.writeDecodeError(w, r, err)
+		return
+	}
+	if body.DatabaseConfirmation != database {
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, postgresDropConfirmMessage, map[string]string{"database_confirmation": "invalid"})
+		return
+	}
+	sess := sessionFrom(r)
+	meta := map[string]any{"database": database}
+	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword); err != nil {
+		switch {
+		case errors.Is(err, auth.ErrReauthRequired):
+			_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
+			return
+		case errors.Is(err, auth.ErrUnauthorized):
+			s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, authRequiredMessage)
+			return
+		default:
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), postgresDropTimeout)
+	defer cancel()
+	if s.postgres == nil {
+		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	result, err := s.postgres.Drop(ctx, database)
+	if err != nil {
+		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writePostgresError(w, r, err)
+		return
+	}
+	successMeta := map[string]any{"database": result.Dropped, "owner": result.Owner}
+	if result.DroppedRole != "" {
+		successMeta["dropped_role"] = result.DroppedRole
+	}
+	if err := s.audit.Record(sess.Username, "postgres.database.drop", database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), successMeta); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, postgresDropResponse{
+		Dropped:     result.Dropped,
+		DroppedRole: result.DroppedRole,
+		RequestID:   requestID(r),
+	})
+}
+
 func postgresRowsDeleteMeta(database, schema, table string) map[string]any {
 	return map[string]any{"database": database, "schema": schema, "table": table}
 }
@@ -733,9 +813,24 @@ func decodePathIdentifier(raw string) (string, error) {
 }
 
 func (s *Server) writePostgresError(w http.ResponseWriter, r *http.Request, err error) {
+	var dropInProgress postgresadmin.DropInProgress
+	if errors.As(err, &dropInProgress) {
+		s.writeError(w, r, http.StatusConflict, CodeOperationInProgress, postgresDropInProgressMessage)
+		return
+	}
 	var truncateInProgress postgresadmin.TruncateInProgress
 	if errors.As(err, &truncateInProgress) {
 		s.writeError(w, r, http.StatusConflict, CodeOperationInProgress, postgresTruncateInProgressMessage)
+		return
+	}
+	var roleDropFailed postgresadmin.RoleDropFailed
+	if errors.As(err, &roleDropFailed) {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, postgresDropRoleFailedMessage)
+		return
+	}
+	var vaultDeleteFailed postgresadmin.VaultDeleteFailed
+	if errors.As(err, &vaultDeleteFailed) {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, postgresDropVaultFailedMessage)
 		return
 	}
 	var tableListTruncated postgresadmin.TableListTruncated
