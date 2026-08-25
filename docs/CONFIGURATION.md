@@ -76,6 +76,7 @@ When set, the value must be an absolute URL with a scheme and host, no userinfo,
 - `REDGRES_FEATURE_POSTGRES_ROW_DELETE=false`
 
 There is no `REDGRES_FEATURE_POSTGRES_CREATE`. Create is not a destructive flag.
+There is no `REDGRES_FEATURE_POSTGRES_ROTATE`. Rotate is not a destructive flag.
 
 Enabling a flag makes the server-side workflow reachable; it never bypasses capabilities, protected targets, CSRF, confirmation, reauthentication, or audit.
 
