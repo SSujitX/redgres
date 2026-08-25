@@ -90,4 +90,49 @@ export async function fetchPostgresRows(
   return apiRequest<RowPage & ApiErrorBody>(query ? `${path}?${query}` : path, init);
 }
 
+export type PostgresSecuritySummary = {
+  database_count?: number;
+  public_connect_count?: number;
+  active_connection_count?: number;
+  connection_group_count?: number;
+};
+
+export type PostgresSecurityDatabase = {
+  name?: string;
+  owner?: string;
+  protected?: boolean;
+  public_can_connect?: boolean;
+  owner_is_superuser?: boolean;
+  owner_can_login?: boolean;
+  owner_createdb?: boolean;
+  owner_createrole?: boolean;
+  owner_replication?: boolean;
+  active_connections?: number;
+};
+
+export type PostgresSecurityConnection = {
+  database?: string;
+  user?: string;
+  client?: string;
+  application?: string;
+  state?: string;
+  count?: number;
+};
+
+export type PostgresSecurityPayload = {
+  summary?: PostgresSecuritySummary;
+  saved_credential?: {
+    status?: string;
+    reason?: string;
+  };
+  databases?: PostgresSecurityDatabase[];
+  connections?: PostgresSecurityConnection[];
+  truncated?: boolean;
+  request_id?: string;
+};
+
+export async function fetchPostgresSecurity(init: RequestInit = {}) {
+  return apiRequest<PostgresSecurityPayload & ApiErrorBody>("/api/v1/postgres/security", init);
+}
+
 export { errorMessage };

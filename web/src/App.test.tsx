@@ -92,6 +92,79 @@ function isRedisCommandsUrl(url: string): boolean {
   return url === "/api/v1/redis/commands" || url.startsWith("/api/v1/redis/commands?");
 }
 
+function isPostgresSecurityUrl(url: string): boolean {
+  return url === "/api/v1/postgres/security";
+}
+
+function postgresSecurityDatabase(extra: Record<string, unknown> = {}) {
+  return {
+    name: "postgres",
+    owner: "postgres",
+    protected: true,
+    public_can_connect: false,
+    owner_is_superuser: true,
+    owner_can_login: true,
+    owner_createdb: true,
+    owner_createrole: true,
+    owner_replication: true,
+    active_connections: 1,
+    ...extra,
+  };
+}
+
+function postgresSecurityConnection(extra: Record<string, unknown> = {}) {
+  return {
+    database: "postgres",
+    user: "postgres",
+    client: "local",
+    application: "redgres",
+    state: "idle",
+    count: 1,
+    ...extra,
+  };
+}
+
+function postgresSecurityOk(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    summary: {
+      database_count: 2,
+      public_connect_count: 1,
+      active_connection_count: 3,
+      connection_group_count: 2,
+    },
+    saved_credential: { status: "not_available", reason: "vault_not_implemented" },
+    databases: [
+      postgresSecurityDatabase(),
+      postgresSecurityDatabase({
+        name: "project_a",
+        owner: "project_a_role",
+        protected: false,
+        public_can_connect: true,
+        owner_is_superuser: false,
+        owner_can_login: true,
+        owner_createdb: false,
+        owner_createrole: false,
+        owner_replication: false,
+        active_connections: 2,
+      }),
+    ],
+    connections: [
+      postgresSecurityConnection(),
+      postgresSecurityConnection({
+        database: "project_a",
+        user: "project_a_role",
+        client: "10.0.0.2",
+        application: "app",
+        state: "active",
+        count: 2,
+      }),
+    ],
+    truncated: false,
+    request_id: "ffffffffffffffffffffffffffffffff",
+    ...extra,
+  });
+}
+
 function redisAclCommandsOk(commands: string[] = ["echo", "get", "ping", "set"]) {
   return jsonResponse(200, {
     commands,
@@ -220,6 +293,15 @@ function redisAclDetailOk(extra: Record<string, unknown> = {}) {
 function goToAclUsers() {
   fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
   fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "ACL users" }));
+}
+
+function goToSecurityOverview() {
+  fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Security overview" }),
+  );
 }
 
 function isSearchUrl(url: string): boolean {
@@ -1898,6 +1980,347 @@ describe("App session and login", () => {
     expect(await screen.findByText("page_two")).toBeInTheDocument();
     const nextCall = fetch.mock.calls.find((call) => String(call[0]).includes("offset=50"));
     expect(nextCall).toBeDefined();
+  });
+
+  it("shows the Security overview page instead of the placeholder", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-a".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("heading", { name: "Security overview" })).toBeInTheDocument();
+    expect(screen.queryByText("This adapter is not available yet.")).not.toBeInTheDocument();
+    expect(screen.queryByText("This view is not available yet.")).not.toBeInTheDocument();
+  });
+
+  it("requests Security overview from exactly GET /api/v1/postgres/security without CSRF", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-b".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("heading", { name: "Security overview" })).toBeInTheDocument();
+    const calls = fetch.mock.calls.filter((call) => String(call[0]).includes("/api/v1/postgres/security"));
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => String(call[0]) === "/api/v1/postgres/security")).toBe(true);
+    const method = calls[0]?.[1]?.method;
+    expect(method === undefined || method === "GET").toBe(true);
+    expect(new Headers(calls[0]?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+  });
+
+  it("shows Security overview loading then the frozen 200 payload", async () => {
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-c".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blocked.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("heading", { name: "Security overview" })).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading security overview.");
+    expect(screen.queryByRole("table", { name: "Connection groups" })).not.toBeInTheDocument();
+    release();
+    expect(await screen.findByRole("table", { name: "Database security" })).toBeInTheDocument();
+    expect(screen.queryByText("Loading security overview.")).not.toBeInTheDocument();
+  });
+
+  it("shows protected and project database rows with PUBLIC CONNECT and owner flags", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-d".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    const table = await screen.findByRole("table", { name: "Database security" });
+    const rows = within(table).getAllByRole("row");
+    expect(rows.length).toBe(3);
+    const postgresCells = within(rows[1] as HTMLElement).getAllByRole("cell");
+    expect(postgresCells[0]).toHaveTextContent("postgres");
+    expect(postgresCells[0].querySelector(".identifier.bidi-isolate")).not.toBeNull();
+    expect(postgresCells[2]).toHaveTextContent("Protected");
+    expect(postgresCells[3]).toHaveTextContent("No");
+    expect(postgresCells[4]).toHaveTextContent("Yes");
+    const projectCells = within(rows[2] as HTMLElement).getAllByRole("cell");
+    expect(projectCells[0]).toHaveTextContent("project_a");
+    expect(projectCells[0].querySelector(".identifier.bidi-isolate")).not.toBeNull();
+    expect(projectCells[2]).not.toHaveTextContent("Protected");
+    expect(projectCells[3]).toHaveTextContent("Yes");
+    expect(projectCells[4]).toHaveTextContent("No");
+    const article = screen.getByRole("heading", { name: "Security overview" }).closest("article");
+    expect(article).not.toBeNull();
+    expect(within(article as HTMLElement).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
+    expect(within(article as HTMLElement).queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
+    expect(within(article as HTMLElement).queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+  });
+
+  it("shows vault Not available copy matching Databases", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-e".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByText("Not available")).toBeInTheDocument();
+    expect(screen.getByText("Saved credential").closest("div")).toHaveTextContent("Not available");
+    expect(screen.queryByText("vault_not_implemented")).not.toBeInTheDocument();
+  });
+
+  it("renders the connection groups table from the frozen payload", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-f".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    const table = await screen.findByRole("table", { name: "Connection groups" });
+    const rows = within(table).getAllByRole("row");
+    expect(rows.length).toBe(3);
+    const first = within(rows[1] as HTMLElement).getAllByRole("cell");
+    expect(first[0].querySelector(".identifier.bidi-isolate")).toHaveTextContent("postgres");
+    expect(first[1].querySelector(".identifier.bidi-isolate")).toHaveTextContent("postgres");
+    expect(first[2].querySelector(".identifier.bidi-isolate")).toHaveTextContent("local");
+    expect(first[3].querySelector(".identifier.bidi-isolate")).toHaveTextContent("redgres");
+    expect(first[4]).toHaveTextContent("idle");
+    expect(first[5]).toHaveTextContent("1");
+    const second = within(rows[2] as HTMLElement).getAllByRole("cell");
+    expect(second[0]).toHaveTextContent("project_a");
+    expect(second[2].querySelector(".identifier.bidi-isolate")).toHaveTextContent("10.0.0.2");
+    expect(second[3].querySelector(".identifier.bidi-isolate")).toHaveTextContent("app");
+    expect(second[4]).toHaveTextContent("active");
+    expect(second[5]).toHaveTextContent("2");
+  });
+
+  it("warns when the security overview is truncated", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-g".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk({ truncated: true });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Security overview truncated at 500 databases or connection groups.",
+    );
+    expect(screen.getByRole("table", { name: "Database security" })).toBeInTheDocument();
+  });
+
+  it("shows PostgreSQL unavailable without an empty healthy security overview", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-h".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return jsonResponse(503, {
+          error: { code: "dependency_unavailable", message: "PostgreSQL is unavailable" },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("alert")).toHaveTextContent("PostgreSQL is unavailable");
+    expect(screen.queryByText("No databases.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No connection groups.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Database security" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Connection groups" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Not available")).not.toBeInTheDocument();
+  });
+
+  it("shows a session-expired security alert without overview keys from 401", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-i".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return jsonResponse(401, {
+          error: { code: "unauthorized", message: "Authentication required" },
+          summary: { database_count: 99 },
+          saved_credential: { status: "not_available", reason: "vault_not_implemented" },
+          databases: [{ name: "should-not-appear" }],
+          connections: [{ database: "leaked-connection" }],
+          truncated: true,
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your session has expired. Sign in again to continue.",
+    );
+    expect(screen.queryByText("should-not-appear")).not.toBeInTheDocument();
+    expect(screen.queryByText("leaked-connection")).not.toBeInTheDocument();
+    expect(screen.queryByText("99")).not.toBeInTheDocument();
+    expect(screen.queryByText("No databases.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Database security" })).not.toBeInTheDocument();
+  });
+
+  it("shows empty security lists only after HTTP 200 with empty arrays", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-j".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk({
+          summary: {
+            database_count: 0,
+            public_connect_count: 0,
+            active_connection_count: 0,
+            connection_group_count: 0,
+          },
+          databases: [],
+          connections: [],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByText("No databases.")).toBeInTheDocument();
+    expect(screen.getByText("No connection groups.")).toBeInTheDocument();
+    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("PostgreSQL is unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Database security" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Connection groups" })).not.toBeInTheDocument();
+  });
+
+  it("does not fetch PostgreSQL security on the login route", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/postgres/security"))).toBe(true);
+  });
+
+  it("does not persist security overview state in localStorage or sessionStorage", async () => {
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-k".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("table", { name: "Database security" })).toBeInTheDocument();
+    expect(screen.getAllByText("project_a").length).toBeGreaterThan(0);
+    expect(localSet).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Security overview" })).not.toBeInTheDocument();
+    expect(screen.queryByText("project_a")).not.toBeInTheDocument();
+    expect(localSet).not.toHaveBeenCalled();
+    localSet.mockRestore();
   });
 
   it("opens and closes the navigation drawer", async () => {
