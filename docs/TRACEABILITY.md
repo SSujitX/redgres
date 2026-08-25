@@ -7,7 +7,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
-| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete/PATCH/custom); REDIS-005–006/008 not started | Partial |
+| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete/custom); REDIS-005/008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
@@ -1827,6 +1827,59 @@ Reviewer/date: Security review (2026-08-25) approve Partial; no
  Local commits: `8846d7f` (API), `b7f905f` (UI), `7ca8c93` (merge UI),
  `1d48e8f` (docs record), `651ecb1` (review pin). Not pushed.
  Keep REDIS-004 Partial.
+```
+
+## REDIS-006 named-preset PATCH (2026-08-25)
+
+```text
+Requirement: REDIS-006 (Partial: PATCH named-preset prefix/grants; password
+ preserved). Keep REDIS-006 Partial until live Redis / COMPATIBILITY.md §6 /
+ viewport exist. Do not mark Complete. Custom PATCH is REDIS-005. REDIS-008 /
+ AUTH-006 not started. REDIS-003/004/007 stay Partial. go-redis stays v9.22.0.
+ inspect* unchanged.
+Decision/ADR: ADR-001; ADR-006 (-@all + explicit +CMD). AUTH-006 does not apply.
+ SETUSER: resetkeys ~pattern resetchannels nocommands -@all +CMD; no
+ reset/resetpass/>/on/off. Capability redis.provision, not redis.destructive.
+Source: redis-ui UpdatePermissions / handleUpdateUser / UserForm.tsx at
+ D:\code\github\redis-ui (read-only). Custom deny-list + commands/categories
+ were not copied.
+Implementation files: internal/redisadmin/{service.go,memory.go,update_test.go};
+ internal/httpapi/{server.go,redis_users_routes.go,redis_users_routes_test.go};
+ web/src/{api/redis.ts,features/redis/AclUsersPage.tsx,
+ features/redis/EditPermissionsDialog.tsx,App.test.tsx};
+ docs/{API,ARCHITECTURE,SECURITY,UX,TRACEABILITY}.md; AGENTS.md
+Unit/HTTP: five named SETUSER vectors = inspect slices; no reset/resetpass/>/
+ on/off; enabled+hash preserved; custom/limited/disabled updatable;
+ protected/missing no SETUSER; empty preset does not default; CSRF/401/403/
+ 400/404/503; unknown fields; PATCH collection 405; PUT/DELETE username 405;
+ audit-fail after SETUSER no user; create/enable/rotate/GET/presets regressions.
+Frontend: Edit permissions text-button (not danger); same visibility as
+ Enable/Rotate; no Custom; custom inspect defaults cache-read-write;
+ queue_kind only for queue-worker; PATCH CSRF encodeURIComponent
+ {key_pattern, preset [, queue_kind]}; 200 applies inspector+row, no ticket;
+ 401/403/404/503 copy; no storage; login never PATCH; never GET /presets.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
+ Parent review of API then FF onto master `0a8d9b2`:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 1.609s; httpapi 16.375s
+ Writer UI feat/redis-006-patch-ui `418c473` (Node v25.3.0):
+  npm --prefix web run test:run → Tests 173 passed (173)
+  npm --prefix web run build → tsc + vite 8.2.2 (writer; dist gitignored)
+ Parent after UI merge `d410034` + this docs commit:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 1.918s; httpapi 18.378s
+  npm --prefix web test -- --run → Tests 173 passed (173)
+  go vet ./... → no findings; go build -o NUL ./cmd/redgres → success
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+Not run by parent: live Redis, COMPATIBILITY.md §6, gitleaks, govulncheck,
+ CI, Playwright, npm production build, viewport/zoom, Node 24.19.0,
+ writer API ./... timings (not independently re-run here).
+Known limitations: SETUSER-then-audit-fail leftover grants; GetUser/SETUSER
+ race; MemoryClient plaintext > residual unchanged; REDIS-003/004/007 UI
+ Medium residuals unchanged; no representative workloads.
+Reviewer/date: pending parent security + UI + evidence + verifier.
+ Local commits: `0a8d9b2` (API), `418c473` (UI), `d410034` (merge UI).
+ Not pushed. Keep REDIS-006 Partial.
 ```
 
 
