@@ -3122,4 +3122,30 @@ Keep REDIS-008 Partial. Keep AUTH-006 Partial. Keep PG-012 Partial.
  Keep PG-004 Partial. Keep PG-005 Partial. Do not mark Complete.
 ```
 
+## REDIS-008 ACL delete UI pin (2026-08-25)
+
+```text
+Requirement: REDIS-008 Partial (inspector Delete + danger dialog; AUTH-006 this
+ DELETE UI only)
+Decision/ADR: AUTH-006 in-handler reauth; freeze `372fbfa`
+Reviewer/date: UI review (2026-08-25) on `7b20bd8` approve Partial UI;
+ no Critical/High/Medium. Frozen copy holds: title Delete Redis user;
+ connections terminated; keys not deleted; cannot be undone. Page intro no
+ longer says “Delete is not available in this slice.” Danger token holds:
+ .danger-button background var(--danger), not --redis. Secret clearing
+ holds in memory (200/401/dismiss/inspect-other/logout; reauth_required
+ clears password only). Search never DELETE; login never DELETE; protected
+ tests still hide Delete. Explicitly NOT viewport/zoom sign-off. Missing
+ evidence (non-blocking): Playwright viewports; section-change unmount
+ without dedicated jsdom; enable/rotate/edit in-flight disable not
+ separately asserted; reviewer did not re-run npm tests. Optional polish
+ (non-blocking): dialog does not echo username; background not inert;
+ focus does not restore to trigger; 403 protected/503 leave password.
+Keep REDIS-008 Partial. Keep AUTH-006 Partial. Keep PG-012 Partial.
+ Keep PG-004 Partial. Keep PG-005 Partial.
+ Playwright 360×800 / 768×1024 / 1280×800 / 1600×1000 + 200% zoom, live
+ Redis 8.2/8.8, COMPATIBILITY.md §6 remain Complete blockers.
+Not pushed.
+```
+
 
