@@ -2878,8 +2878,8 @@ Source characterization: database-app security_ops.get_security_overview at
  adminpg, database_console, onelife_pg_admin}. Redgres does not emit
  can_rotate and does not hardcode adminpg. Derives in Service from existing
  row fields + Policy.Manageable (protected = !Manageable). No new catalog SQL.
-Implementation files: internal/postgresadmin/{types.go,service.go,rotation.go};
- internal/httpapi/postgres_security_routes_test.go;
+Implementation files: internal/postgresadmin/{types.go,service.go,rotation.go,
+ service_test.go}; internal/httpapi/postgres_security_routes_test.go;
  web/src/api/postgres.ts; web/src/features/postgres/SecurityOverview.tsx;
  web/src/App.test.tsx
 Unit tests: project_a true; postgres/zeta_last/empty owner/owned_by_admin/
@@ -2896,8 +2896,9 @@ Deployment/migration impact: none. go.mod unchanged (pgx v5.10.0,
  go-redis v9.22.0). No REDGRES_LEGACY_VAULT_SECRET_FILE. Route table
  unchanged.
 Known limitations: POST rotate/reveal not registered; no summary eligible
- count; no details-GET field; Gate 4, live PostgreSQL 17/18, Playwright
- viewports outstanding
+ count; no details-GET field; Gate 4 copied production ciphertext,
+ live PostgreSQL 17/18, Playwright viewports outstanding; go test -race ./...,
+ CI, Node 24.19.0 unexecuted. No .env/.db/certs/secret files in 674bd5c..HEAD.
 Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
  v25.3.0 (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
  Writer API feat/pg-012-rotation-eligibility-api `686bbd9`:
@@ -2924,7 +2925,9 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node
   go list -m github.com/redis/go-redis/v9 → v9.22.0
   npm --prefix web run test:run → Tests 224 passed (224), 37.64s
 Local commits: `674bd5c` (freeze), `686bbd9` (API), `07130ea` (UI),
- `744f8df` (merge API), `387b8d8` (merge UI), `bd7b067` (docs record).
+ `744f8df` (merge API), `387b8d8` (merge UI), `bd7b067` (docs record),
+ `41ef55a` (name TRACEABILITY HEAD). UI pin `53c0d1b` and security pin
+ `c27700e` follow this block.
  Not pushed.
 Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  Do not mark Complete.
@@ -2966,6 +2969,24 @@ Reviewer/date: Security review (2026-08-25) on `41ef55a` approve Partial;
 Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  POST rotate, POST reveal, Gate 4 remain Complete blockers.
 Not pushed.
+```
+
+## PG-012 rotation eligibility evidence pin (2026-08-25)
+
+```text
+Requirement: PG-012 Partial (rotation_eligible on GET /api/v1/postgres/security
+ + Security overview last column; no POST rotate)
+Decision/ADR: ADR-004; freeze `674bd5c`
+Reviewer/date: Evidence review (2026-08-25) on `41ef55a` keep-Partial /
+ reject-Complete. Freeze criteria map to implementation and claimed tests.
+ Required corrections applied in this commit: implementation files include
+ service_test.go; Local commits include `41ef55a`; Known limitations name
+ live PostgreSQL 17/18, Gate 4, go test -race ./..., CI, Node 24.19.0,
+ no secret artifacts. Independent UI pin `53c0d1b` and security pin
+ `c27700e` already landed (reviewers did not re-run tests). Parent
+ command set remains after `387b8d8`. Do not mark Complete.
+Keep PG-012 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
+ Verifier pending. Not pushed.
 ```
 
 
