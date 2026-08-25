@@ -3491,8 +3491,8 @@ Local commits: `7e85055` (freeze), `70cd1ab` (API), `584c075` (UI),
  Not pushed.
 Reviewer/date: Security Approve Partial on `0ec4af6`; UI first pass at
  `0ec4af6` (Medium 1–2); UI Approve Partial on correction `f49d9e5`
- (Medium 1–2 closed). Evidence PASS Partial on `b4c7575`; verifier pending.
- Keep Partial.
+ (Medium 1–2 closed). Evidence PASS Partial on `b4c7575`; verifier PASS
+ Partial on `53630c3`. Keep Partial.
 Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
  Do not mark Complete.
@@ -3572,7 +3572,51 @@ Reviewer/date: Evidence review (2026-08-25) on `b4c7575` PASS Partial /
  Do not mark Complete.
 Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
- Verifier pending. Not pushed.
+ Verifier PASS Partial on `53630c3`. Not pushed.
+```
+
+## PG-003 POST create verifier PASS Partial (2026-08-25)
+
+```text
+Requirement: PG-003 Partial (POST /api/v1/postgres/databases create + vault INSERT
+ + compensation + Databases Create dialog + ticket-open guards). Keep PG-004
+ Partial. Keep PG-005 Partial.
+Decision/ADR: ADR-004; freeze `7e85055`. AUTH-006 does not apply.
+Verifier/date: independent verifier (2026-08-25) on HEAD
+ `53630c3`. Tracked tree clean. PASS Partial. Do not mark Complete.
+Freeze: session + postgres.provision + CSRF requireMutation; body {database,
+ owner} DisallowUnknownFields; protected 403 no DDL; exists 409 fields; missing
+ vault key 503 before DDL; CREATE ROLE CONNECTION LIMIT 20; QuoteIdentifier;
+ password string-literal quoting; CREATE DATABASE simple-protocol Exec not in a
+ transaction; GRANT SET skip empty/postgres/equals-new-role; 24-byte rand
+ RawURLEncoding in postgresadmin; secrets.Encrypt no fernet-go; parameterized
+ INSERT no ON CONFLICT no ensure_vault; 201 no-store one_time JSON false; audit
+ postgres.database.create metadata database+owner only; audit-fail 503 no
+ credential; compensation this-op vault then drop db then drop role if owns 0;
+ POST rotate unregistered; no POST /api/v1/auth/reauth; pgx v5.10.0;
+ go-redis v9.22.0.
+ UI: header Create database; nav postgres-create is form; 201 existing postgres
+ vault-repeatable ticket; CSRF {database, owner} no password; no setItem;
+ ticket-open nav/search does not POST; list GET 401 clearTicket.
+Commands executed (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/secrets ./internal/postgresadmin ./internal/httpapi
+ → ok secrets 0.517s; postgresadmin 1.096s; httpapi 24.575s
+ go test -count=1 ./... → all ok (httpapi 38.861s; cmd/redgres 3.702s;
+ postgresadmin 1.451s; secrets 0.515s; web 0.610s; migrations no tests)
+ go vet ./... → no findings
+ go build -o NUL ./cmd/redgres → success
+ npm --prefix web run test:run → Tests 269 passed (269), 43.42s
+Unexecuted: Gate 4, live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright
+ viewports, Python Gate 2 (cryptography not installed), PG-006 POST rotate,
+ POST /api/v1/auth/reauth, ensure_vault, production vault-secret probe, CI,
+ Node 24.19.0, gitleaks, govulncheck, go test -race ./..., npm web build.
+No secret artifacts in 7e85055..HEAD. Prior security `0ec4af6`, UI `f49d9e5`,
+ evidence `b4c7575` pins stand (this verifier ran on evidence HEAD `53630c3`).
+Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
+ Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Not pushed.
 ```
 
 
