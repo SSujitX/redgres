@@ -5403,7 +5403,11 @@ Integration tests: none. Security tests: no secrets persisted;
  Independent redgres-ui-reviewer Approve Partial /
  reject Complete on `fa733ea` (no Critical/High; Medium
  catalog section spacing is Complete polish, not Partial
- reject; not NFR-012 viewport sign-off).
+ reject; not NFR-012 viewport sign-off). Independent
+ redgres-security-reviewer Approve Partial / reject Complete
+ on `fa733ea` (no Critical/High/Medium; GET has no CSRF;
+ catalog not persisted; custom and 401 presets not painted;
+ HTTP GET /presets unchanged).
 Known limitations: jsdom only; no viewport/zoom; no live Redis;
  System and Documentation remain placeholders.
 Do not mark Complete.
