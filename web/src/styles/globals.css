@@ -471,6 +471,21 @@ input:focus-visible {
   background: var(--surface);
 }
 
+.row-grid .row-select {
+  width: 2.75rem;
+  min-width: 2.75rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.row-select-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+}
+
 .row-pager {
   display: flex;
   flex-wrap: wrap;

@@ -191,6 +191,53 @@ export async function fetchPostgresRows(
   return apiRequest<RowPage & ApiErrorBody>(query ? `${path}?${query}` : path, init);
 }
 
+export type PostgresPrimaryKeyPayload = {
+  primary_key?: string[];
+  request_id?: string;
+};
+
+export async function fetchPostgresPrimaryKey(
+  db: string,
+  schema: string,
+  table: string,
+  init: RequestInit = {},
+) {
+  return apiRequest<PostgresPrimaryKeyPayload & ApiErrorBody>(
+    `/api/v1/postgres/databases/${encodeURIComponent(db)}/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/primary-key`,
+    init,
+  );
+}
+
+export type PostgresDeleteRowsPayload = {
+  deleted?: number;
+  request_id?: string;
+};
+
+export async function deletePostgresRows(
+  db: string,
+  schema: string,
+  table: string,
+  csrf: string,
+  tableConfirmation: string,
+  ownerPassword: string,
+  primaryKeyValues: Array<string | number | boolean>,
+  init: RequestInit = {},
+) {
+  return apiRequest<PostgresDeleteRowsPayload & ApiErrorBody>(
+    `/api/v1/postgres/databases/${encodeURIComponent(db)}/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/rows`,
+    {
+      ...init,
+      method: "DELETE",
+      csrf,
+      body: JSON.stringify({
+        table_confirmation: tableConfirmation,
+        owner_password: ownerPassword,
+        primary_key_values: primaryKeyValues,
+      }),
+    },
+  );
+}
+
 export type PostgresSecuritySummary = {
   database_count?: number;
   public_connect_count?: number;

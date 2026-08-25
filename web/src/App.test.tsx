@@ -17,15 +17,30 @@ function jsonResponse(status: number, body: unknown, headers: Record<string, str
 }
 
 function isTablesUrl(url: string, name: string): boolean {
-  return (
-    url.includes(`/api/v1/postgres/databases/${encodeURIComponent(name)}/tables`) && !url.includes("/rows")
-  );
+  const path = `/api/v1/postgres/databases/${encodeURIComponent(name)}/tables`;
+  return url === path || url.startsWith(`${path}?`);
 }
 
 function isRowsUrl(url: string, db: string, schema: string, table: string): boolean {
   return url.includes(
     `/api/v1/postgres/databases/${encodeURIComponent(db)}/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/rows`,
   );
+}
+
+function isPrimaryKeyUrl(url: string, db: string, schema: string, table: string): boolean {
+  const path = `/api/v1/postgres/databases/${encodeURIComponent(db)}/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/primary-key`;
+  return url === path || url.startsWith(`${path}?`);
+}
+
+function isPostgresRowsDelete(
+  url: string,
+  db: string,
+  schema: string,
+  table: string,
+  init?: RequestInit,
+): boolean {
+  const path = `/api/v1/postgres/databases/${encodeURIComponent(db)}/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/rows`;
+  return (url === path || url.startsWith(`${path}?`)) && String(init?.method ?? "").toUpperCase() === "DELETE";
 }
 
 function isDetailsUrl(url: string, name: string): boolean {
@@ -585,6 +600,98 @@ function goToSecurityOverview() {
 async function goToDatabases() {
   fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
   fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+}
+
+function fillDeleteRowsDialog(dialog: HTMLElement, table = "items", password = "owner-secret-15") {
+  fireEvent.change(within(dialog).getByLabelText("Confirm table name"), { target: { value: table } });
+  fireEvent.change(within(dialog).getByLabelText("Owner password"), { target: { value: password } });
+}
+
+function postgresRowPage(extra: Record<string, unknown> = {}) {
+  return {
+    columns: ["id", "name"],
+    rows: [
+      { id: 1, name: "alpha" },
+      { id: 2, name: "beta" },
+    ],
+    total: 2,
+    offset: 0,
+    limit: 50,
+    ...extra,
+  };
+}
+
+function postgresRowDeleteInspectorFetch(
+  csrf: string,
+  extras: {
+    tables?: Array<{ schema: string; name: string }>;
+    pk?: string[] | ((db: string, schema: string, table: string) => string[]);
+    rows?:
+      | Record<string, unknown>
+      | ((db: string, schema: string, table: string, url: string) => Record<string, unknown>);
+    databases?: Array<{ name: string; owner: string }>;
+    details?: Record<string, unknown>;
+    connection?: ReturnType<typeof postgresConnectionPresent>;
+    deleteRows?: (
+      init?: RequestInit,
+    ) => ReturnType<typeof jsonResponse> | Promise<ReturnType<typeof jsonResponse>>;
+  } = {},
+) {
+  const databases = extras.databases ?? [{ name: "project_a", owner: "owner_a" }];
+  const tables = extras.tables ?? [{ schema: "public", name: "items" }];
+  return (url: string, init?: RequestInit) => {
+    if (url.includes("/api/v1/session")) {
+      return jsonResponse(200, { owner: { username: "admin" }, csrf_token: csrf });
+    }
+    if (url.includes("/api/v1/auth/logout")) {
+      return jsonResponse(200, { ok: true });
+    }
+    if (url.endsWith("/api/v1/postgres/databases")) {
+      return jsonResponse(200, { databases, truncated: false });
+    }
+    for (const item of databases) {
+      if (isTablesUrl(url, item.name)) {
+        return jsonResponse(200, { tables, truncated: false });
+      }
+      if (isDetailsUrl(url, item.name)) {
+        return jsonResponse(200, {
+          database: extras.details ?? { name: item.name, owner: item.owner },
+        });
+      }
+      if (extras.connection && isConnectionUrl(url, item.name)) {
+        return extras.connection;
+      }
+      for (const table of tables) {
+        if (isPostgresRowsDelete(url, item.name, table.schema, table.name, init) && extras.deleteRows) {
+          return extras.deleteRows(init);
+        }
+        if (isPrimaryKeyUrl(url, item.name, table.schema, table.name)) {
+          const pk =
+            typeof extras.pk === "function"
+              ? extras.pk(item.name, table.schema, table.name)
+              : (extras.pk ?? ["id"]);
+          return jsonResponse(200, { primary_key: pk, request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
+        }
+        if (
+          isRowsUrl(url, item.name, table.schema, table.name) &&
+          String(init?.method ?? "").toUpperCase() !== "DELETE"
+        ) {
+          const page =
+            typeof extras.rows === "function"
+              ? extras.rows(item.name, table.schema, table.name, url)
+              : (extras.rows ?? postgresRowPage());
+          return jsonResponse(200, page);
+        }
+      }
+    }
+    return unknownApi(url);
+  };
+}
+
+async function openProjectAItems() {
+  await goToDatabases();
+  fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
 }
 
 function databasesHeader() {
@@ -4587,6 +4694,487 @@ describe("App session and login", () => {
     expect(await screen.findByText("page_two")).toBeInTheDocument();
     const nextCall = fetch.mock.calls.find((call) => String(call[0]).includes("offset=50"));
     expect(nextCall).toBeDefined();
+  });
+
+  it("fetches GET primary-key with the row page without CSRF and aborts it on table change", async () => {
+    let releaseItemsPk: () => void = () => {};
+    const blockedItemsPk = new Promise<void>((resolve) => {
+      releaseItemsPk = resolve;
+    });
+    const fetch = stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-row-pk".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "owner_a" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          tables: [
+            { schema: "public", name: "items" },
+            { schema: "public", name: "orders" },
+          ],
+          truncated: false,
+        });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
+      }
+      if (isPrimaryKeyUrl(url, "project_a", "public", "items")) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedItemsPk.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return jsonResponse(200, { primary_key: ["id"], request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
+      }
+      if (isPrimaryKeyUrl(url, "project_a", "public", "orders")) {
+        return jsonResponse(200, { primary_key: ["order_id", "line_id"], request_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" });
+      }
+      if (isRowsUrl(url, "project_a", "public", "items")) {
+        return jsonResponse(200, { columns: ["id"], rows: [{ id: "item_row" }], total: 1, offset: 0, limit: 50 });
+      }
+      if (isRowsUrl(url, "project_a", "public", "orders")) {
+        return jsonResponse(200, { columns: ["order_id"], rows: [{ order_id: "order_row" }], total: 1, offset: 0, limit: 50 });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await openProjectAItems();
+    expect(await screen.findByText("Loading rows.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Schema public Table orders/ }));
+    expect(await screen.findByText("order_row")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+    releaseItemsPk();
+    await waitFor(() => {
+      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    });
+    const pkCall = fetch.mock.calls.find((call) => isPrimaryKeyUrl(String(call[0]), "project_a", "public", "orders"));
+    expect(pkCall).toBeDefined();
+    expect(String(pkCall?.[0])).toBe(
+      `/api/v1/postgres/databases/${encodeURIComponent("project_a")}/tables/${encodeURIComponent("public")}/${encodeURIComponent("orders")}/primary-key`,
+    );
+    expect(new Headers(pkCall?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+    expect(String(pkCall?.[1]?.method ?? "GET").toUpperCase()).not.toBe("DELETE");
+  });
+
+  it("shows row checkboxes and a danger Delete selected control only for a single-column primary key", async () => {
+    stubFetch(postgresRowDeleteInspectorFetch("pg-row-pk-one".padEnd(64, "0")));
+    render(<App />);
+    await openProjectAItems();
+    expect(await screen.findByText("alpha")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select row 1" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select row 2" })).toBeInTheDocument();
+    const remove = screen.getByRole("button", { name: "Delete selected" });
+    expect(remove).toHaveClass("danger-button");
+    expect(remove.className).not.toMatch(/postgres/);
+    expect(globalsCss).toMatch(/\.danger-button\s*\{[^}]*background:\s*var\(--danger\)/s);
+    expect(globalsCss).not.toMatch(/\.danger-button\s*\{[^}]*var\(--postgres\)/s);
+    expect(remove).toBeDisabled();
+  });
+
+  it("hides checkboxes and Delete selected when the primary key is empty or composite", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-row-pk-none".padEnd(64, "0"), {
+        tables: [
+          { schema: "public", name: "items" },
+          { schema: "public", name: "orders" },
+        ],
+        pk: (_db, _schema, table) => (table === "orders" ? ["order_id", "line_id"] : []),
+        rows: (_db, _schema, table) =>
+          table === "orders"
+            ? { columns: ["order_id", "line_id"], rows: [{ order_id: 1, line_id: 2 }], total: 1, offset: 0, limit: 50 }
+            : postgresRowPage(),
+      }),
+    );
+    render(<App />);
+    await openProjectAItems();
+    expect(await screen.findByText("alpha")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Schema public Table orders/ }));
+    expect(await screen.findByRole("columnheader", { name: "line_id" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+  });
+
+  it("hides Delete selected while rows are loading", async () => {
+    let releaseRows: () => void = () => {};
+    const blockedRows = new Promise<void>((resolve) => {
+      releaseRows = resolve;
+    });
+    stubFetch(async (url, init) => {
+      const base = postgresRowDeleteInspectorFetch("pg-row-load".padEnd(64, "0"));
+      if (isRowsUrl(url, "project_a", "public", "items") && String(init?.method ?? "").toUpperCase() !== "DELETE") {
+        await blockedRows;
+      }
+      return base(url, init);
+    });
+    render(<App />);
+    await openProjectAItems();
+    expect(await screen.findByText("Loading rows.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    releaseRows();
+    expect(await screen.findByRole("button", { name: "Delete selected" })).toBeInTheDocument();
+  });
+
+  it("opens a Delete selected rows dialog with typed table confirmation and owner password", async () => {
+    const fetch = stubFetch(postgresRowDeleteInspectorFetch("pg-row-dialog".padEnd(64, "0")));
+    render(<App />);
+    await openProjectAItems();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select row 1" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select row 2" }));
+    const remove = screen.getByRole("button", { name: "Delete selected" });
+    expect(remove).toBeEnabled();
+    fireEvent.click(remove);
+    const dialog = await screen.findByRole("dialog", { name: "Delete selected rows" });
+    expect(dialog).toHaveTextContent(/type the exact table name and owner password/i);
+    expect(dialog).toHaveTextContent("2");
+    expect(dialog).toHaveTextContent("public.items");
+    expect(dialog).toHaveTextContent(/cannot be undone/i);
+    const confirmTable = within(dialog).getByLabelText("Confirm table name");
+    const ownerPassword = within(dialog).getByLabelText("Owner password");
+    expect(confirmTable).toHaveAttribute("autocomplete", "off");
+    expect(ownerPassword).toHaveAttribute("type", "password");
+    expect(ownerPassword).toHaveAttribute("autocomplete", "current-password");
+    const confirm = within(dialog).getByRole("button", { name: "Delete" });
+    expect(confirm).toHaveClass("danger-button");
+    expect(confirm).toBeDisabled();
+    fireEvent.change(confirmTable, { target: { value: "orders" } });
+    fireEvent.change(ownerPassword, { target: { value: "owner-secret-15" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(confirmTable, { target: { value: "items" } });
+    fireEvent.change(ownerPassword, { target: { value: "" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Delete selected rows" })).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresRowsDelete(String(call[0]), "project_a", "public", "items", call[1]))).toBe(
+      true,
+    );
+  });
+
+  it("DELETEs selected rows with CSRF, encodeURIComponent, and only the three frozen body fields", async () => {
+    const encodedSchema = "app schema";
+    const encodedTable = "items/v2";
+    const fetch = stubFetch(
+      postgresRowDeleteInspectorFetch("pg-row-csrf".padEnd(64, "0"), {
+        tables: [{ schema: encodedSchema, name: encodedTable }],
+        deleteRows: () => jsonResponse(200, { deleted: 2, request_id: "cccccccccccccccccccccccccccccccc" }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema app schema Table items\/v2/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select row 1" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select row 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete selected rows" });
+    fillDeleteRowsDialog(dialog, encodedTable);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(
+        fetch.mock.calls.some((call) =>
+          isPostgresRowsDelete(String(call[0]), "project_a", encodedSchema, encodedTable, call[1]),
+        ),
+      ).toBe(true);
+    });
+    const deleteCall = fetch.mock.calls.find((call) =>
+      isPostgresRowsDelete(String(call[0]), "project_a", encodedSchema, encodedTable, call[1]),
+    );
+    expect(deleteCall?.[0]).toBe(
+      `/api/v1/postgres/databases/${encodeURIComponent("project_a")}/tables/${encodeURIComponent(encodedSchema)}/${encodeURIComponent(encodedTable)}/rows`,
+    );
+    expect(new Headers(deleteCall?.[1]?.headers).get("X-CSRF-Token")).toBe("pg-row-csrf".padEnd(64, "0"));
+    const body = JSON.parse(String(deleteCall?.[1]?.body));
+    expect(Object.keys(body).sort()).toEqual(["owner_password", "primary_key_values", "table_confirmation"]);
+    expect(body).toEqual({
+      table_confirmation: encodedTable,
+      owner_password: "owner-secret-15",
+      primary_key_values: [1, 2],
+    });
+    expect(body.primary_key_column).toBeUndefined();
+  });
+
+  it("closes the dialog on delete 200, clears secrets and selection, and reloads the current row page", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    let deleted = false;
+    const fetch = stubFetch(
+      postgresRowDeleteInspectorFetch("pg-row-200".padEnd(64, "0"), {
+        rows: () =>
+          deleted
+            ? { columns: ["id", "name"], rows: [], total: 0, offset: 0, limit: 50 }
+            : postgresRowPage(),
+        deleteRows: () => {
+          deleted = true;
+          return jsonResponse(200, { deleted: 2, request_id: "dddddddddddddddddddddddddddddddd" });
+        },
+      }),
+    );
+    render(<App />);
+    await openProjectAItems();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select row 1" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select row 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    fillDeleteRowsDialog(await screen.findByRole("dialog", { name: "Delete selected rows" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Delete selected rows" })).getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Delete selected rows" })).not.toBeInTheDocument();
+    });
+    expect(await screen.findByText("No rows.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    expect(screen.queryByRole("checkbox", { name: "Select row 1" })).not.toBeInTheDocument();
+    const rowGets = fetch.mock.calls.filter(
+      (call) =>
+        isRowsUrl(String(call[0]), "project_a", "public", "items") &&
+        String(call[1]?.method ?? "").toUpperCase() !== "DELETE",
+    );
+    expect(rowGets.length).toBeGreaterThan(1);
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("stays on the dialog for reauth_required, announces the error, and clears only the password", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-row-reauth".padEnd(64, "0"), {
+        deleteRows: () =>
+          jsonResponse(403, { error: { code: "reauth_required", message: "Owner password is incorrect" } }),
+      }),
+    );
+    render(<App />);
+    await openProjectAItems();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select row 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete selected rows" });
+    fillDeleteRowsDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Owner password is incorrect");
+    expect(screen.getByRole("dialog", { name: "Delete selected rows" })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Confirm table name")).toHaveValue("items");
+    expect(within(dialog).getByLabelText("Owner password")).toHaveValue("");
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
+  });
+
+  it("shows session-expired copy on row delete 401 and leaves no leftover password", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-row-401".padEnd(64, "0"), {
+        deleteRows: () => jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } }),
+      }),
+    );
+    render(<App />);
+    await openProjectAItems();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select row 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    fillDeleteRowsDialog(await screen.findByRole("dialog", { name: "Delete selected rows" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Delete selected rows" })).getByRole("button", { name: "Delete" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("dialog", { name: "Delete selected rows" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+  });
+
+  it("still shows Delete selected when the flag is off and announces Row delete is turned off on 403", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-row-flag".padEnd(64, "0"), {
+        deleteRows: () => jsonResponse(403, { error: { code: "forbidden", message: "Row delete is turned off." } }),
+      }),
+    );
+    render(<App />);
+    await openProjectAItems();
+    const remove = await screen.findByRole("button", { name: "Delete selected" });
+    expect(remove).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select row 1" }));
+    fireEvent.click(remove);
+    const dialog = await screen.findByRole("dialog", { name: "Delete selected rows" });
+    fillDeleteRowsDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Row delete is turned off.");
+    expect(screen.getByRole("dialog", { name: "Delete selected rows" })).toBeInTheDocument();
+  });
+
+  it("disables Delete selected while delete is in flight or a credential ticket is open", async () => {
+    let releaseDelete: () => void = () => {};
+    const blockedDelete = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    stubFetch(async (url, init) => {
+      const base = postgresRowDeleteInspectorFetch("pg-row-busy".padEnd(64, "0"), {
+        connection: postgresConnectionPresent(),
+        details: postgresRotateEligibleDatabase(),
+        deleteRows: async () => {
+          await blockedDelete;
+          return jsonResponse(200, { deleted: 1, request_id: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" });
+        },
+      });
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        return postgresReveal200();
+      }
+      return base(url, init);
+    });
+    render(<App />);
+    await openProjectAItems();
+    const details = await screen.findByRole("region", { name: "Database details" });
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select row 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    fillDeleteRowsDialog(await screen.findByRole("dialog", { name: "Delete selected rows" }));
+    const confirm = within(screen.getByRole("dialog", { name: "Delete selected rows" })).getByRole("button", {
+      name: "Delete",
+    });
+    fireEvent.click(confirm);
+    await waitFor(() => {
+      expect(confirm).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Delete selected" })).toBeDisabled();
+    });
+    releaseDelete();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Delete selected rows" })).not.toBeInTheDocument();
+    });
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select row 1" }));
+    fireEvent.click(await within(details).findByRole("button", { name: "Reveal" }));
+    expect(await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete selected" })).toBeDisabled();
+  });
+
+  it("clears row selection on database change, table change, Back, and logout without storage", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-row-clear".padEnd(64, "0"), {
+        databases: [
+          { name: "project_a", owner: "owner_a" },
+          { name: "project_b", owner: "owner_b" },
+        ],
+        tables: [
+          { schema: "public", name: "items" },
+          { schema: "public", name: "orders" },
+        ],
+        rows: (_db, _schema, table) =>
+          table === "orders"
+            ? { columns: ["id", "name"], rows: [{ id: 9, name: "order_nine" }], total: 1, offset: 0, limit: 50 }
+            : postgresRowPage(),
+      }),
+    );
+    render(<App />);
+    await openProjectAItems();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select row 1" }));
+    expect(screen.getByRole("checkbox", { name: "Select row 1" })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: /Schema public Table orders/ }));
+    expect(await screen.findByText("order_nine")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select row 9" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByText("alpha")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select row 1" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select row 2" }));
+    expect(screen.getByRole("checkbox", { name: "Select row 2" })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: /project_b/ }));
+    expect(await screen.findByRole("heading", { name: "project_b" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByRole("checkbox", { name: "Select row 1" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select row 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to tables" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    expect(await screen.findByRole("checkbox", { name: "Select row 1" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select row 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    fillDeleteRowsDialog(await screen.findByRole("dialog", { name: "Delete selected rows" }));
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Delete selected rows" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("never DELETEs postgres rows from the login route", async () => {
+    let authed = false;
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-row-login".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/login")) {
+        authed = true;
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-row-login".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
+    expect(
+      fetch.mock.calls.every(
+        (call) => !isPostgresRowsDelete(String(call[0]), "project_a", "public", "items", call[1]),
+      ),
+    ).toBe(true);
+    expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+  });
+
+  it("never DELETEs postgres rows from Security overview", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-row-sec".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("heading", { name: "Security overview" })).toBeInTheDocument();
+    const article = screen.getByRole("heading", { name: "Security overview" }).closest("article");
+    expect(article).not.toBeNull();
+    expect(within(article as HTMLElement).queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+    expect(
+      fetch.mock.calls.every((call) => String(call[1]?.method ?? "").toUpperCase() !== "DELETE" || !String(call[0]).includes("/rows")),
+    ).toBe(true);
+  });
+
+  it("never DELETEs postgres rows from search results", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-row-search".padEnd(64, "0") });
+      }
+      if (isSearchUrl(url)) {
+        return postgresHitSearch();
+      }
+      return postgresRowDeleteInspectorFetch("pg-row-search".padEnd(64, "0"))(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
+    const dialog = await screen.findByRole("dialog", { name: "Search" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("region", { name: "Database details" })).toBeInTheDocument();
+    expect(
+      fetch.mock.calls.every(
+        (call) => !isPostgresRowsDelete(String(call[0]), "project_a", "public", "items", call[1]),
+      ),
+    ).toBe(true);
   });
 
   it("shows the Security overview page instead of the placeholder", async () => {

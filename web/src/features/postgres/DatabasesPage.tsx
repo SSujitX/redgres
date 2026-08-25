@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   createPostgresDatabase,
+  deletePostgresRows,
   duplicatePostgresDatabase,
   errorMessage,
   fetchPostgresConnection,
   fetchPostgresDatabase,
   fetchPostgresDatabases,
+  fetchPostgresPrimaryKey,
   fetchPostgresRows,
   fetchPostgresTables,
   revealPostgresConnection,
@@ -17,6 +19,7 @@ import {
 } from "../../api/postgres";
 import CredentialTicket, { type ShownCredential } from "../redis/CredentialTicket";
 import CreateDatabaseForm from "./CreateDatabaseForm";
+import DeleteSelectedRowsDialog from "./DeleteSelectedRowsDialog";
 import DuplicateDatabaseForm from "./DuplicateDatabaseForm";
 import RotatePasswordDialog from "./RotatePasswordDialog";
 import { displayText } from "../../text/displayText";
@@ -104,6 +107,17 @@ function queryRuneCount(value: string): number {
   return Array.from(value).length;
 }
 
+function pkScalar(value: unknown): string | number | boolean | null {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  return null;
+}
+
+function pkKey(value: string | number | boolean): string {
+  return JSON.stringify(value);
+}
+
 type DatabasesPageProps = {
   csrf?: string;
   focusDatabase?: string | null;
@@ -157,8 +171,16 @@ export default function DatabasesPage({
   const [loadingRows, setLoadingRows] = useState(false);
   const [queryDraft, setQueryDraft] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
+  const [primaryKey, setPrimaryKey] = useState<string[]>([]);
+  const [selectedPks, setSelectedPks] = useState<Map<string, string | number | boolean>>(() => new Map());
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [deleting, setDeleting] = useState(false);
   const selectionAbort = useRef<AbortController | null>(null);
   const rowsAbort = useRef<AbortController | null>(null);
+  const deleteAbort = useRef<AbortController | null>(null);
   const rowsRegionRef = useRef<HTMLElement | null>(null);
 
   async function loadList(controller: AbortController) {
@@ -204,6 +226,7 @@ export default function DatabasesPage({
       revealAbort.current?.abort();
       rotateAbort.current?.abort();
       duplicateAbort.current?.abort();
+      deleteAbort.current?.abort();
     };
   }, []);
 
@@ -231,6 +254,19 @@ export default function DatabasesPage({
     }
   }, [selectedTable]);
 
+  function clearDeleteSecrets() {
+    setDeleteOpen(false);
+    setDeleteConfirmation("");
+    setDeletePassword("");
+    setDeleteError("");
+    setDeleting(false);
+  }
+
+  function clearRowSelection() {
+    setSelectedPks(new Map());
+    clearDeleteSecrets();
+  }
+
   function clearRowState() {
     setSelectedTable(null);
     setRowPage(null);
@@ -239,6 +275,8 @@ export default function DatabasesPage({
     setQueryDraft("");
     setAppliedQuery("");
     setLoadingRows(false);
+    setPrimaryKey([]);
+    clearRowSelection();
   }
 
   function clearTicket() {
@@ -260,6 +298,7 @@ export default function DatabasesPage({
     revealAbort.current?.abort();
     rotateAbort.current?.abort();
     duplicateAbort.current?.abort();
+    deleteAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
     setSelected(name);
@@ -656,6 +695,7 @@ export default function DatabasesPage({
       return;
     }
     rowsAbort.current?.abort();
+    deleteAbort.current?.abort();
     const controller = new AbortController();
     rowsAbort.current = controller;
     setSelectedTable(table);
@@ -665,11 +705,14 @@ export default function DatabasesPage({
     setRowPage(null);
     setRowsError("");
     setLoadingRows(true);
+    setPrimaryKey([]);
+    clearRowSelection();
     void loadRows(selected, table.schema, table.name, "", 0, controller);
   }
 
   function closeTable() {
     rowsAbort.current?.abort();
+    deleteAbort.current?.abort();
     clearRowState();
   }
 
@@ -714,9 +757,23 @@ export default function DatabasesPage({
     controller: AbortController,
   ) {
     try {
-      const result = await fetchPostgresRows(db, schema, table, { q, offset }, { signal: controller.signal });
+      const pkRequest = fetchPostgresPrimaryKey(db, schema, table, { signal: controller.signal }).catch((err) => {
+        if (controller.signal.aborted || isAbortError(err)) {
+          throw err;
+        }
+        return null;
+      });
+      const [result, pkResult] = await Promise.all([
+        fetchPostgresRows(db, schema, table, { q, offset }, { signal: controller.signal }),
+        pkRequest,
+      ]);
       if (controller.signal.aborted) {
         return;
+      }
+      if (pkResult && pkResult.status === 200 && Array.isArray(pkResult.body.primary_key)) {
+        setPrimaryKey(pkResult.body.primary_key.filter((column): column is string => typeof column === "string"));
+      } else {
+        setPrimaryKey([]);
       }
       if (result.status === 200 && Array.isArray(result.body.columns) && Array.isArray(result.body.rows)) {
         setRowPage(result.body);
@@ -740,10 +797,127 @@ export default function DatabasesPage({
         return;
       }
       setRowPage(null);
+      setPrimaryKey([]);
       setRowsError("PostgreSQL is unavailable");
     } finally {
       if (!controller.signal.aborted) {
         setLoadingRows(false);
+      }
+    }
+  }
+
+  function toggleSelectedPk(value: string | number | boolean) {
+    const key = pkKey(value);
+    setSelectedPks((current) => {
+      const next = new Map(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.set(key, value);
+      }
+      return next;
+    });
+  }
+
+  async function handleDeleteRows() {
+    if (!selected || !selectedTable || deleting || ticket !== null || selectedPks.size === 0) {
+      return;
+    }
+    if (deleteConfirmation !== selectedTable.name || deletePassword.length === 0) {
+      return;
+    }
+    const db = selected;
+    const schema = selectedTable.schema;
+    const table = selectedTable.name;
+    const tableConfirmation = deleteConfirmation;
+    const ownerPassword = deletePassword;
+    const primaryKeyValues = Array.from(selectedPks.values());
+    const reloadOffset = rowPage?.offset ?? 0;
+    const reloadQuery = appliedQuery;
+    deleteAbort.current?.abort();
+    const controller = new AbortController();
+    deleteAbort.current = controller;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const result = await deletePostgresRows(
+        db,
+        schema,
+        table,
+        csrf,
+        tableConfirmation,
+        ownerPassword,
+        primaryKeyValues,
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 401) {
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
+        setSelectedPks(new Map());
+        clearTicket();
+        setRowsError(sessionExpired);
+        return;
+      }
+      if (result.status === 403) {
+        if (result.body.error?.code === "reauth_required") {
+          setDeleteError(errorMessage(result.body, "Owner password is incorrect"));
+          setDeletePassword("");
+          return;
+        }
+        setDeleteError(errorMessage(result.body, "Row delete is turned off."));
+        return;
+      }
+      if (result.status === 400) {
+        setDeleteError(errorMessage(result.body, "Type the exact table name to confirm deletion"));
+        return;
+      }
+      if (result.status === 404) {
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
+        setSelectedPks(new Map());
+        setRowsError(errorMessage(result.body, "Not found"));
+        return;
+      }
+      if (result.status === 503) {
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
+        setSelectedPks(new Map());
+        setRowsError(errorMessage(result.body, postgresUnavailable));
+        return;
+      }
+      if (result.status === 200) {
+        setDeleteOpen(false);
+        setDeleteError("");
+        setDeleteConfirmation("");
+        setDeletePassword("");
+        setSelectedPks(new Map());
+        rowsAbort.current?.abort();
+        const reload = new AbortController();
+        rowsAbort.current = reload;
+        setRowPage(null);
+        setRowsError("");
+        setLoadingRows(true);
+        void loadRows(db, schema, table, reloadQuery, reloadOffset, reload);
+        return;
+      }
+      setDeleteError(errorMessage(result.body, postgresUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setDeleteError(postgresUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setDeleting(false);
       }
     }
   }
@@ -831,6 +1005,29 @@ export default function DatabasesPage({
             setDuplicateError("");
           }}
           onSubmit={(database, owner) => void handleDuplicate(database, owner)}
+        />
+      ) : null}
+      {deleteOpen && selectedTable ? (
+        <DeleteSelectedRowsDialog
+          schema={selectedTable.schema}
+          table={selectedTable.name}
+          selectedCount={selectedPks.size}
+          confirmation={deleteConfirmation}
+          password={deletePassword}
+          error={deleteError}
+          submitting={deleting}
+          onConfirmationChange={setDeleteConfirmation}
+          onPasswordChange={setDeletePassword}
+          onCancel={() => {
+            if (deleting) {
+              return;
+            }
+            setDeleteOpen(false);
+            setDeleteError("");
+            setDeleteConfirmation("");
+            setDeletePassword("");
+          }}
+          onConfirm={() => void handleDeleteRows()}
         />
       ) : null}
       {listError ? (
@@ -972,6 +1169,15 @@ export default function DatabasesPage({
                     onSearch={applySearch}
                     onPrevious={() => pageRows(Math.max(0, (rowPage?.offset ?? 0) - (rowPage?.limit ?? 0)))}
                     onNext={() => pageRows((rowPage?.offset ?? 0) + (rowPage?.limit ?? 0))}
+                    primaryKey={primaryKey}
+                    selectedPks={selectedPks}
+                    ticketOpen={ticket !== null}
+                    deleting={deleting}
+                    onToggleSelected={toggleSelectedPk}
+                    onDeleteSelected={() => {
+                      setDeleteError("");
+                      setDeleteOpen(true);
+                    }}
                   />
                 ) : null
               }
@@ -1056,6 +1262,12 @@ function RowsPanel({
   onSearch,
   onPrevious,
   onNext,
+  primaryKey,
+  selectedPks,
+  ticketOpen,
+  deleting,
+  onToggleSelected,
+  onDeleteSelected,
 }: {
   regionRef: RefObject<HTMLElement | null>;
   table: SelectedTable;
@@ -1068,6 +1280,12 @@ function RowsPanel({
   onSearch: () => void;
   onPrevious: () => void;
   onNext: () => void;
+  primaryKey: string[];
+  selectedPks: Map<string, string | number | boolean>;
+  ticketOpen: boolean;
+  deleting: boolean;
+  onToggleSelected: (value: string | number | boolean) => void;
+  onDeleteSelected: () => void;
 }) {
   const columns = page?.columns ?? [];
   const rows = page?.rows ?? [];
@@ -1076,6 +1294,9 @@ function RowsPanel({
   const previousDisabled = page == null || offset === 0;
   const nextDisabled = page == null || offset + rows.length >= total;
   const range = rows.length > 0 ? `${offset + 1}–${offset + rows.length} of ${total}` : "";
+  const pkColumn = primaryKey.length === 1 ? primaryKey[0] : "";
+  const showDelete = !loading && pkColumn !== "";
+  const deleteDisabled = deleting || ticketOpen || selectedPks.size === 0;
 
   return (
     <section
@@ -1129,13 +1350,33 @@ function RowsPanel({
           {error}
         </p>
       ) : null}
+      {showDelete ? (
+        <div className="form-actions">
+          <button
+            type="button"
+            className="danger-button"
+            disabled={deleteDisabled}
+            onClick={onDeleteSelected}
+          >
+            Delete selected
+          </button>
+        </div>
+      ) : null}
       {page && rows.length === 0 && !error ? (
         <p className="muted-copy" role="status">
           No rows.
         </p>
       ) : null}
       {page && rows.length > 0 && !error ? (
-        <RowGrid schema={table.schema} table={table.name} columns={columns} rows={rows} />
+        <RowGrid
+          schema={table.schema}
+          table={table.name}
+          columns={columns}
+          rows={rows}
+          pkColumn={pkColumn}
+          selectedPks={selectedPks}
+          onToggleSelected={onToggleSelected}
+        />
       ) : null}
       {range ? (
         <p className="muted-copy" role="status">
@@ -1161,12 +1402,19 @@ function RowGrid({
   table,
   columns,
   rows,
+  pkColumn,
+  selectedPks,
+  onToggleSelected,
 }: {
   schema: string;
   table: string;
   columns: string[];
   rows: Array<Record<string, unknown>>;
+  pkColumn: string;
+  selectedPks: Map<string, string | number | boolean>;
+  onToggleSelected: (value: string | number | boolean) => void;
 }) {
+  const showSelect = pkColumn !== "";
   return (
     <div className="row-grid-wrap">
       <table className="row-grid">
@@ -1175,6 +1423,11 @@ function RowGrid({
         </caption>
         <thead>
           <tr>
+            {showSelect ? (
+              <th className="row-select" scope="col">
+                <span className="visually-hidden">Select</span>
+              </th>
+            ) : null}
             {columns.map((column) => (
               <th key={column} scope="col">
                 <span className="identifier">{column}</span>
@@ -1183,18 +1436,36 @@ function RowGrid({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, index) => (
-            <tr key={index}>
-              {columns.map((column) => {
-                const cell = formatCell(row[column]);
-                return (
-                  <td key={column} className={cell.nullish ? "muted-copy" : "identifier"}>
-                    {cell.text}
+          {rows.map((row, index) => {
+            const scalar = showSelect ? pkScalar(row[pkColumn]) : null;
+            const key = scalar === null ? String(index) : pkKey(scalar);
+            return (
+              <tr key={key}>
+                {showSelect ? (
+                  <td className="row-select">
+                    {scalar === null ? null : (
+                      <label className="row-select-label">
+                        <input
+                          type="checkbox"
+                          checked={selectedPks.has(pkKey(scalar))}
+                          onChange={() => onToggleSelected(scalar)}
+                          aria-label={`Select row ${displayText(String(scalar))}`}
+                        />
+                      </label>
+                    )}
                   </td>
-                );
-              })}
-            </tr>
-          ))}
+                ) : null}
+                {columns.map((column) => {
+                  const cell = formatCell(row[column]);
+                  return (
+                    <td key={column} className={cell.nullish ? "muted-copy" : "identifier"}>
+                      {cell.text}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
