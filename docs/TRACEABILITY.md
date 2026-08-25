@@ -5313,7 +5313,9 @@ Security tests: canary env/config not printed; --config not
  reject Complete on `72ff9b4` (no Critical/High/Medium).
  Independent redgres-evidence-reviewer Approve Partial /
  reject Complete on `72ff9b4` (49 pass() sites match parent
- 49/0 on `e256ced`).
+ 49/0 on `e256ced`). Independent redgres-verifier
+ Approve Partial / reject Complete on `2b27935`; this-run
+ Git Bash deploy/tests/run.sh → 49 passed, 0 failed.
 Limitations: DNS/Cloudflare/public TLS remain skipped.
  result=partial is required so exit 0 is not Complete.
 Do not mark Complete.
