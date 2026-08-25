@@ -12,6 +12,7 @@ import {
   fetchPostgresTables,
   revealPostgresConnection,
   rotatePostgresCredentials,
+  truncatePostgresDatabase,
   type DatabaseDetails,
   type DatabaseListItem,
   type RowPage,
@@ -22,6 +23,7 @@ import CreateDatabaseForm from "./CreateDatabaseForm";
 import DeleteSelectedRowsDialog from "./DeleteSelectedRowsDialog";
 import DuplicateDatabaseForm from "./DuplicateDatabaseForm";
 import RotatePasswordDialog from "./RotatePasswordDialog";
+import TruncateProjectDataDialog from "./TruncateProjectDataDialog";
 import { displayText } from "../../text/displayText";
 
 const maxRowQueryRunes = 128;
@@ -178,9 +180,15 @@ export default function DatabasesPage({
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [truncateOpen, setTruncateOpen] = useState(false);
+  const [truncateConfirmation, setTruncateConfirmation] = useState("");
+  const [truncatePassword, setTruncatePassword] = useState("");
+  const [truncateError, setTruncateError] = useState("");
+  const [truncating, setTruncating] = useState(false);
   const selectionAbort = useRef<AbortController | null>(null);
   const rowsAbort = useRef<AbortController | null>(null);
   const deleteAbort = useRef<AbortController | null>(null);
+  const truncateAbort = useRef<AbortController | null>(null);
   const rowsRegionRef = useRef<HTMLElement | null>(null);
 
   async function loadList(controller: AbortController) {
@@ -227,6 +235,7 @@ export default function DatabasesPage({
       rotateAbort.current?.abort();
       duplicateAbort.current?.abort();
       deleteAbort.current?.abort();
+      truncateAbort.current?.abort();
     };
   }, []);
 
@@ -260,6 +269,14 @@ export default function DatabasesPage({
     setDeletePassword("");
     setDeleteError("");
     setDeleting(false);
+  }
+
+  function clearTruncateSecrets() {
+    setTruncateOpen(false);
+    setTruncateConfirmation("");
+    setTruncatePassword("");
+    setTruncateError("");
+    setTruncating(false);
   }
 
   function clearRowSelection() {
@@ -299,6 +316,7 @@ export default function DatabasesPage({
     rotateAbort.current?.abort();
     duplicateAbort.current?.abort();
     deleteAbort.current?.abort();
+    truncateAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
     setSelected(name);
@@ -314,6 +332,7 @@ export default function DatabasesPage({
     setLoadingTables(true);
     setPendingSelect(null);
     clearTicket();
+    clearTruncateSecrets();
     clearRowState();
     void loadDetails(name, controller);
     void loadConnection(name, controller);
@@ -389,7 +408,7 @@ export default function DatabasesPage({
   }
 
   async function handleReveal() {
-    if (!selected || revealing || rotating || creating || duplicating || ticket) {
+    if (!selected || revealing || rotating || creating || duplicating || truncating || ticket) {
       return;
     }
     revealAbort.current?.abort();
@@ -439,7 +458,7 @@ export default function DatabasesPage({
   }
 
   async function handleRotate(confirmation: string) {
-    if (!selected || rotating || revealing || creating || duplicating || ticket) {
+    if (!selected || rotating || revealing || creating || duplicating || truncating || ticket) {
       return;
     }
     rotateAbort.current?.abort();
@@ -532,7 +551,7 @@ export default function DatabasesPage({
   }
 
   async function handleCreate(database: string, owner: string) {
-    if (ticket !== null || duplicating) {
+    if (ticket !== null || duplicating || truncating) {
       return;
     }
     setCreating(true);
@@ -575,7 +594,7 @@ export default function DatabasesPage({
   }
 
   async function handleDuplicate(database: string, owner: string) {
-    if (!selected || duplicating || revealing || rotating || creating || ticket) {
+    if (!selected || duplicating || revealing || rotating || creating || truncating || ticket) {
       return;
     }
     duplicateAbort.current?.abort();
@@ -713,6 +732,7 @@ export default function DatabasesPage({
   function closeTable() {
     rowsAbort.current?.abort();
     deleteAbort.current?.abort();
+    clearTruncateSecrets();
     clearRowState();
   }
 
@@ -820,7 +840,7 @@ export default function DatabasesPage({
   }
 
   async function handleDeleteRows() {
-    if (!selected || !selectedTable || deleting || ticket !== null || selectedPks.size === 0) {
+    if (!selected || !selectedTable || deleting || truncating || ticket !== null || selectedPks.size === 0) {
       return;
     }
     if (deleteConfirmation !== selectedTable.name || deletePassword.length === 0) {
@@ -922,6 +942,104 @@ export default function DatabasesPage({
     }
   }
 
+  async function handleTruncate() {
+    if (!selected || truncating || revealing || rotating || creating || duplicating || deleting || ticket) {
+      return;
+    }
+    if (truncateConfirmation !== selected || truncatePassword.length === 0) {
+      return;
+    }
+    const db = selected;
+    const databaseConfirmation = truncateConfirmation;
+    const ownerPassword = truncatePassword;
+    const table = selectedTable;
+    const reloadOffset = rowPage?.offset ?? 0;
+    const reloadQuery = appliedQuery;
+    truncateAbort.current?.abort();
+    const controller = new AbortController();
+    truncateAbort.current = controller;
+    setTruncating(true);
+    setTruncateError("");
+    try {
+      const result = await truncatePostgresDatabase(db, databaseConfirmation, ownerPassword, csrf, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 401) {
+        setTruncateOpen(false);
+        setTruncateConfirmation("");
+        setTruncatePassword("");
+        setTruncateError(sessionExpired);
+        clearTicket();
+        return;
+      }
+      if (result.status === 403) {
+        if (result.body.error?.code === "reauth_required") {
+          setTruncateError(errorMessage(result.body, "Owner password is incorrect"));
+          setTruncatePassword("");
+          return;
+        }
+        setTruncateError(errorMessage(result.body, "Truncate is turned off."));
+        return;
+      }
+      if (result.status === 409) {
+        setTruncateError(errorMessage(result.body, postgresUnavailable));
+        return;
+      }
+      if (result.status === 400) {
+        setTruncateError(errorMessage(result.body, "Type the exact database name to confirm truncate"));
+        return;
+      }
+      if (result.status === 404) {
+        setTruncateOpen(false);
+        setTruncateConfirmation("");
+        setTruncatePassword("");
+        setTruncateError(errorMessage(result.body, "Not found"));
+        return;
+      }
+      if (result.status === 503) {
+        setTruncateOpen(false);
+        setTruncateConfirmation("");
+        setTruncatePassword("");
+        setTruncateError(errorMessage(result.body, postgresUnavailable));
+        return;
+      }
+      if (result.status === 200) {
+        setTruncateOpen(false);
+        setTruncateConfirmation("");
+        setTruncatePassword("");
+        setTruncateError("");
+        setSelectedPks(new Map());
+        const tablesController = selectionAbort.current ?? new AbortController();
+        selectionAbort.current = tablesController;
+        setLoadingTables(true);
+        void loadTables(db, tablesController);
+        if (table) {
+          rowsAbort.current?.abort();
+          const rowsReload = new AbortController();
+          rowsAbort.current = rowsReload;
+          setRowPage(null);
+          setRowsError("");
+          setLoadingRows(true);
+          void loadRows(db, table.schema, table.name, reloadQuery, reloadOffset, rowsReload);
+        }
+        return;
+      }
+      setTruncateError(errorMessage(result.body, postgresUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setTruncateError(postgresUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setTruncating(false);
+      }
+    }
+  }
+
   const showReveal =
     !loadingDetails &&
     !loadingConnection &&
@@ -929,9 +1047,11 @@ export default function DatabasesPage({
     connection?.savedCredentialStatus === "present";
   const showRotate = !loadingDetails && rotationEligible(details);
   const showDuplicate = !loadingDetails && rotationEligible(details);
+  const showTruncate = !loadingDetails && details !== null;
   const showCreate = items !== null && listError === "";
-  const mutationBusy = creating || revealing || rotating || duplicating || ticket !== null;
+  const mutationBusy = creating || revealing || rotating || duplicating || truncating || ticket !== null;
   const createDisabled = mutationBusy;
+  const truncateDisabled = mutationBusy || deleting;
 
   return (
     <article>
@@ -1028,6 +1148,27 @@ export default function DatabasesPage({
             setDeletePassword("");
           }}
           onConfirm={() => void handleDeleteRows()}
+        />
+      ) : null}
+      {truncateOpen && selected ? (
+        <TruncateProjectDataDialog
+          database={selected}
+          confirmation={truncateConfirmation}
+          password={truncatePassword}
+          error={truncateError}
+          submitting={truncating}
+          onConfirmationChange={setTruncateConfirmation}
+          onPasswordChange={setTruncatePassword}
+          onCancel={() => {
+            if (truncating) {
+              return;
+            }
+            setTruncateOpen(false);
+            setTruncateError("");
+            setTruncateConfirmation("");
+            setTruncatePassword("");
+          }}
+          onConfirm={() => void handleTruncate()}
         />
       ) : null}
       {listError ? (
@@ -1135,6 +1276,26 @@ export default function DatabasesPage({
                 </button>
               ) : null}
             </div>
+          ) : null}
+          {showTruncate ? (
+            <div className="form-actions">
+              <button
+                type="button"
+                className="danger-button"
+                disabled={truncateDisabled}
+                onClick={() => {
+                  setTruncateError("");
+                  setTruncateOpen(true);
+                }}
+              >
+                Truncate
+              </button>
+            </div>
+          ) : null}
+          {!truncateOpen && truncateError ? (
+            <p className="form-warning" role="alert">
+              {truncateError}
+            </p>
           ) : null}
           <h3>Tables</h3>
           {loadingTables ? (

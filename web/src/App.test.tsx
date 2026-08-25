@@ -50,7 +50,8 @@ function isDetailsUrl(url: string, name: string): boolean {
     !url.includes("/tables") &&
     !url.includes("/connection") &&
     !url.includes("/credentials") &&
-    !url.includes("/duplicate")
+    !url.includes("/duplicate") &&
+    !url.includes("/truncate")
   );
 }
 
@@ -145,6 +146,14 @@ function isPostgresDatabaseDuplicate(url: string, name?: string, init?: RequestI
     return url === `/api/v1/postgres/databases/${encodeURIComponent(name)}/duplicate` && isPost;
   }
   return url.includes("/api/v1/postgres/databases/") && url.includes("/duplicate") && isPost;
+}
+
+function isPostgresDatabaseTruncate(url: string, name?: string, init?: RequestInit): boolean {
+  const isPost = String(init?.method ?? "").toUpperCase() === "POST";
+  if (name !== undefined) {
+    return url === `/api/v1/postgres/databases/${encodeURIComponent(name)}/truncate` && isPost;
+  }
+  return url.includes("/api/v1/postgres/databases/") && url.includes("/truncate") && isPost;
 }
 
 const rotatedDirectUrl =
@@ -607,6 +616,11 @@ function fillDeleteRowsDialog(dialog: HTMLElement, table = "items", password = "
   fireEvent.change(within(dialog).getByLabelText("Owner password"), { target: { value: password } });
 }
 
+function fillTruncateDialog(dialog: HTMLElement, database = "project_a", password = "owner-secret-15") {
+  fireEvent.change(within(dialog).getByLabelText("Confirm database name"), { target: { value: database } });
+  fireEvent.change(within(dialog).getByLabelText("Owner password"), { target: { value: password } });
+}
+
 function postgresRowPage(extra: Record<string, unknown> = {}) {
   return {
     columns: ["id", "name"],
@@ -635,6 +649,9 @@ function postgresRowDeleteInspectorFetch(
     deleteRows?: (
       init?: RequestInit,
     ) => ReturnType<typeof jsonResponse> | Promise<ReturnType<typeof jsonResponse>>;
+    truncate?: (
+      init?: RequestInit,
+    ) => ReturnType<typeof jsonResponse> | Promise<ReturnType<typeof jsonResponse>>;
   } = {},
 ) {
   const databases = extras.databases ?? [{ name: "project_a", owner: "owner_a" }];
@@ -650,6 +667,9 @@ function postgresRowDeleteInspectorFetch(
       return jsonResponse(200, { databases, truncated: false });
     }
     for (const item of databases) {
+      if (isPostgresDatabaseTruncate(url, item.name, init) && extras.truncate) {
+        return extras.truncate(init);
+      }
       if (isTablesUrl(url, item.name)) {
         return jsonResponse(200, { tables, truncated: false });
       }
@@ -978,6 +998,9 @@ describe("App session and login", () => {
       true,
     );
     expect(fetch.mock.calls.every((call) => !isPostgresDatabaseDuplicate(String(call[0]), undefined, call[1]))).toBe(
+      true,
+    );
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabaseTruncate(String(call[0]), undefined, call[1]))).toBe(
       true,
     );
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
@@ -2209,6 +2232,9 @@ describe("App session and login", () => {
       true,
     );
     expect(fetch.mock.calls.every((call) => !isPostgresDatabaseDuplicate(String(call[0]), undefined, call[1]))).toBe(
+      true,
+    );
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabaseTruncate(String(call[0]), undefined, call[1]))).toBe(
       true,
     );
   });
@@ -5175,6 +5201,423 @@ describe("App session and login", () => {
         (call) => !isPostgresRowsDelete(String(call[0]), "project_a", "public", "items", call[1]),
       ),
     ).toBe(true);
+  });
+
+  it("shows inspector Truncate as a danger control when details are loaded, including when rotation is ineligible", async () => {
+    stubFetch(postgresRowDeleteInspectorFetch("pg-trunc-show".padEnd(64, "0")));
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    const truncate = await within(details).findByRole("button", { name: "Truncate" });
+    expect(truncate).toHaveClass("danger-button");
+    expect(truncate.className).not.toMatch(/postgres/);
+    expect(globalsCss).toMatch(/\.danger-button\s*\{[^}]*background:\s*var\(--danger\)/s);
+    expect(globalsCss).not.toMatch(/\.danger-button\s*\{[^}]*var\(--postgres\)/s);
+    expect(within(details).queryByRole("button", { name: "Rotate" })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Duplicate" })).not.toBeInTheDocument();
+    expect(within(databasesHeader()).queryByRole("button", { name: "Truncate" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+  });
+
+  it("hides Truncate while details are loading", async () => {
+    let releaseDetails: () => void = () => {};
+    const blockedDetails = new Promise<void>((resolve) => {
+      releaseDetails = resolve;
+    });
+    stubFetch(async (url, init) => {
+      const base = postgresRowDeleteInspectorFetch("pg-trunc-load".padEnd(64, "0"));
+      if (isDetailsUrl(url, "project_a")) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedDetails.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+      }
+      return base(url, init);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Loading details.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Truncate" })).not.toBeInTheDocument();
+    releaseDetails();
+    expect(await screen.findByRole("button", { name: "Truncate" })).toBeInTheDocument();
+  });
+
+  it("opens a Truncate project data dialog with typed database confirmation and owner password", async () => {
+    const fetch = stubFetch(postgresRowDeleteInspectorFetch("pg-trunc-dialog".padEnd(64, "0")));
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Truncate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Truncate project data" });
+    expect(dialog).toHaveTextContent(/type the exact database name and owner password/i);
+    expect(dialog).toHaveTextContent("project_a");
+    expect(dialog).toHaveTextContent(/tables remain/i);
+    expect(dialog).toHaveTextContent(/the database is not dropped/i);
+    expect(dialog).toHaveTextContent("Sequences owned by those tables restart.");
+    expect(dialog).toHaveTextContent(/cannot be undone/i);
+    expect(dialog).not.toHaveTextContent(/backup/i);
+    const confirmDatabase = within(dialog).getByLabelText("Confirm database name");
+    const ownerPassword = within(dialog).getByLabelText("Owner password");
+    expect(confirmDatabase).toHaveAttribute("autocomplete", "off");
+    expect(ownerPassword).toHaveAttribute("type", "password");
+    expect(ownerPassword).toHaveAttribute("autocomplete", "current-password");
+    const confirm = within(dialog).getByRole("button", { name: "Confirm Truncate" });
+    expect(confirm).toHaveClass("danger-button");
+    expect(confirm).toBeDisabled();
+    fireEvent.change(confirmDatabase, { target: { value: "project_b" } });
+    fireEvent.change(ownerPassword, { target: { value: "owner-secret-15" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(confirmDatabase, { target: { value: "project_a" } });
+    fireEvent.change(ownerPassword, { target: { value: "" } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(ownerPassword, { target: { value: "owner-secret-15" } });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Truncate project data" })).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabaseTruncate(String(call[0]), "project_a", call[1]))).toBe(
+      true,
+    );
+  });
+
+  it("POSTs truncate with CSRF, encodeURIComponent, and only the two frozen body fields", async () => {
+    const encodedDb = "project/a";
+    const fetch = stubFetch(
+      postgresRowDeleteInspectorFetch("pg-trunc-csrf".padEnd(64, "0"), {
+        databases: [{ name: encodedDb, owner: "owner_a" }],
+        truncate: () =>
+          jsonResponse(200, {
+            truncated: 0,
+            failed: [],
+            total_tables: 0,
+            request_id: "cccccccccccccccccccccccccccccccc",
+          }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project\/a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Truncate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Truncate project data" });
+    fillTruncateDialog(dialog, encodedDb);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Truncate" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isPostgresDatabaseTruncate(String(call[0]), encodedDb, call[1]))).toBe(
+        true,
+      );
+    });
+    const truncateCall = fetch.mock.calls.find((call) => isPostgresDatabaseTruncate(String(call[0]), encodedDb, call[1]));
+    expect(truncateCall?.[0]).toBe(`/api/v1/postgres/databases/${encodeURIComponent(encodedDb)}/truncate`);
+    expect(new Headers(truncateCall?.[1]?.headers).get("X-CSRF-Token")).toBe("pg-trunc-csrf".padEnd(64, "0"));
+    const body = JSON.parse(String(truncateCall?.[1]?.body));
+    expect(Object.keys(body).sort()).toEqual(["database_confirmation", "owner_password"]);
+    expect(body).toEqual({
+      database_confirmation: encodedDb,
+      owner_password: "owner-secret-15",
+    });
+  });
+
+  it("closes the dialog on truncate 200, clears secrets, reloads tables, and reloads the current row page", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    let truncated = false;
+    const fetch = stubFetch(
+      postgresRowDeleteInspectorFetch("pg-trunc-200".padEnd(64, "0"), {
+        rows: () =>
+          truncated
+            ? { columns: ["id", "name"], rows: [], total: 0, offset: 0, limit: 50 }
+            : postgresRowPage(),
+        truncate: () => {
+          truncated = true;
+          return jsonResponse(200, {
+            truncated: 1,
+            failed: [],
+            total_tables: 1,
+            request_id: "dddddddddddddddddddddddddddddddd",
+          });
+        },
+      }),
+    );
+    render(<App />);
+    await openProjectAItems();
+    expect(await screen.findByText("alpha")).toBeInTheDocument();
+    const details = screen.getByRole("region", { name: "Database details" });
+    fireEvent.click(within(details).getByRole("button", { name: "Truncate" }));
+    fillTruncateDialog(await screen.findByRole("dialog", { name: "Truncate project data" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Truncate project data" })).getByRole("button", {
+        name: "Confirm Truncate",
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Truncate project data" })).not.toBeInTheDocument();
+    });
+    expect(await screen.findByText("No rows.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    const tableGets = fetch.mock.calls.filter((call) => isTablesUrl(String(call[0]), "project_a"));
+    expect(tableGets.length).toBeGreaterThan(1);
+    const rowGets = fetch.mock.calls.filter(
+      (call) =>
+        isRowsUrl(String(call[0]), "project_a", "public", "items") &&
+        String(call[1]?.method ?? "").toUpperCase() !== "DELETE",
+    );
+    expect(rowGets.length).toBeGreaterThan(1);
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("stays on the dialog for reauth_required, announces the error, and clears only the password", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-trunc-reauth".padEnd(64, "0"), {
+        truncate: () =>
+          jsonResponse(403, { error: { code: "reauth_required", message: "Owner password is incorrect" } }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Truncate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Truncate project data" });
+    fillTruncateDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Truncate" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Owner password is incorrect");
+    expect(screen.getByRole("dialog", { name: "Truncate project data" })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Confirm database name")).toHaveValue("project_a");
+    expect(within(dialog).getByLabelText("Owner password")).toHaveValue("");
+    expect(within(dialog).getByRole("button", { name: "Confirm Truncate" })).toBeDisabled();
+  });
+
+  it("shows session-expired copy on truncate 401 and leaves no leftover password", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-trunc-401".padEnd(64, "0"), {
+        truncate: () => jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Truncate" }));
+    fillTruncateDialog(await screen.findByRole("dialog", { name: "Truncate project data" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Truncate project data" })).getByRole("button", {
+        name: "Confirm Truncate",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("dialog", { name: "Truncate project data" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+  });
+
+  it("still shows Truncate when the flag is off and announces Truncate is turned off on 403", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-trunc-flag".padEnd(64, "0"), {
+        truncate: () => jsonResponse(403, { error: { code: "forbidden", message: "Truncate is turned off." } }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const truncate = await screen.findByRole("button", { name: "Truncate" });
+    expect(truncate).toBeInTheDocument();
+    fireEvent.click(truncate);
+    const dialog = await screen.findByRole("dialog", { name: "Truncate project data" });
+    fillTruncateDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Truncate" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Truncate is turned off.");
+    expect(screen.getByRole("dialog", { name: "Truncate project data" })).toBeInTheDocument();
+  });
+
+  it("keeps truncated-list and in-progress 409 errors on the dialog", async () => {
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-trunc-409".padEnd(64, "0"), {
+        truncate: () =>
+          jsonResponse(409, {
+            error: { code: "conflict", message: "Table list is truncated. Truncate cannot run." },
+          }),
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Truncate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Truncate project data" });
+    fillTruncateDialog(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm Truncate" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Table list is truncated. Truncate cannot run.");
+    expect(screen.getByRole("dialog", { name: "Truncate project data" })).toBeInTheDocument();
+  });
+
+  it("disables Truncate while truncate is in flight or a credential ticket is open", async () => {
+    let releaseTruncate: () => void = () => {};
+    const blockedTruncate = new Promise<void>((resolve) => {
+      releaseTruncate = resolve;
+    });
+    stubFetch(async (url, init) => {
+      const base = postgresRowDeleteInspectorFetch("pg-trunc-busy".padEnd(64, "0"), {
+        connection: postgresConnectionPresent(),
+        details: postgresRotateEligibleDatabase(),
+        truncate: async () => {
+          await blockedTruncate;
+          return jsonResponse(200, {
+            truncated: 0,
+            failed: [],
+            total_tables: 0,
+            request_id: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          });
+        },
+      });
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        return postgresReveal200();
+      }
+      return base(url, init);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Truncate" }));
+    fillTruncateDialog(await screen.findByRole("dialog", { name: "Truncate project data" }));
+    const confirm = within(screen.getByRole("dialog", { name: "Truncate project data" })).getByRole("button", {
+      name: "Confirm Truncate",
+    });
+    fireEvent.click(confirm);
+    await waitFor(() => {
+      expect(confirm).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Truncate" })).toBeDisabled();
+    });
+    releaseTruncate();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Truncate project data" })).not.toBeInTheDocument();
+    });
+    fireEvent.click(await within(details).findByRole("button", { name: "Reveal" }));
+    expect(await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." })).toBeInTheDocument();
+    expect(within(details).getByRole("button", { name: "Truncate" })).toBeDisabled();
+  });
+
+  it("clears truncate secrets on database change, Back, and logout without storage", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch(
+      postgresRowDeleteInspectorFetch("pg-trunc-clear".padEnd(64, "0"), {
+        databases: [
+          { name: "project_a", owner: "owner_a" },
+          { name: "project_b", owner: "owner_b" },
+        ],
+      }),
+    );
+    render(<App />);
+    await openProjectAItems();
+    fireEvent.click(screen.getByRole("button", { name: "Truncate" }));
+    fillTruncateDialog(await screen.findByRole("dialog", { name: "Truncate project data" }));
+    fireEvent.click(screen.getByRole("button", { name: /project_b/ }));
+    expect(await screen.findByRole("heading", { name: "project_b" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Truncate project data" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Truncate" }));
+    fillTruncateDialog(await screen.findByRole("dialog", { name: "Truncate project data" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to tables" }));
+    expect(screen.queryByRole("dialog", { name: "Truncate project data" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Truncate" }));
+    fillTruncateDialog(await screen.findByRole("dialog", { name: "Truncate project data" }));
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Truncate project data" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Owner password")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("owner-secret-15");
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("never POSTs postgres truncate from the login route", async () => {
+    let authed = false;
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-trunc-login".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/login")) {
+        authed = true;
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-trunc-login".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabaseTruncate(String(call[0]), undefined, call[1]))).toBe(
+      true,
+    );
+    expect(screen.queryByRole("button", { name: "Truncate" })).not.toBeInTheDocument();
+  });
+
+  it("never POSTs postgres truncate from Security overview", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-trunc-sec".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("heading", { name: "Security overview" })).toBeInTheDocument();
+    const article = screen.getByRole("heading", { name: "Security overview" }).closest("article");
+    expect(article).not.toBeNull();
+    expect(within(article as HTMLElement).queryByRole("button", { name: "Truncate" })).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabaseTruncate(String(call[0]), undefined, call[1]))).toBe(
+      true,
+    );
+  });
+
+  it("never POSTs postgres truncate from search results", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-trunc-search".padEnd(64, "0") });
+      }
+      if (isSearchUrl(url)) {
+        return postgresHitSearch();
+      }
+      return postgresRowDeleteInspectorFetch("pg-trunc-search".padEnd(64, "0"))(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "project" } });
+    const dialog = await screen.findByRole("dialog", { name: "Search" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("region", { name: "Database details" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabaseTruncate(String(call[0]), undefined, call[1]))).toBe(
+      true,
+    );
   });
 
   it("shows the Security overview page instead of the placeholder", async () => {

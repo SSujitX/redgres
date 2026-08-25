@@ -238,6 +238,34 @@ export async function deletePostgresRows(
   );
 }
 
+export type PostgresTruncatePayload = {
+  truncated?: number;
+  failed?: string[];
+  total_tables?: number;
+  request_id?: string;
+};
+
+export async function truncatePostgresDatabase(
+  name: string,
+  databaseConfirmation: string,
+  ownerPassword: string,
+  csrf: string,
+  init: RequestInit = {},
+) {
+  return apiRequest<PostgresTruncatePayload & ApiErrorBody>(
+    `/api/v1/postgres/databases/${encodeURIComponent(name)}/truncate`,
+    {
+      ...init,
+      method: "POST",
+      csrf,
+      body: JSON.stringify({
+        database_confirmation: databaseConfirmation,
+        owner_password: ownerPassword,
+      }),
+    },
+  );
+}
+
 export type PostgresSecuritySummary = {
   database_count?: number;
   public_connect_count?: number;
