@@ -126,6 +126,26 @@ export async function createPostgresDatabase(
   });
 }
 
+export type PostgresDuplicatePayload = PostgresRevealPayload;
+
+export async function duplicatePostgresDatabase(
+  source: string,
+  database: string,
+  owner: string,
+  csrf: string,
+  init: RequestInit = {},
+) {
+  return apiRequest<PostgresDuplicatePayload & ApiErrorBody>(
+    `/api/v1/postgres/databases/${encodeURIComponent(source)}/duplicate`,
+    {
+      ...init,
+      method: "POST",
+      csrf,
+      body: JSON.stringify({ database, owner }),
+    },
+  );
+}
+
 export type TableItem = {
   schema?: string;
   name?: string;

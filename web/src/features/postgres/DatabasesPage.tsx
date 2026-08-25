@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   createPostgresDatabase,
+  duplicatePostgresDatabase,
   errorMessage,
   fetchPostgresConnection,
   fetchPostgresDatabase,
@@ -16,6 +17,7 @@ import {
 } from "../../api/postgres";
 import CredentialTicket, { type ShownCredential } from "../redis/CredentialTicket";
 import CreateDatabaseForm from "./CreateDatabaseForm";
+import DuplicateDatabaseForm from "./DuplicateDatabaseForm";
 import RotatePasswordDialog from "./RotatePasswordDialog";
 import { displayText } from "../../text/displayText";
 
@@ -24,6 +26,8 @@ const sessionExpired = "Your session has expired. Sign in again to continue.";
 const postgresUnavailable = "PostgreSQL is unavailable";
 const vaultOutOfSyncCopy =
   "The PostgreSQL password was changed but the vault could not be saved. Rotate again.";
+const isolationRollbackCopy =
+  "The source database ownership or CONNECT ACL changed during duplicate. The clone was rolled back.";
 
 type ConnectionUrls = {
   savedCredentialStatus: string;
@@ -133,9 +137,13 @@ export default function DatabasesPage({
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+  const [duplicateError, setDuplicateError] = useState("");
   const [pendingSelect, setPendingSelect] = useState<string | null>(null);
   const revealAbort = useRef<AbortController | null>(null);
   const rotateAbort = useRef<AbortController | null>(null);
+  const duplicateAbort = useRef<AbortController | null>(null);
   const listAbort = useRef<AbortController | null>(null);
   const createOpened = useRef(false);
   const [tables, setTables] = useState<TableItem[] | null>(null);
@@ -195,6 +203,7 @@ export default function DatabasesPage({
       rowsAbort.current?.abort();
       revealAbort.current?.abort();
       rotateAbort.current?.abort();
+      duplicateAbort.current?.abort();
     };
   }, []);
 
@@ -240,6 +249,9 @@ export default function DatabasesPage({
     setRotateOpen(false);
     setRotateError("");
     setRotating(false);
+    setDuplicateOpen(false);
+    setDuplicateError("");
+    setDuplicating(false);
   }
 
   function openDetails(name: string) {
@@ -247,6 +259,7 @@ export default function DatabasesPage({
     rowsAbort.current?.abort();
     revealAbort.current?.abort();
     rotateAbort.current?.abort();
+    duplicateAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
     setSelected(name);
@@ -337,7 +350,7 @@ export default function DatabasesPage({
   }
 
   async function handleReveal() {
-    if (!selected || revealing || rotating || ticket) {
+    if (!selected || revealing || rotating || creating || duplicating || ticket) {
       return;
     }
     revealAbort.current?.abort();
@@ -387,7 +400,7 @@ export default function DatabasesPage({
   }
 
   async function handleRotate(confirmation: string) {
-    if (!selected || rotating || revealing || creating || ticket) {
+    if (!selected || rotating || revealing || creating || duplicating || ticket) {
       return;
     }
     rotateAbort.current?.abort();
@@ -480,7 +493,7 @@ export default function DatabasesPage({
   }
 
   async function handleCreate(database: string, owner: string) {
-    if (ticket !== null) {
+    if (ticket !== null || duplicating) {
       return;
     }
     setCreating(true);
@@ -519,6 +532,93 @@ export default function DatabasesPage({
       setCreateError(postgresUnavailable);
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleDuplicate(database: string, owner: string) {
+    if (!selected || duplicating || revealing || rotating || creating || ticket) {
+      return;
+    }
+    duplicateAbort.current?.abort();
+    const controller = new AbortController();
+    duplicateAbort.current = controller;
+    setDuplicating(true);
+    setDuplicateError("");
+    try {
+      const result = await duplicatePostgresDatabase(selected, database, owner, csrf, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 401) {
+        setDuplicateOpen(false);
+        setDuplicateError("");
+        setTicket(null);
+        setTicketRotateWarning(false);
+        setRevealError(sessionExpired);
+        return;
+      }
+      if (result.status === 400 || result.status === 403 || result.status === 409) {
+        setDuplicateError(
+          errorMessage(
+            result.body,
+            result.status === 403
+              ? "This PostgreSQL name is protected"
+              : result.status === 409
+                ? "A PostgreSQL database with this name already exists"
+                : "Invalid database name",
+          ),
+        );
+        return;
+      }
+      if (result.status === 404) {
+        setDuplicateOpen(false);
+        setDuplicateError("");
+        setTicket(null);
+        setRevealError(errorMessage(result.body, "Not found"));
+        return;
+      }
+      if (result.status === 503) {
+        const copy = errorMessage(result.body, postgresUnavailable);
+        if (copy === isolationRollbackCopy) {
+          setDuplicateError(isolationRollbackCopy);
+          return;
+        }
+        setDuplicateOpen(false);
+        setDuplicateError("");
+        setTicket(null);
+        setRevealError(errorMessage(result.body, postgresUnavailable));
+        return;
+      }
+      if (result.status === 201) {
+        const shown = parsePostgresCredential(result.body.credential);
+        if (!shown) {
+          setDuplicateError(errorMessage(result.body, postgresUnavailable));
+          return;
+        }
+        const createdName =
+          typeof result.body.resource?.name === "string" && result.body.resource.name !== ""
+            ? result.body.resource.name
+            : database;
+        setDuplicateOpen(false);
+        setDuplicateError("");
+        setTicketRotateWarning(false);
+        setTicket(shown);
+        setPendingSelect(createdName);
+        refreshList();
+        return;
+      }
+      setDuplicateError(errorMessage(result.body, postgresUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setDuplicateError(postgresUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setDuplicating(false);
+      }
     }
   }
 
@@ -654,8 +754,9 @@ export default function DatabasesPage({
     connectionError === "" &&
     connection?.savedCredentialStatus === "present";
   const showRotate = !loadingDetails && rotationEligible(details);
+  const showDuplicate = !loadingDetails && rotationEligible(details);
   const showCreate = items !== null && listError === "";
-  const mutationBusy = creating || revealing || rotating || ticket !== null;
+  const mutationBusy = creating || revealing || rotating || duplicating || ticket !== null;
   const createDisabled = mutationBusy;
 
   return (
@@ -714,6 +815,22 @@ export default function DatabasesPage({
             setRotateError("");
           }}
           onConfirm={(confirmation) => void handleRotate(confirmation)}
+        />
+      ) : null}
+      {duplicateOpen && selected ? (
+        <DuplicateDatabaseForm
+          source={selected}
+          connectionCount={details?.connection_count ?? 0}
+          error={duplicateError}
+          submitting={duplicating}
+          onCancel={() => {
+            if (duplicating) {
+              return;
+            }
+            setDuplicateOpen(false);
+            setDuplicateError("");
+          }}
+          onSubmit={(database, owner) => void handleDuplicate(database, owner)}
         />
       ) : null}
       {listError ? (
@@ -782,7 +899,7 @@ export default function DatabasesPage({
               {revealError}
             </p>
           ) : null}
-          {showReveal || showRotate ? (
+          {showReveal || showRotate || showDuplicate ? (
             <div className="form-actions">
               {showReveal ? (
                 <button
@@ -805,6 +922,19 @@ export default function DatabasesPage({
                   }}
                 >
                   Rotate
+                </button>
+              ) : null}
+              {showDuplicate ? (
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={mutationBusy}
+                  onClick={() => {
+                    setDuplicateError("");
+                    setDuplicateOpen(true);
+                  }}
+                >
+                  Duplicate
                 </button>
               ) : null}
             </div>
