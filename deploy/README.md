@@ -1,15 +1,16 @@
-# Deployment automation placeholder
+# Deployment automation
 
-This directory will contain the implementation described in [../docs/INSTALLER_SPEC.md](../docs/INSTALLER_SPEC.md). No production installer exists yet.
+OPS-001 / OPS-006 Partial: `install.sh` is a **fail-closed dispatcher**. `--dry-run --non-interactive` prints the planned stage list and does not mutate the host.
 
-Do not paste commands from the legacy A-to-Z runbooks into a single script without live inventory, idempotency, secret-handling, and rollback tests.
+```bash
+bash deploy/tests/run.sh
+bash deploy/install.sh --help
+bash deploy/install.sh --non-interactive --dry-run \
+  --mode existing-postgres --expect-postgres-major 17 \
+  --redis-mode existing --expect-redis-series 8.2 \
+  --pgbouncer-mode existing
+```
 
-Planned entry points:
+`verify`, `backup`, `update`, `rollback`, and mutation install without `--dry-run` exit 2 (not implemented). `--config` is recognized and never sourced.
 
-- `install.sh`
-- `verify.sh`
-- `backup.sh`
-- `update.sh`
-- `rollback.sh`
-
-The public contract belongs in the installer specification, while supported service choices belong in [../docs/COMPATIBILITY.md](../docs/COMPATIBILITY.md). PostgreSQL/PgBouncer existing/fresh behavior and optional extension plans belong in [../docs/POSTGRESQL_PROVISIONING.md](../docs/POSTGRESQL_PROVISIONING.md). Scripts and tests must stay synchronized with all three and must never use floating database-service artifacts, arbitrary extension packages/SQL, or an unapproved PostgreSQL restart.
+Do not paste legacy A-to-Z runbooks here. Exact package/image mutation pins, Cloudflare, DNS, and live Ubuntu rehearsal are later slices.
