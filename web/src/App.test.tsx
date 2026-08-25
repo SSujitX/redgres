@@ -131,8 +131,9 @@ function postgresSecurityOk(extra: Record<string, unknown> = {}) {
       public_connect_count: 1,
       active_connection_count: 3,
       connection_group_count: 2,
+      missing_password_count: 1,
     },
-    saved_credential: { status: "not_available", reason: "vault_not_implemented" },
+    saved_credential: { status: "ok", reason: "" },
     databases: [
       postgresSecurityDatabase(),
       postgresSecurityDatabase({
@@ -302,6 +303,15 @@ function goToSecurityOverview() {
   fireEvent.click(
     within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Security overview" }),
   );
+}
+
+function factValue(label: string) {
+  return screen.getByText(label).closest("div")?.querySelector("dd");
+}
+
+function expectNoVaultReasonCopy() {
+  expect(screen.queryByText("vault_not_implemented")).not.toBeInTheDocument();
+  expect(screen.queryByText("vault_unavailable")).not.toBeInTheDocument();
 }
 
 function isSearchUrl(url: string): boolean {
@@ -1314,7 +1324,7 @@ describe("App session and login", () => {
               owner_createrole: false,
               owner_replication: false,
             },
-            saved_credential: { status: "not_available", reason: "vault_not_implemented" },
+            saved_credential: { status: "present", reason: "" },
           },
         });
       }
@@ -1325,7 +1335,10 @@ describe("App session and login", () => {
     fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
     expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
-    expect(await screen.findByText("Not available")).toBeInTheDocument();
+    expect(await screen.findByText("Saved credential")).toBeInTheDocument();
+    expect(factValue("Saved credential")).toHaveTextContent("Saved");
+    expect(screen.queryByText("present")).not.toBeInTheDocument();
+    expectNoVaultReasonCopy();
     expect(screen.getByText("Owner is superuser").closest("div")).toHaveTextContent("Yes");
     expect(screen.getByText("Owner can create roles").closest("div")).toHaveTextContent("No");
     expect(await screen.findByText("items")).toBeInTheDocument();
@@ -1335,6 +1348,75 @@ describe("App session and login", () => {
     expect(screen.queryByText(/healthy/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/rows"))).toBe(true);
+  });
+
+  it("shows details saved-credential Not saved without reason codes", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "i".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: {
+            name: "project_a",
+            owner: "project_a_role",
+            saved_credential: { status: "missing", reason: "" },
+          },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Saved credential")).toBeInTheDocument();
+    expect(factValue("Saved credential")).toHaveTextContent("Not saved");
+    expect(screen.queryByText("missing")).not.toBeInTheDocument();
+    const details = screen.getByRole("region", { name: "Database details" });
+    expect(within(details).queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+    expectNoVaultReasonCopy();
+  });
+
+  it("shows details saved-credential Not available without leaking vault_unavailable", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "i".repeat(64) });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: {
+            name: "project_a",
+            owner: "project_a_role",
+            saved_credential: { status: "not_available", reason: "vault_unavailable" },
+          },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Saved credential")).toBeInTheDocument();
+    expect(factValue("Saved credential")).toHaveTextContent("Not available");
+    const details = screen.getByRole("region", { name: "Database details" });
+    expect(within(details).queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
+    expectNoVaultReasonCopy();
   });
 
   it("clears previous details and ignores a slower first selection", async () => {
@@ -2132,7 +2214,7 @@ describe("App session and login", () => {
     expect(within(article as HTMLElement).queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
   });
 
-  it("shows vault Not available copy matching Databases", async () => {
+  it("shows Missing vault entries when cluster saved_credential is ok", async () => {
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-e".padEnd(64, "0") });
@@ -2148,9 +2230,104 @@ describe("App session and login", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
     goToSecurityOverview();
-    expect(await screen.findByText("Not available")).toBeInTheDocument();
-    expect(screen.getByText("Saved credential").closest("div")).toHaveTextContent("Not available");
-    expect(screen.queryByText("vault_not_implemented")).not.toBeInTheDocument();
+    expect(await screen.findByText("Missing vault entries")).toBeInTheDocument();
+    expect(factValue("Missing vault entries")).toHaveTextContent("1");
+    expect(screen.queryByText("Saved credential")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not available")).not.toBeInTheDocument();
+    expect(screen.queryByText(/not loaded in this slice/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Passwords are not revealed/)).toBeInTheDocument();
+    const article = screen.getByRole("heading", { name: "Security overview" }).closest("article");
+    expect(article).not.toBeNull();
+    expect(within(article as HTMLElement).queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
+    expect(within(article as HTMLElement).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
+    expect(within(article as HTMLElement).queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+    expectNoVaultReasonCopy();
+  });
+
+  it("shows Missing vault entries 0 when the count is zero", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-e0".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk({
+          summary: {
+            database_count: 2,
+            public_connect_count: 1,
+            active_connection_count: 3,
+            connection_group_count: 2,
+            missing_password_count: 0,
+          },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByText("Missing vault entries")).toBeInTheDocument();
+    expect(factValue("Missing vault entries")).toHaveTextContent("0");
+    expect(screen.queryByText("Saved credential")).not.toBeInTheDocument();
+    expectNoVaultReasonCopy();
+  });
+
+  it("shows vault Not available when existence is unavailable and does not invent a count", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-e1".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk({
+          summary: {
+            database_count: 2,
+            public_connect_count: 1,
+            active_connection_count: 3,
+            connection_group_count: 2,
+          },
+          saved_credential: { status: "not_available", reason: "vault_unavailable" },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByText("Saved credential")).toBeInTheDocument();
+    expect(factValue("Saved credential")).toHaveTextContent("Not available");
+    expect(screen.queryByText("Missing vault entries")).not.toBeInTheDocument();
+    expect(screen.queryByText(/not loaded in this slice/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Passwords are not revealed/)).toBeInTheDocument();
+    expectNoVaultReasonCopy();
+  });
+
+  it("shows Saved credential Not available when saved_credential status is omitted", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "sec-e2".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk({
+          saved_credential: {},
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByText("Saved credential")).toBeInTheDocument();
+    expect(factValue("Saved credential")).toHaveTextContent("Not available");
+    expect(screen.queryByText("Missing vault entries")).not.toBeInTheDocument();
+    expectNoVaultReasonCopy();
   });
 
   it("renders the connection groups table from the frozen payload", async () => {
@@ -2247,7 +2424,7 @@ describe("App session and login", () => {
         return jsonResponse(401, {
           error: { code: "unauthorized", message: "Authentication required" },
           summary: { database_count: 99 },
-          saved_credential: { status: "not_available", reason: "vault_not_implemented" },
+          saved_credential: { status: "not_available", reason: "vault_unavailable" },
           databases: [{ name: "should-not-appear" }],
           connections: [{ database: "leaked-connection" }],
           truncated: true,
@@ -2266,6 +2443,9 @@ describe("App session and login", () => {
     expect(screen.queryByText("99")).not.toBeInTheDocument();
     expect(screen.queryByText("No databases.")).not.toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "Database security" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Missing vault entries")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not available")).not.toBeInTheDocument();
+    expectNoVaultReasonCopy();
   });
 
   it("shows empty security lists only after HTTP 200 with empty arrays", async () => {
@@ -2283,6 +2463,7 @@ describe("App session and login", () => {
             public_connect_count: 0,
             active_connection_count: 0,
             connection_group_count: 0,
+            missing_password_count: 0,
           },
           databases: [],
           connections: [],
@@ -2295,7 +2476,10 @@ describe("App session and login", () => {
     goToSecurityOverview();
     expect(await screen.findByText("No databases.")).toBeInTheDocument();
     expect(screen.getByText("No connection groups.")).toBeInTheDocument();
-    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(screen.getByText("Missing vault entries")).toBeInTheDocument();
+    expect(factValue("Missing vault entries")).toHaveTextContent("0");
+    expect(screen.queryByText("Saved credential")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not available")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText("PostgreSQL is unavailable")).not.toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "Database security" })).not.toBeInTheDocument();

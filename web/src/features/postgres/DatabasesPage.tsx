@@ -285,7 +285,7 @@ export default function DatabasesPage({ focusDatabase = null, focusNonce = 0 }: 
     <article>
       <header className="page-header">
         <h1>Databases</h1>
-        <p>Manageable project databases only. Saved credentials are not loaded in this slice.</p>
+        <p>Manageable project databases only. Passwords are not revealed.</p>
       </header>
       {listError ? (
         <p className="form-warning" role="alert">
@@ -631,7 +631,7 @@ function DetailsFacts({ details }: { details: DatabaseDetails }) {
       <Fact label="Owner can create databases" value={yesNo(details.security?.owner_createdb)} />
       <Fact label="Owner can create roles" value={yesNo(details.security?.owner_createrole)} />
       <Fact label="Owner replication" value={yesNo(details.security?.owner_replication)} />
-      <Fact label="Saved credential" value="Not available" />
+      <Fact label="Saved credential" value={savedCredentialCopy(details.saved_credential?.status)} />
     </dl>
   );
 }
@@ -651,6 +651,16 @@ function Fact({
       <dd className={kind === "identifier" ? "identifier" : kind === "metric" ? "metric" : undefined}>{value}</dd>
     </div>
   );
+}
+
+function savedCredentialCopy(status: string | undefined): string {
+  if (status === "present") {
+    return "Saved";
+  }
+  if (status === "missing") {
+    return "Not saved";
+  }
+  return "Not available";
 }
 
 function yesNo(value: boolean | undefined): string {
