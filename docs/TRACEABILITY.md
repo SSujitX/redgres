@@ -4573,41 +4573,43 @@ Keep PG-009 Partial. Keep AUTH-006 Partial (Redis DELETE plus PG-008
 Not pushed.
 ```
 
-## PG-009 truncate UI review Approve Partial (2026-08-26)
+## PG-009 truncate security review Approve Partial (2026-08-26)
 
 ```text
-Requirement: PG-009 Partial UI + AUTH-006 Partial (this POST UI only).
- Keep PG-008 Partial. Keep PG-010 Partial. Keep PG-007. Do not mark Complete.
- Playwright is Complete-only and was not run.
+Requirement: PG-009 Partial + AUTH-006 Partial (flagged POST
+ /api/v1/postgres/databases/{db}/truncate + inspector Truncate dialog).
+ Keep PG-008 Partial. Keep PG-010 Partial. Keep AUTH-006 Partial
+ (Redis DELETE /api/v1/redis/users/{username} plus PG-008 row DELETE
+ plus this POST). Do not mark Complete. Do not start PG-011.
 Decision/ADR: freeze 74bf746 (`74bf7461f82471311c1d7571352bfa7c36735cac`).
- Product tree also has a4b2436 compatibility notes; SQL shape unchanged.
- AUTH-006 is in-handler owner_password on POST
- /api/v1/postgres/databases/{db}/truncate (REDIS-008 / PG-008 pattern).
- No POST /api/v1/auth/reauth.
-Review: redgres-ui-reviewer Approve Partial on
+ Compatibility pin a4b2436 (SQL unchanged). AUTH-006 in-handler
+ LookupOwnerByUsername + Verify on body owner_password. No POST
+ /api/v1/auth/reauth. Gate 4 N/A (no vault decrypt).
+Review: redgres-security-reviewer Approve Partial on
  c80ebbf (`c80ebbf98f275d3ca25d2ba542aa279a5ce3aa6d`) master.
- UI SHA 15e2468 (`15e246828354fa1acc444af507b024a86b4426bb`).
  Go SHA 8f473e1 (`8f473e1da8f63dd9f1e2f3097d21e3c98b525824`).
+ UI SHA 15e2468 (`15e246828354fa1acc444af507b024a86b4426bb`).
  Diff range 74bf746..c80ebbf.
- Confirmed freeze defects: none.
- Parent notes matching freeze (not defects): flag-off 403 stays on
- dialog and does not clear password (only reauth_required does);
- Delete selected is not disabled during truncate in flight (handler
- refuses); jsdom danger vs postgres asserted via class + globals.css;
- 409 stay-on-dialog uses errorMessage with generic unavailable fallback
- if body copy is missing.
- PG-008 Delete selected control unchanged in spirit.
-Files reviewed: web/src/api/postgres.ts;
- web/src/features/postgres/TruncateProjectDataDialog.tsx;
- web/src/features/postgres/DatabasesPage.tsx; web/src/App.test.tsx;
- compared web/src/features/redis/DeleteAclUserDialog.tsx and
- web/src/features/postgres/DeleteSelectedRowsDialog.tsx.
-Unexecuted: Playwright viewports 360×800, 768×1024, 1280×800,
- 1600×1000, 200% zoom; live PostgreSQL 17/18; COMPATIBILITY.md §6;
- Node 24.19.0.
-Keep PG-009 Partial. Keep AUTH-006 Partial (Redis DELETE plus PG-008
- DELETE plus this POST). Keep PG-008 Partial. Keep PG-010 Partial.
- Do not mark Complete.
-Not pushed.
+ Confirmed defects: none (Critical/High/Medium).
+ Sibling CASCADE/swallowed-exception path NOT copied (read-only
+ database-app truncate_all_tables / DELETE /databases/{name}/data).
+ Low/non-blocking: PoolCatalog Truncate Exec uses connectTarget 5s
+ connectCtx (fail-closed 503, not a bypass); no dedicated HTTP
+ statement-failure 503 test (service canary mapping exists).
+ Files: internal/httpapi/server.go; internal/httpapi/postgres_routes.go
+ (handlePostgresDatabaseTruncate); internal/httpapi/postgres_truncate_routes_test.go;
+ internal/postgresadmin/truncate.go; internal/postgresadmin/truncate_test.go;
+ internal/postgresadmin/adapter.go (listTablesSQL); internal/config/config.go;
+ internal/config/truncate_test.go; internal/auth/reauth.go;
+ web/src/api/postgres.ts; web/src/features/postgres/TruncateProjectDataDialog.tsx;
+ web/src/features/postgres/DatabasesPage.tsx; web/src/App.test.tsx.
+ Docs held: docs/SECURITY.md §3.1 / §6; docs/API.md POST truncate freeze;
+ docs/DATA_AND_SECRETS.md; docs/CONFIGURATION.md.
+ Unexecuted: live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright
+ viewports, go test -race, CI, Node 24.19.0, gitleaks, govulncheck,
+ this reviewer did not re-run product tests.
+ Keep PG-009 Partial. Keep AUTH-006 Partial. Keep PG-008 Partial.
+ Keep PG-010 Partial. Do not mark Complete.
+ Not pushed.
 ```
 
