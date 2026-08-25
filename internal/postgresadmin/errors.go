@@ -18,6 +18,10 @@ const vaultUnsyncedMessage = "The PostgreSQL password was changed but the vault 
 
 const duplicateInProgressMessage = "A database duplicate is already in progress."
 
+const truncateInProgressMessage = "A truncate is already in progress."
+
+const tableListTruncatedMessage = "Table list is truncated. Truncate cannot run."
+
 const isolationChangedMessage = "The source database ownership or CONNECT ACL changed during duplicate. The clone was rolled back."
 
 const duplicateSameOwnerMessage = "Choose a different project user than the source database owner."
@@ -31,6 +35,28 @@ func (DuplicateInProgress) Error() string {
 
 func (DuplicateInProgress) Unwrap() error {
 	return ErrOperationInProgress
+}
+
+// TruncateInProgress is a 409 distinct from rotate/duplicate in-progress copy.
+type TruncateInProgress struct{}
+
+func (TruncateInProgress) Error() string {
+	return truncateInProgressMessage
+}
+
+func (TruncateInProgress) Unwrap() error {
+	return ErrOperationInProgress
+}
+
+// TableListTruncated is a 409 conflict when GET-tables would be truncated.
+type TableListTruncated struct{}
+
+func (TableListTruncated) Error() string {
+	return tableListTruncatedMessage
+}
+
+func (TableListTruncated) Unwrap() error {
+	return ErrConflict
 }
 
 // IsolationChanged is a 503 after the clone is rolled back.

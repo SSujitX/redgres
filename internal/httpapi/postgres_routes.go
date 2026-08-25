@@ -27,6 +27,11 @@ const postgresRotateVaultUnsyncedMessage = "The PostgreSQL password was changed 
 const postgresDuplicateInProgressMessage = "A database duplicate is already in progress."
 const postgresDuplicateIsolationMessage = "The source database ownership or CONNECT ACL changed during duplicate. The clone was rolled back."
 const postgresDuplicateSameNameMessage = "The copy must use a new database name."
+const postgresTruncateTimeout = 30 * time.Second
+const postgresTruncateOffMessage = "Truncate is turned off."
+const postgresTruncateConfirmMessage = "Type the exact database name to confirm truncate"
+const postgresTruncateInProgressMessage = "A truncate is already in progress."
+const postgresTruncateTableListMessage = "Table list is truncated. Truncate cannot run."
 
 type postgresListBody struct {
 	postgresadmin.ListResult
@@ -597,6 +602,83 @@ func (s *Server) handlePostgresRowsDelete(w http.ResponseWriter, r *http.Request
 	s.writeJSON(w, r, http.StatusOK, postgresRowsDeleteResponse{Deleted: deleted, RequestID: requestID(r)})
 }
 
+type postgresTruncateRequest struct {
+	DatabaseConfirmation string `json:"database_confirmation"`
+	OwnerPassword        string `json:"owner_password"`
+}
+
+type postgresTruncateResponse struct {
+	Truncated   int      `json:"truncated"`
+	Failed      []string `json:"failed"`
+	TotalTables int      `json:"total_tables"`
+	RequestID   string   `json:"request_id"`
+}
+
+func (s *Server) handlePostgresDatabaseTruncate(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.FeaturePostgresTruncate {
+		s.writeError(w, r, http.StatusForbidden, CodeForbidden, postgresTruncateOffMessage)
+		return
+	}
+	database, err := decodePathIdentifier(chi.URLParam(r, "db"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid database name")
+		return
+	}
+	var body postgresTruncateRequest
+	if err := decodeJSON(r, &body); err != nil {
+		s.writeDecodeError(w, r, err)
+		return
+	}
+	if body.DatabaseConfirmation != database {
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, postgresTruncateConfirmMessage, map[string]string{"database_confirmation": "invalid"})
+		return
+	}
+	sess := sessionFrom(r)
+	meta := map[string]any{"database": database}
+	if err := auth.Reauthenticate(s.db, sess.Username, body.OwnerPassword); err != nil {
+		switch {
+		case errors.Is(err, auth.ErrReauthRequired):
+			_ = s.audit.Record(sess.Username, "postgres.database.truncate", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Owner password is incorrect")
+			return
+		case errors.Is(err, auth.ErrUnauthorized):
+			s.writeError(w, r, http.StatusUnauthorized, CodeUnauthorized, authRequiredMessage)
+			return
+		default:
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), postgresTruncateTimeout)
+	defer cancel()
+	if s.postgres == nil {
+		_ = s.audit.Record(sess.Username, "postgres.database.truncate", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	result, err := s.postgres.Truncate(ctx, database)
+	if err != nil {
+		_ = s.audit.Record(sess.Username, "postgres.database.truncate", database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writePostgresError(w, r, err)
+		return
+	}
+	failed := result.Failed
+	if failed == nil {
+		failed = []string{}
+	}
+	successMeta := map[string]any{"database": database, "truncated": result.Truncated, "total_tables": result.TotalTables}
+	if err := s.audit.Record(sess.Username, "postgres.database.truncate", database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), successMeta); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, postgresTruncateResponse{
+		Truncated:   result.Truncated,
+		Failed:      failed,
+		TotalTables: result.TotalTables,
+		RequestID:   requestID(r),
+	})
+}
+
 func postgresRowsDeleteMeta(database, schema, table string) map[string]any {
 	return map[string]any{"database": database, "schema": schema, "table": table}
 }
@@ -651,6 +733,16 @@ func decodePathIdentifier(raw string) (string, error) {
 }
 
 func (s *Server) writePostgresError(w http.ResponseWriter, r *http.Request, err error) {
+	var truncateInProgress postgresadmin.TruncateInProgress
+	if errors.As(err, &truncateInProgress) {
+		s.writeError(w, r, http.StatusConflict, CodeOperationInProgress, postgresTruncateInProgressMessage)
+		return
+	}
+	var tableListTruncated postgresadmin.TableListTruncated
+	if errors.As(err, &tableListTruncated) {
+		s.writeError(w, r, http.StatusConflict, CodeConflict, postgresTruncateTableListMessage)
+		return
+	}
 	var duplicateInProgress postgresadmin.DuplicateInProgress
 	if errors.As(err, &duplicateInProgress) {
 		s.writeError(w, r, http.StatusConflict, CodeOperationInProgress, postgresDuplicateInProgressMessage)

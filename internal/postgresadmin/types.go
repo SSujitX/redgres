@@ -31,6 +31,7 @@ type Catalog interface {
 	ListRows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
 	PrimaryKey(ctx context.Context, database, schema, table string) ([]string, error)
 	DeleteRows(ctx context.Context, database, schema, table, pkColumn string, values []any) (int64, error)
+	Truncate(ctx context.Context, database string, tables []TableItem) error
 	ListConnectionGroups(ctx context.Context) ([]ConnectionGroup, error)
 	SavedRoleNames(ctx context.Context, roles []string) (map[string]struct{}, error)
 	EncryptedPassword(ctx context.Context, role string) (string, error)
@@ -68,6 +69,7 @@ type Inventory interface {
 	Rows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
 	PrimaryKey(ctx context.Context, database, schema, table string) ([]string, error)
 	DeleteRows(ctx context.Context, database, schema, table string, values []any) (int64, error)
+	Truncate(ctx context.Context, database string) (TruncateResult, error)
 	SecurityOverview(ctx context.Context) (SecurityOverview, error)
 	Connection(ctx context.Context, name string) (Connection, error)
 	Reveal(ctx context.Context, name string) (RevealedConnection, error)
@@ -151,6 +153,12 @@ type TableItem struct {
 type TableListResult struct {
 	Tables    []TableItem `json:"tables"`
 	Truncated bool        `json:"truncated"`
+}
+
+type TruncateResult struct {
+	Truncated   int
+	Failed      []string
+	TotalTables int
 }
 
 const (

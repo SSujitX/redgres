@@ -64,6 +64,7 @@ type Config struct {
 	RedisInsightURL string
 
 	FeaturePostgresRowDelete bool
+	FeaturePostgresTruncate  bool
 }
 
 func Load(args []string) (Config, error) {
@@ -135,6 +136,11 @@ func Load(args []string) (Config, error) {
 		return Config{}, err
 	} else if v != nil {
 		cfg.FeaturePostgresRowDelete = *v
+	}
+	if v, err := envBool("REDGRES_FEATURE_POSTGRES_TRUNCATE"); err != nil {
+		return Config{}, err
+	} else if v != nil {
+		cfg.FeaturePostgresTruncate = *v
 	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err

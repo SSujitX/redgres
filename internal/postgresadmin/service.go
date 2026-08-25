@@ -18,6 +18,8 @@ type Service struct {
 	rotating    map[string]struct{}
 	duplicateMu sync.Mutex
 	duplicating map[string]struct{}
+	truncateMu  sync.Mutex
+	truncating  map[string]struct{}
 }
 
 func NewService(catalog Catalog, policy Policy) *Service {

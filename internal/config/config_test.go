@@ -60,6 +60,9 @@ func TestLoadDevelopmentDefaults(t *testing.T) {
 	if cfg.FeaturePostgresRowDelete {
 		t.Fatal("FeaturePostgresRowDelete should be false when unset")
 	}
+	if cfg.FeaturePostgresTruncate {
+		t.Fatal("FeaturePostgresTruncate should be false when unset")
+	}
 	if cfg.LogLevel != DefaultLogLevel {
 		t.Fatalf("LogLevel = %q", cfg.LogLevel)
 	}

@@ -26,6 +26,12 @@ type MemoryCatalog struct {
 	LastDeleteColumn              string
 	LastDeleteValues              []any
 	DeletedCount                  int64
+	TruncateCalls                 int
+	TruncateErr                   error
+	LastTruncateDB                string
+	LastTruncateTables            []TableItem
+	TruncateStarted               chan struct{}
+	TruncateHold                  chan struct{}
 	Connections                   []ConnectionGroup
 	ConnectionsErr                error
 	SavedRoles                    []string
@@ -259,6 +265,34 @@ func (m *MemoryCatalog) DeleteRows(_ context.Context, database, schema, table, p
 		return m.DeletedCount, nil
 	}
 	return int64(len(values)), nil
+}
+
+func (m *MemoryCatalog) Truncate(_ context.Context, database string, tables []TableItem) error {
+	if err := ValidateIdentifier(database); err != nil {
+		return err
+	}
+	if _, err := formatTruncateSQL(tables); err != nil {
+		return err
+	}
+	m.TruncateCalls++
+	m.LastTruncateDB = database
+	m.LastTruncateTables = append([]TableItem{}, tables...)
+	if m.TruncateStarted != nil {
+		select {
+		case m.TruncateStarted <- struct{}{}:
+		default:
+		}
+	}
+	if m.TruncateHold != nil {
+		<-m.TruncateHold
+	}
+	if m.TruncateErr != nil {
+		return m.TruncateErr
+	}
+	if m.Err != nil {
+		return m.Err
+	}
+	return nil
 }
 
 func (m *MemoryCatalog) ListConnectionGroups(context.Context) ([]ConnectionGroup, error) {
