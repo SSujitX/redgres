@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Fail-closed installer dispatcher. OPS-001 / OPS-006 Partial: no host mutation.
+# Fail-closed installer dispatcher. OPS-001 / OPS-002 / OPS-006 Partial: no host mutation.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${script_dir}/lib/common.sh"
+# shellcheck disable=SC1091
+source "${script_dir}/lib/inventory.sh"
 
 usage() {
   cat <<'EOF'
@@ -16,11 +18,13 @@ Usage:
       [--redis-version 8.2|8.8] [--expect-redis-series 8.2|8.8]
       [--config PATH] [--extension-plan PATH] [--approve-postgres-restart]
 
-This Partial prints the planned stage list on --dry-run. It does not install
+This Partial prints the planned stage list on --dry-run and inventories PATH
+host --version for existing PostgreSQL/Redis/PgBouncer. It does not install
 packages, pull images, write systemd, open a firewall, or change DNS/Cloudflare.
+It does not start servers, source --config, or run SQL SHOW / Redis INFO.
 
 Exit 0: --help, or valid --non-interactive --dry-run plan
-Exit 1: unsupported or incomplete selection
+Exit 1: unsupported, incomplete, missing, unparseable, or mismatched selection
 Exit 2: mutation install path or subcommand not implemented
 
 Majors/series only (not Hub tags). latest and latest-tested are rejected.
@@ -202,6 +206,7 @@ if [[ "${dry_run}" -ne 1 ]]; then
 fi
 
 print_stages
+redgres_inventory_dry_run
 redgres_log "Selection (redacted): mode=${mode} redis-mode=${redis_mode} pgbouncer-mode=${pgbouncer_mode}"
 if [[ -n "${postgres_version}" ]]; then
   redgres_log "postgres-version=${postgres_version}"

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# POSIX installer dispatcher tests (OPS-001 / OPS-006 Partial).
+# POSIX installer dispatcher tests (OPS-001 / OPS-002 / OPS-006 Partial).
 # Prepends failing mutation stubs so a real host call fails the test.
+# Detection stubs print fixture --version stdout and must not append to stub_log.
 set -euo pipefail
 
 tests_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 deploy_dir="$(cd "${tests_dir}/.." && pwd)"
 install_sh="${deploy_dir}/install.sh"
+fixtures_dir="${tests_dir}/fixtures"
 
 failures=0
 passes=0
@@ -22,12 +24,14 @@ fail() {
 
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/redgres-install-test.XXXXXX")"
 stub_dir="${tmpdir}/stubs"
+detect_dir="${tmpdir}/detect"
 stub_log="${tmpdir}/stub.log"
 config_file="${tmpdir}/install.env"
 plan_file="${tmpdir}/postgres-extensions.json"
 sourced_marker="${tmpdir}/config-sourced"
-mkdir -p "${stub_dir}"
+mkdir -p "${stub_dir}" "${detect_dir}"
 : >"${stub_log}"
+original_path="${PATH}"
 
 cleanup() {
   rm -rf "${tmpdir}"
@@ -62,6 +66,44 @@ for _stub in ${STUB_NAMES}; do
   write_stub "${_stub}"
 done
 
+# Installer PATH: detection stubs, mutation stubs, then original PATH minus
+# directories that contain host postgres/redis-server/pgbouncer (so missing-binary
+# tests cannot leak a real binary, without hiding cat/dirname).
+installer_path="${detect_dir}:${stub_dir}"
+_old_ifs="${IFS}"
+IFS=':'
+for _dir in ${original_path}; do
+  [[ -n "${_dir}" ]] || continue
+  if [[ -e "${_dir}/postgres" || -e "${_dir}/postgres.exe" \
+     || -e "${_dir}/redis-server" || -e "${_dir}/redis-server.exe" \
+     || -e "${_dir}/pgbouncer" || -e "${_dir}/pgbouncer.exe" ]]; then
+    continue
+  fi
+  installer_path="${installer_path}:${_dir}"
+done
+IFS="${_old_ifs}"
+unset _dir _old_ifs
+
+clear_detect_stubs() {
+  rm -f "${detect_dir}/postgres" "${detect_dir}/redis-server" "${detect_dir}/pgbouncer"
+}
+
+write_detect_stub() {
+  local name="$1"
+  local fixture="$2"
+  cat >"${detect_dir}/${name}" <<STUB
+#!/usr/bin/env bash
+# Detection stub: fixture stdout only. Do not append to mutation stub_log.
+cat '${fixture}'
+exit 0
+STUB
+  chmod +x "${detect_dir}/${name}"
+}
+
+DETECT_POSTGRES=''
+DETECT_REDIS=''
+DETECT_PGBOUNCER=''
+
 export PATH="${stub_dir}:${PATH}"
 
 output=''
@@ -70,8 +112,21 @@ status=0
 run_install() {
   : >"${stub_log}"
   rm -f "${sourced_marker}"
+  clear_detect_stubs
+  if [[ -n "${DETECT_POSTGRES}" ]]; then
+    write_detect_stub postgres "${DETECT_POSTGRES}"
+  fi
+  if [[ -n "${DETECT_REDIS}" ]]; then
+    write_detect_stub redis-server "${DETECT_REDIS}"
+  fi
+  if [[ -n "${DETECT_PGBOUNCER}" ]]; then
+    write_detect_stub pgbouncer "${DETECT_PGBOUNCER}"
+  fi
+  DETECT_POSTGRES=''
+  DETECT_REDIS=''
+  DETECT_PGBOUNCER=''
   set +e
-  output="$(bash "${install_sh}" "$@" 2>&1)"
+  output="$(PATH="${installer_path}" "${BASH}" "${install_sh}" "$@" 2>&1)"
   status=$?
   set -e
 }
@@ -116,8 +171,29 @@ expect_status() {
   fi
 }
 
+expect_status_keyword() {
+  local name="$1"
+  local expected="$2"
+  local keyword="$3"
+  if ! assert_no_mutation "${name}"; then
+    return
+  fi
+  if ! assert_no_canary "${name}"; then
+    return
+  fi
+  if [[ "${status}" -ne "${expected}" ]]; then
+    fail "${name}: expected exit ${expected}, got ${status}: ${output}"
+    return
+  fi
+  case "${output}" in
+    *"${keyword}"*) pass "${name}" ;;
+    *) fail "${name}: missing '${keyword}': ${output}" ;;
+  esac
+}
+
 expect_status_and_stages() {
   local name="$1"
+  shift
   if ! assert_no_mutation "${name}"; then
     return
   fi
@@ -149,8 +225,15 @@ expect_status_and_stages() {
       *) missing="${missing} ${stage}" ;;
     esac
   done
+  local extra
+  for extra in "$@"; do
+    case "${output}" in
+      *"${extra}"*) ;;
+      *) missing="${missing} |${extra}|" ;;
+    esac
+  done
   if [[ -n "${missing}" ]]; then
-    fail "${name}: missing stage names:${missing}"
+    fail "${name}: missing:${missing}"
     return
   fi
   pass "${name}"
@@ -161,6 +244,9 @@ run_install --help
 expect_status 'help exits 0' 0
 
 # --- happy dry-run (existing services) ---
+DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
+DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-1.24.1.version"
 run_install \
   --non-interactive \
   --dry-run \
@@ -170,7 +256,11 @@ run_install \
   --expect-redis-series 8.2 \
   --pgbouncer-mode existing \
   --config "${config_file}"
-expect_status_and_stages 'dry-run existing-postgres combo prints 13 stages'
+expect_status_and_stages 'dry-run existing-postgres combo prints 13 stages' \
+  'Inventory (read-only, host --version; not SQL SHOW/INFO):' \
+  'postgres: detected=postgres (PostgreSQL) 17.11 major=17 expect=17 result=ok' \
+  'redis: detected=Redis server v=8.2.0 sha=00000000:0 malloc=libc bits=64 build=0 series=8.2 expect=8.2 result=ok' \
+  'pgbouncer: detected=PgBouncer 1.24.1 result=recorded'
 
 # --- happy dry-run (fresh services) ---
 run_install \
@@ -183,7 +273,11 @@ run_install \
   --pgbouncer-mode disabled \
   --extension-plan "${plan_file}" \
   --approve-postgres-restart
-expect_status_and_stages 'dry-run fresh-postgres combo prints 13 stages'
+expect_status_and_stages 'dry-run fresh-postgres combo prints 13 stages' \
+  'Inventory (read-only, host --version; not SQL SHOW/INFO):' \
+  'postgres: skipped (fresh-postgres)' \
+  'redis: skipped (fresh)' \
+  'pgbouncer: skipped (disabled)'
 
 # --- fail-closed: unknown flag ---
 run_install --non-interactive --dry-run --mode existing-postgres --redis-mode existing --pgbouncer-mode existing --unknown-flag
@@ -271,7 +365,10 @@ expect_status 'postgres-plan subcommand exits 2' 2
 run_install postgres-extensions apply
 expect_status 'postgres-extensions subcommand exits 2' 2
 
-# --- valid flags without --dry-run: mutation not implemented ---
+# --- valid flags without --dry-run: mutation not implemented (before inventory) ---
+DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
+DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-1.24.1.version"
 run_install \
   --non-interactive \
   --mode existing-postgres \
@@ -280,6 +377,115 @@ run_install \
   --expect-redis-series 8.2 \
   --pgbouncer-mode existing
 expect_status 'valid flags without --dry-run exit 2' 2
+case "${output}" in
+  *'Inventory (read-only'*)
+    fail 'valid flags without --dry-run must not inventory'
+    ;;
+  *)
+    pass 'valid flags without --dry-run skip inventory'
+    ;;
+esac
+
+# --- OPS-002 inventory fail-closed ---
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode existing-postgres \
+  --expect-postgres-major 17 \
+  --redis-mode existing \
+  --expect-redis-series 8.2 \
+  --pgbouncer-mode existing
+expect_status_keyword 'existing without detection stubs exits 1' 1 'postgres not found'
+
+DETECT_POSTGRES="${fixtures_dir}/postgres-18.6.version"
+DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-1.24.1.version"
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode existing-postgres \
+  --expect-postgres-major 17 \
+  --redis-mode existing \
+  --expect-redis-series 8.2 \
+  --pgbouncer-mode existing
+expect_status_keyword 'expect-postgres-major mismatch exits 1' 1 'mismatch'
+case "${output}" in
+  *[Uu]pgrade*)
+    fail 'expect-postgres-major mismatch must not say upgrade'
+    ;;
+  *)
+    pass 'expect-postgres-major mismatch has no upgrade wording'
+    ;;
+esac
+
+DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
+DETECT_REDIS="${fixtures_dir}/redis-8.8.2.version"
+DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-1.24.1.version"
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode existing-postgres \
+  --expect-postgres-major 17 \
+  --redis-mode existing \
+  --expect-redis-series 8.2 \
+  --pgbouncer-mode existing
+expect_status_keyword 'expect-redis-series mismatch exits 1' 1 'mismatch'
+
+DETECT_POSTGRES="${fixtures_dir}/postgres-16.15.version"
+DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-1.24.1.version"
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode existing-postgres \
+  --redis-mode existing \
+  --pgbouncer-mode existing
+expect_status_keyword 'unsupported postgres 16 exits 1' 1 'unsupported'
+
+DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
+DETECT_REDIS="${fixtures_dir}/redis-8.10.1.version"
+DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-1.24.1.version"
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode existing-postgres \
+  --redis-mode existing \
+  --pgbouncer-mode existing
+expect_status_keyword 'unsupported redis 8.10 exits 1' 1 'unsupported'
+
+DETECT_POSTGRES="${fixtures_dir}/postgres-unparseable.version"
+DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-1.24.1.version"
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode existing-postgres \
+  --redis-mode existing \
+  --pgbouncer-mode existing
+expect_status_keyword 'unparseable postgres --version exits 1' 1 'unparseable'
+
+DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
+DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode existing-postgres \
+  --redis-mode existing \
+  --pgbouncer-mode disabled
+expect_status_and_stages 'pgbouncer disabled skips pgbouncer binary' \
+  'pgbouncer: skipped (disabled)' \
+  'postgres: detected=postgres (PostgreSQL) 17.11 major=17 expect=unset result=ok' \
+  'redis: detected=Redis server v=8.2.0 sha=00000000:0 malloc=libc bits=64 build=0 series=8.2 expect=unset result=ok'
+
+DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
+DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode existing-postgres \
+  --redis-mode existing \
+  --pgbouncer-mode existing
+expect_status_keyword 'pgbouncer existing missing binary exits 1' 1 'pgbouncer not found'
 
 printf '\n%s passed, %s failed\n' "${passes}" "${failures}"
 if [[ "${failures}" -ne 0 ]]; then
