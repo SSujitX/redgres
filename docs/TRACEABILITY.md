@@ -4670,3 +4670,71 @@ Keep PG-009 Partial. Keep AUTH-006 Partial. Keep PG-008 Partial.
 Not pushed.
 ```
 
+## PG-009 truncate verifier PASS Partial (2026-08-26)
+
+```text
+Requirement: PG-009 Partial + AUTH-006 Partial (flagged POST
+ /api/v1/postgres/databases/{db}/truncate plus inspector danger
+ Truncate dialog, title Truncate project data). Keep PG-009 Partial.
+ Keep AUTH-006 Partial (Redis DELETE /api/v1/redis/users/{username}
+ plus PG-008 row DELETE plus this POST). Keep PG-008 Partial.
+ Keep PG-010 Partial. Keep PG-007 row-browse. Reject Complete.
+ Do not start PG-011 from this pin. Gate 4 N/A. Playwright is
+ Complete-only.
+Decision/ADR: freeze 74bf746 (74bf7461f82471311c1d7571352bfa7c36735cac)
+ plus compatibility pin a4b2436 (SQL unchanged). AUTH-006 in-handler
+ LookupOwnerByUsername + Verify on body owner_password. No POST
+ /api/v1/auth/reauth. Feature flag REDGRES_FEATURE_POSTGRES_TRUNCATE
+ via envBool (unset=false). Do not use envBoolDefaultFalse.
+Verification (2026-08-26) on product HEAD d78b33b
+ (d78b33bffe3085c193ceabef97cd638039a3c045) master, clean worktree.
+ Diff range 74bf746..d78b33b. Go SHA 8f473e1. UI SHA 15e2468.
+ Combined code+impl TRACEABILITY c80ebbf. UI review pin 5845ce3
+ Approve Partial (reviewed c80ebbf). Security review pin 8a20c99
+ Approve Partial (reviewed c80ebbf). Prior evidence pin recorded
+ as d78b33b. This verifier independently re-ran claimed commands.
+Freeze criteria mapped to implementation and tests that passed:
+ POST registered next to duplicate before GET {db}
+ (internal/httpapi/server.go); handlePostgresDatabaseTruncate
+ flag-off 403 before decode; one TRUNCATE TABLE … RESTART IDENTITY
+ (internal/postgresadmin/truncate.go formatTruncateSQL; no CASCADE,
+ no ONLY, no per-table loop); listTablesSQL LIMIT 501; AUTH-006
+ in-handler; inspector TruncateProjectDataDialog title Truncate
+ project data. HTTP tests
+ internal/httpapi/postgres_truncate_routes_test.go; domain
+ internal/postgresadmin/truncate_test.go; config
+ internal/config/truncate_test.go; jsdom web/src/App.test.tsx.
+Commands executed (2026-08-26), go1.27.0 windows/amd64,
+ Node v25.3.0 (not web/.nvmrc 24.19.0):
+ gofmt -l cmd internal migrations → empty (78 ms)
+ go test -count=1 ./internal/config ./internal/postgresadmin
+ ./internal/httpapi → ok (config 0.637s; postgresadmin 1.059s;
+ httpapi 38.408s; wall 40521 ms)
+ go test -count=1 ./... → all ok (httpapi 36.650s; cmd/redgres
+ 2.238s; postgresadmin 1.453s; config 0.977s; wall 41588 ms)
+ go vet ./... → no findings (965 ms)
+ go build -o NUL ./cmd/redgres → success (3141 ms)
+ npm --prefix web run test:run → Tests 338 passed (338), 55.65s
+ npm --prefix web run build → tsc --noEmit && vite build success
+ (dist gitignored at internal/web/dist/app/; not committed)
+ Negative cases inspected in source + passing tests: flag off before
+ JSON decode; CSRF; unknown fields including cascade/tables;
+ confirmation mismatch no audit; reauth_required metadata database
+ only not password; protected 404 no TRUNCATE; 501-table 409 no SQL;
+ in-progress 409 dedicated lock map; empty tables 200 zeros; one
+ TRUNCATE … RESTART IDENTITY no CASCADE no ONLY no per-table loop;
+ canary password absent; POST 405; UI CSRF + two body fields;
+ 401/reauth_required password clearing; Search/login/Security
+ overview never POST truncate.
+ Status rows AUTH-006 / PG-001..012 Partial; PG-011 not started
+ at verification time.
+ No secret/runtime artifacts. Dist not committed.
+Unexecuted Complete blockers: live PostgreSQL 17/18,
+ COMPATIBILITY.md §6, Playwright viewports, go test -race, CI,
+ Node 24.19.0, Gate 4 (N/A), POST /api/v1/auth/reauth, DROP flag,
+ gitleaks, govulncheck.
+Keep PG-009 Partial. Keep AUTH-006 Partial. Keep PG-008 Partial.
+ Keep PG-010 Partial. Keep PG-007 row-browse. Do not mark Complete.
+Not pushed.
+```
+
