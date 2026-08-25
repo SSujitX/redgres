@@ -230,8 +230,8 @@ Database/role names in URL segments are decoded then validated. Transport valida
 | GET | `/api/v1/redis/users/{username}` | ACL user inspect (implemented; inspect-only) |
 | POST | `/api/v1/redis/users` | Create isolated cache-read-write user; one-time credential; `no-store` (implemented) |
 | PATCH | `/api/v1/redis/users/{username}` | Permissions/prefix only |
-| POST | `/api/v1/redis/users/{username}/enable` | Enable |
-| POST | `/api/v1/redis/users/{username}/disable` | Disable |
+| POST | `/api/v1/redis/users/{username}/enable` | Enable (implemented) |
+| POST | `/api/v1/redis/users/{username}/disable` | Disable (implemented) |
 | POST | `/api/v1/redis/users/{username}/credentials/rotate` | One-time credential; `no-store` |
 | DELETE | `/api/v1/redis/users/{username}` | Exact confirmation + owner password |
 | GET | `/api/v1/redis/presets` | Versioned available presets/commands for UI/docs |
