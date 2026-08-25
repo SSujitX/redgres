@@ -43,7 +43,7 @@ Gate: Redis parity and all platform security tests pass; legacy Redact remains a
 - Add `pgxpool` direct admin adapter.
 - Port list/details/security/table/row-browse and masked URL metadata.
 - Compare API outputs against a safe clone of the current PostgreSQL cluster.
-- Do not reveal or mutate vault credentials yet.
+- Do not reveal or mutate vault credentials yet. Masked `GET /api/v1/postgres/databases/{db}/connection` is PG-004/PG-005 Partial (existence + masked URLs only). POST reveal remains Phase 5.
 
 Gate: read-only parity, query bounds, permissions, and failure isolation pass.
 

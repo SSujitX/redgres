@@ -84,3 +84,71 @@ func TestLoadProductionDoesNotRequirePooledPort(t *testing.T) {
 		t.Fatalf("SessionTTL = %s", cfg.SessionTTL)
 	}
 }
+
+func TestLoadOptionalPostgresPublicHostDirectPort(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_POSTGRES_PUBLIC_HOST", "db.example.com")
+	t.Setenv("REDGRES_POSTGRES_DIRECT_PORT", "5432")
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PostgresPublicHost != "db.example.com" || cfg.PostgresDirectPort != "5432" {
+		t.Fatalf("public = %q %q", cfg.PostgresPublicHost, cfg.PostgresDirectPort)
+	}
+	if cfg.PostgresConfigured() {
+		t.Fatal("public host/port must not mark PostgreSQL configured")
+	}
+}
+
+func TestLoadProductionDoesNotRequirePostgresPublicHostDirectPort(t *testing.T) {
+	isolateConfig(t)
+	abs := filepath.Join(t.TempDir(), "redgres.db")
+	t.Setenv("REDGRES_ENVIRONMENT", "production")
+	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
+	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
+	t.Setenv("REDGRES_SQLITE_PATH", abs)
+	t.Setenv("REDGRES_COOKIE_SECURE", "true")
+	t.Setenv("REDGRES_SESSION_TTL", "12h")
+	t.Setenv("REDGRES_ABSOLUTE_SESSION_TTL", "24h")
+	setCompletePostgres(t)
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PostgresPublicHost != "" || cfg.PostgresDirectPort != "" {
+		t.Fatalf("public = %q %q", cfg.PostgresPublicHost, cfg.PostgresDirectPort)
+	}
+}
+
+func TestLoadRejectsInvalidPostgresPublicHost(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_POSTGRES_PUBLIC_HOST", "postgresql://canary:secret@127.0.0.1/db")
+
+	_, err := Load(nil)
+	if err == nil {
+		t.Fatal("expected invalid public host to fail")
+	}
+	if err.Error() != "REDGRES_POSTGRES_PUBLIC_HOST: invalid value" {
+		t.Fatalf("error = %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("error echoed canary: %q", err.Error())
+	}
+}
+
+func TestLoadRejectsInvalidPostgresDirectPort(t *testing.T) {
+	isolateConfig(t)
+	for _, port := range []string{"0", "65536", "not-a-port"} {
+		t.Setenv("REDGRES_POSTGRES_DIRECT_PORT", port)
+		_, err := Load(nil)
+		if err == nil {
+			t.Fatalf("port %q: expected invalid direct port to fail", port)
+		}
+		if err.Error() != "REDGRES_POSTGRES_DIRECT_PORT: invalid value" {
+			t.Fatalf("port %q: error = %q", port, err.Error())
+		}
+	}
+}

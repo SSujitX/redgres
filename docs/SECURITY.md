@@ -45,6 +45,8 @@ Cloudflare, the VPS provider, OS root, and backup administrator are privileged t
 
 HTTP vault existence (same Partial): `GET /api/v1/postgres/databases/{db}` and `GET /api/v1/postgres/security` may query `public.project_credentials` for **role_name existence only** (`postgres.read`, not `postgres.credentials`). Ciphertext, `updated_at`, passwords, and `err.Error()` must not appear in HTTP, logs, or audit. Vault connect/query failure is 200 `not_available`/`vault_unavailable`, not 503. Copied production ciphertext (Gate 4), POST reveal, decrypt of vault rows, and `REDGRES_LEGACY_VAULT_SECRET_FILE` are not implemented. See [DATA_AND_SECRETS.md](DATA_AND_SECRETS.md) and [API.md](API.md).
 
+Masked connection GET (PG-004/PG-005 Partial freeze): `GET /api/v1/postgres/databases/{db}/connection` is `postgres.read`, session required, no CSRF, not audited. Responses are `Cache-Control: no-store`. Masked URLs are omitted unless vault status is `present` and the matching public host/port keys are set. They never copy `REDGRES_POSTGRES_HOST` or admin `REDGRES_POSTGRES_PORT`. The GET does not decrypt, does not load the legacy vault secret file, and must not return `direct_url`, plaintext passwords, or sibling `has_saved_password`. Protected/missing names stay `404`. Vault failure stays 200 `not_available`. POST `/connection/reveal` is not registered.
+
 ## 4. Authorization model
 
 Migration release has one owner role. Authorization remains capability-based internally so future roles do not require rewriting handlers:

@@ -16,6 +16,8 @@ func (c *Config) loadPostgres() error {
 	c.PostgresPasswordFile = strings.TrimSpace(envOr("REDGRES_POSTGRES_PASSWORD_FILE", ""))
 	c.PostgresSSLMode = strings.ToLower(strings.TrimSpace(envOr("REDGRES_POSTGRES_SSLMODE", "")))
 	c.PostgresSSLRootCert = strings.TrimSpace(envOr("REDGRES_POSTGRES_SSLROOTCERT", ""))
+	c.PostgresPublicHost = strings.TrimSpace(envOr("REDGRES_POSTGRES_PUBLIC_HOST", ""))
+	c.PostgresDirectPort = strings.TrimSpace(envOr("REDGRES_POSTGRES_DIRECT_PORT", ""))
 	c.PostgresPooledPort = strings.TrimSpace(envOr("REDGRES_POSTGRES_POOLED_PORT", ""))
 	if err := parseExpectedMajor(envOr("REDGRES_POSTGRES_EXPECTED_MAJOR", ""), &c.PostgresExpectedMajor); err != nil {
 		return err
@@ -41,6 +43,12 @@ func (c Config) postgresAnySet() bool {
 }
 
 func (c *Config) validatePostgres() error {
+	if err := validatePostgresPublicHost(c.PostgresPublicHost); err != nil {
+		return err
+	}
+	if err := validatePostgresDirectPort(c.PostgresDirectPort); err != nil {
+		return err
+	}
 	if !c.postgresAnySet() {
 		return nil
 	}
@@ -96,6 +104,27 @@ func (c *Config) validatePostgres() error {
 	}
 	if err := validatePostgresPooledPort(c.PostgresPooledPort); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validatePostgresPublicHost(host string) error {
+	if host == "" {
+		return nil
+	}
+	if strings.ContainsAny(host, " \t\r\n@/") || strings.Contains(host, "://") {
+		return errors.New("REDGRES_POSTGRES_PUBLIC_HOST: invalid value")
+	}
+	return nil
+}
+
+func validatePostgresDirectPort(port string) error {
+	if port == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return errors.New("REDGRES_POSTGRES_DIRECT_PORT: invalid value")
 	}
 	return nil
 }
