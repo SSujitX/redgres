@@ -4342,3 +4342,54 @@ Keep PG-008 Partial. Keep AUTH-006 Partial. Keep PG-010 Partial.
 Not pushed.
 ```
 
+## PG-008 row delete verifier PASS Partial (2026-08-26)
+
+```text
+Requirement: PG-008 Partial + AUTH-006 Partial (GET
+ /api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key
+ + flagged DELETE …/rows + inspector single-column PK checkboxes
+ and danger Delete selected dialog). Keep AUTH-006 Partial (Redis
+ DELETE /api/v1/redis/users/{username} plus this DELETE). Keep
+ PG-010 Partial. Keep PG-007 row-browse. Do not mark Complete.
+ Gate 4 does not apply. Playwright is Complete-only.
+Decision/ADR: freeze a05da3d. In-handler Reauthenticate. No POST
+ /api/v1/auth/reauth. REDGRES_FEATURE_POSTGRES_ROW_DELETE via envBool.
+Verifier/date: independent verifier (2026-08-26) on product tree HEAD
+ b659e45 (b659e450232fd858b7d04917f6482ddc92b5f28c). Diff
+ a05da3d..b659e45. Go 0e9f6fa; UI dad0c9f. PASS Partial. Do not mark
+ Complete.
+ Independently re-ran (go1.27.0 windows/amd64; Node v25.3.0 not
+ web/.nvmrc 24.19.0):
+ gofmt -l cmd internal migrations → empty (267 ms)
+ go test -count=1 ./internal/config ./internal/postgresadmin
+ ./internal/httpapi → ok config 0.523s; postgresadmin 0.957s;
+ httpapi 27.857s (32700 ms)
+ go test -count=1 ./... → all ok (httpapi 32.018s; cmd/redgres
+ 2.412s; postgresadmin 1.400s) (36300 ms)
+ go vet ./... → no findings (1260 ms)
+ go build -o NUL ./cmd/redgres → success (2630 ms)
+ npm --prefix web run test:run → Tests 324 passed (324), 52.93s
+ npm --prefix web run build → tsc --noEmit && vite build success
+ (dist gitignored)
+ Freeze implemented: GET primary-key session + postgres.read no
+ CSRF no flag; information_schema PK join not ::regclass /
+ indisprimary / LIMIT 1; QuoteCatalogIdentifier empty/NUL fail
+ closed; DELETE session + postgres.destructive + CSRF; flag off
+ 403 before JSON decode; envBool unset false; DisallowUnknownFields
+ primary_key_column unknown; AUTH-006 in-handler; inspector
+ checkboxes only when primary_key.length===1; danger Delete
+ selected dialog. Negative cases inspected in source and covered
+ by tests that passed this run. Status rows AUTH-006 / PG-001..012
+ Partial. Freeze docs API.md + UX.md unchanged after a05da3d.
+ Independent UI Approve Partial b7e826c; security Approve Partial
+ 96ff6ff; prior evidence PASS Partial / reject-Complete on 96ff6ff.
+ No secret/runtime artifacts. Dist not committed. Worktree clean.
+Unexecuted Complete blockers: live PostgreSQL 17/18,
+ COMPATIBILITY.md §6, Playwright viewports, go test -race, CI,
+ Node 24.19.0, Gate 4 (N/A), POST /api/v1/auth/reauth,
+ truncate/drop flags, gitleaks, govulncheck.
+Keep PG-008 Partial. Keep AUTH-006 Partial. Keep PG-010 Partial.
+ Keep PG-007 row-browse. Do not mark Complete.
+Not pushed.
+```
+
