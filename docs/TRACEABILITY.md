@@ -5309,6 +5309,11 @@ Integration tests: none — skip matrix only; curl not invoked;
  do not assert live 200 healthz.
 Security tests: canary env/config not printed; --config not
  sourced; no secret dump; no curl/wget/cloudflared/certbot.
+ Independent redgres-security-reviewer Approve Partial /
+ reject Complete on `72ff9b4` (no Critical/High/Medium).
+ Independent redgres-evidence-reviewer Approve Partial /
+ reject Complete on `72ff9b4` (49 pass() sites match parent
+ 49/0 on `e256ced`).
 Limitations: DNS/Cloudflare/public TLS remain skipped.
  result=partial is required so exit 0 is not Complete.
 Do not mark Complete.
