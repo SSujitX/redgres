@@ -7,7 +7,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
-| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003 Partial: POST create `on` + cache-read-write + one-time ticket (no rotate/delete); REDIS-004–008 not started | Partial |
+| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003 Partial: POST create `on` + cache-read-write + one-time ticket; REDIS-007 Partial: POST enable/disable `on`/`off` only (no rotate); REDIS-004–006/008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
@@ -1590,6 +1590,51 @@ Reviewer/date: Security review (2026-08-25) approve Partial; no
  Forbidden paths empty vs `c322826`. Keep REDIS-003 Partial.
  Local commits: `6a93136` (API), `9652adf` (UI), `a79f67d` (merge UI),
  `016bae3` (docs record), `c6e70e6` (SETUSER canary). Not pushed.
+```
+
+## REDIS-007 enable/disable ACL users (2026-08-25)
+
+```text
+Requirement: REDIS-007 (Partial: POST enable/disable only; no rotate).
+ Keep REDIS-007 Partial. REDIS-003 create and REDIS-002 GET unchanged.
+ Do not mark Complete. Do not claim REDIS-004–006/008, live Redis,
+ or COMPATIBILITY.md §6. go-redis stays v9.22.0.
+Decision/ADR: ADR-001; ADR-006 unused for grants (on/off only).
+ AUTH-006 does not apply (delete only).
+Source: redis-ui SetEnabled / handleEnableUser / handleDisableUser
+ at D:\code\github\redis-ui (read-only). Official Redis 8.2.2 / 8.8.0
+ ACL SETUSER on/off are flag-only (no reset). go-redis v9.22.0
+ ACLSetUser unchanged. SETUSER upserts: GetUser/LIST first.
+Implementation files: internal/redisadmin/{service.go,memory.go,
+ enable_test.go};
+ internal/httpapi/{server.go,redis_users_routes.go,
+ redis_users_routes_test.go};
+ web/src/{api/redis.ts,features/redis/AclUsersPage.tsx,App.test.tsx};
+ docs/{API,ARCHITECTURE,SECURITY,UX,TRACEABILITY}.md; AGENTS.md
+Unit/HTTP: on/off-only SETUSER; permissions preserved in MemoryClient
+ merge; protected; missing; limited/custom toggle; canary; CSRF; 401/
+ 400/403/404/503; audit username only; audit-fail after SETUSER;
+ GET/PATCH 405 on enable paths; POST /users/{username} still 405;
+ create/GET regressions.
+Frontend: Enable/Disable inspector; CSRF empty body; no storage;
+ protected hidden; session/404/503; create/ticket unchanged.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
+ Writer API worktree feat/redis-007-enable-api `beaa606`:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi → ok
+  go test -count=1 ./... → ok; go vet ./... → no findings;
+  go build -o NUL ./cmd/redgres → success
+ Parent after API FF `beaa606`:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi → ok
+ Writer UI `8158c6a`: npm --prefix web run test:run → 138 passed
+ Parent after UI merge `6ecd075`: see following parent run
+Not run: live Redis, §6, gitleaks, govulncheck, CI, Playwright,
+ viewport/zoom, Node 24.19.0
+Known limitations: SETUSER-then-audit-fail leftover toggle;
+ GetUser/SETUSER recreate race; disable does not kill connections;
+ no rotate; no viewport sign-off; REDIS-003 residuals unchanged.
+Reviewer/date: pending independent security, UI, and evidence review.
+ Local commits: `beaa606` (API), `8158c6a` (UI), `6ecd075` (merge UI).
+ Not pushed.
 ```
 
 

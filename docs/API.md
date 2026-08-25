@@ -366,7 +366,24 @@ Success `201` when `SETUSER` succeeded:
 
 The action is `redis.user.create`; target is the username; outcome is success or failure; metadata is `username`, `preset=cache-read-write`, and `key_pattern`. Passwords, URLs, and CSRF values are never audited. If `SETUSER` succeeds but the audit insert fails, the handler returns `503` and does not return the credential. If `SETUSER` fails, a failure audit is written and the client receives typed `503` `dependency_unavailable` only — never Redis `ERR` text, `err.Error()`, or a `>password` modifier.
 
-`PATCH`/`DELETE` enable, disable, rotate, delete, and `GET /api/v1/redis/presets` are not implemented in this slice.
+**POST `/api/v1/redis/users/{username}/enable`** and **POST `/api/v1/redis/users/{username}/disable`** require a session cookie, the `redis.provision` capability, and CSRF (`requireMutation`). They are not `redis.destructive`. Username path validation matches GET inspect (`parseRedisUsernameParam`). There is no JSON body. `GET`, `PUT`, `PATCH`, and `DELETE` on these two paths are `405` `method_not_allowed`. `POST /api/v1/redis/users/{username}` (no suffix) stays `405`.
+
+The adapter loads the user via `ACL LIST` (`GetUser`), then issues one `ACLSetUser` with only `on` or `off`. It does not send `reset`, `resetpass`, `resetkeys`, `resetchannels`, `nocommands`, `-@all`, `~…`, or `>…`. Protected names return `403` without SETUSER. A missing user returns `404` without SETUSER. `custom` / `limited` users may be toggled. Already-on enable and already-off disable still call SETUSER and still return `200`.
+
+Success `200` is inspect detail (same `user` fields as GET detail) plus `request_id`. No `state`, `credential`, `reason`, or password keys. `Cache-Control: no-store`.
+
+| Status | Code | When |
+|---|---|---|
+| 401 | `unauthorized` | Missing session. No `user`. |
+| 403 | `csrf_invalid` | Origin or CSRF failure. |
+| 400 | `validation_error` | Invalid username path. No Redis. No audit. Raw param not echoed. |
+| 403 | `protected_resource` | Reserved or configured administrator. No SETUSER. Failure audit. |
+| 404 | `not_found` | Username absent from `ACL LIST`. Message `Not found`. No SETUSER. Failure audit. |
+| 503 | `dependency_unavailable` | Nil adapter, `ErrNotConfigured`, Redis failure, or audit insert fail after SETUSER. No `reason` key. Never Redis `ERR` / `err.Error()` / `>password`. |
+
+Actions are `redis.user.enable` / `redis.user.disable`; target is the username; metadata is `username` only. If SETUSER succeeds but the audit insert fails, the handler returns `503` and does not return `user`. Disable blocks new AUTH; it does not kill existing connections.
+
+`PATCH` permissions, rotate, delete, and `GET /api/v1/redis/presets` are not implemented in this slice.
 
 ## Credential payload
 
