@@ -3690,8 +3690,8 @@ Local commits: `c9d8e27` (freeze), `286b10f` (API), `21ca8fd` (UI),
  Not pushed.
 Reviewer/date: Security review (2026-08-25) on `4c06f91` Approve Partial;
  UI review (2026-08-25) on `4c06f91` Approve Partial; evidence review
- (2026-08-25) on `f6a2ee9` PASS Partial / reject-Complete; verifier pending.
- Keep Partial.
+ (2026-08-25) on `f6a2ee9` PASS Partial / reject-Complete; verifier
+ (2026-08-25) PASS Partial on `f6a2ee9`. Keep Partial.
 Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial.
  Keep PG-005 Partial. Keep PG-012 Partial. Keep REDIS-008 Partial.
  Keep AUTH-006 Partial. Do not mark Complete.
@@ -3783,6 +3783,51 @@ Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
  ensure_vault, dual-secret ADR, production vault-secret probe remain Complete
  blockers.
 Not pushed.
+```
+
+## PG-006 POST rotate verifier PASS Partial (2026-08-25)
+
+```text
+Requirement: PG-006 Partial (POST /api/v1/postgres/databases/{db}/credentials/rotate
+ ALTER ROLE + vault upsert + Databases inspector Rotate). Keep PG-003 Partial.
+ Keep PG-004 Partial. Keep PG-005 Partial.
+Decision/ADR: ADR-004; freeze `c9d8e27`. AUTH-006 does not apply.
+Verifier/date: independent verifier (2026-08-25) on product tree `f6a2ee9`
+ (implementation `acc1999` / record `4c06f91`). Tracked product files
+ unchanged vs `f6a2ee9` when HEAD later moved to evidence pin `b93aa5b`.
+ PASS Partial. Do not mark Complete.
+Freeze: session + postgres.credentials + CSRF requireMutation; body
+ {confirmation} DisallowUnknownFields; confirmation equals path db; protected
+ 404 / ineligible 403 no ALTER; missing vault key and vault probe 503 before
+ ALTER; GeneratePassword 24-byte RawURLEncoding; secrets.Encrypt no fernet-go;
+ ALTER QuoteIdentifier + quoteStringLiteral CONNECTION LIMIT 20; parameterized
+ upsert ON CONFLICT; create INSERT still no ON CONFLICT; TryLock 409 no second
+ ALTER; vault-fail after ALTER VaultUnsynced 3 retries no password no re-ALTER;
+ 200 no-store one_time JSON false; audit postgres.credential.rotate metadata
+ database+owner only; audit-fail 503 no credential; GET/PUT/PATCH/DELETE 405;
+ no /rotate alias; no POST /api/v1/auth/reauth; pgx v5.10.0; go-redis v9.22.0.
+ UI: inspector Rotate text-button; typed confirm; 200 vault-repeatable ticket
+ plus form-warning; Security overview never POSTs rotate; no setItem.
+Commands executed (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
+ (not web/.nvmrc 24.19.0; local npm is not nvmrc/CI evidence):
+ gofmt -l cmd internal migrations → empty
+ go test -count=1 ./internal/postgresadmin ./internal/httpapi
+ → ok postgresadmin 1.370s; httpapi 27.233s
+ go test -count=1 ./... → all ok (httpapi 27.377s; cmd/redgres 2.657s;
+ postgresadmin 1.528s; secrets 0.620s; web 0.742s; migrations no tests)
+ go vet ./... → no findings
+ go build -o NUL ./cmd/redgres → success
+ npm --prefix web run test:run → Tests 287 passed (287), 68.05s
+Unexecuted: Gate 4, live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright
+ viewports, Python Gate 2, POST /api/v1/auth/reauth, ensure_vault, dual-secret
+ ADR, production vault-secret probe, CI, Node 24.19.0, gitleaks, govulncheck,
+ go test -race ./..., npm web build.
+No secret artifacts in c9d8e27..f6a2ee9. Prior security `8dea290`, UI
+ `f6a2ee9`, evidence `b93aa5b` pins stand (this verifier ran on UI pin
+ `f6a2ee9` before the evidence pin commit).
+Keep PG-006 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
+ Partial. Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Not pushed.
 ```
 
 
