@@ -3431,7 +3431,11 @@ describe("App session and login", () => {
     const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
     fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
     expect(within(dialog).getByLabelText("Key prefix")).toHaveValue("project_a:*");
-    expect(within(dialog).getByText("Cache read/write")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Permission preset")).toHaveDisplayValue("Cache read/write");
+    expect(within(dialog).getByLabelText("Permission preset")).toHaveValue("cache-read-write");
+    expect(within(dialog).queryByLabelText("Queue type")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("option", { name: "Custom" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Commands")).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
     await waitFor(() => {
       expect(fetch.mock.calls.some((call) => isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
@@ -3440,13 +3444,79 @@ describe("App session and login", () => {
     expect(createCall?.[0]).toBe("/api/v1/redis/users");
     expect(new Headers(createCall?.[1]?.headers).get("X-CSRF-Token")).toBe("acl-create".padEnd(64, "0"));
     const body = JSON.parse(String(createCall?.[1]?.body));
-    expect(body).toEqual({ username: "project_a", key_pattern: "project_a:*" });
+    expect(body).toEqual({ username: "project_a", key_pattern: "project_a:*", preset: "cache-read-write" });
     expect(body).not.toHaveProperty("password");
+    expect(body).not.toHaveProperty("commands");
+    expect(body).not.toHaveProperty("categories");
+    expect(body).not.toHaveProperty("enabled");
+    expect(body).not.toHaveProperty("queue_kind");
+    expect(body).not.toHaveProperty("custom");
     const getCalls = fetch.mock.calls.filter(
       (call) => isRedisUsersListUrl(String(call[0])) && !isRedisUsersCreate(String(call[0]), call[1]),
     );
     expect(getCalls.length).toBeGreaterThan(1);
     expect(getCalls.every((call) => new Headers(call[1]?.headers).get("X-CSRF-Token") === null)).toBe(true);
+  });
+
+  it("POSTs read-only without queue_kind and queue-worker with queue_kind", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-preset".padEnd(64, "0") });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return redisAclCreate201();
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const first = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(first).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.change(within(first).getByLabelText("Permission preset"), { target: { value: "read-only" } });
+    expect(within(first).queryByLabelText("Queue type")).not.toBeInTheDocument();
+    fireEvent.click(within(first).getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isRedisUsersCreate(String(call[0]), call[1]))).toBe(true);
+    });
+    const readOnlyBody = JSON.parse(
+      String(fetch.mock.calls.find((call) => isRedisUsersCreate(String(call[0]), call[1]))?.[1]?.body),
+    );
+    expect(readOnlyBody).toEqual({ username: "project_a", key_pattern: "project_a:*", preset: "read-only" });
+    expect(readOnlyBody).not.toHaveProperty("queue_kind");
+    expect(readOnlyBody).not.toHaveProperty("password");
+    expect(readOnlyBody).not.toHaveProperty("commands");
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const second = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(second).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.change(within(second).getByLabelText("Permission preset"), { target: { value: "queue-worker" } });
+    expect(within(second).getByLabelText("Queue type")).toBeInTheDocument();
+    expect(within(second).getByLabelText("Queue type")).toHaveDisplayValue("Lists");
+    fireEvent.change(within(second).getByLabelText("Queue type"), { target: { value: "streams" } });
+    fireEvent.click(within(second).getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.filter((call) => isRedisUsersCreate(String(call[0]), call[1])).length).toBe(2);
+    });
+    const createBodies = fetch.mock.calls
+      .filter((call) => isRedisUsersCreate(String(call[0]), call[1]))
+      .map((call) => JSON.parse(String(call[1]?.body)));
+    expect(createBodies[1]).toEqual({
+      username: "project_a",
+      key_pattern: "project_a:*",
+      preset: "queue-worker",
+      queue_kind: "streams",
+    });
+    expect(createBodies[1]).not.toHaveProperty("password");
+    expect(createBodies[1]).not.toHaveProperty("commands");
+    expect(createBodies[1]).not.toHaveProperty("custom");
   });
 
   it("shows the one-time ticket password after 201 and ignores extra secret fields", async () => {

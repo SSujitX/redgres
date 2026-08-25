@@ -1,12 +1,25 @@
 import { FormEvent, useId, useRef, useState } from "react";
+import type { RedisAclPreset, RedisAclQueueKind } from "../../api/redis";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
 
 type CreateAclUserFormProps = {
   error: string;
   submitting: boolean;
   onCancel: () => void;
-  onSubmit: (username: string, keyPattern: string) => void;
+  onSubmit: (username: string, keyPattern: string, preset: RedisAclPreset, queueKind?: RedisAclQueueKind) => void;
 };
+
+const PRESETS: { value: RedisAclPreset; label: string }[] = [
+  { value: "cache-read-write", label: "Cache read/write" },
+  { value: "read-only", label: "Read only" },
+  { value: "queue-worker", label: "Queue/worker" },
+];
+
+const QUEUE_KINDS: { value: RedisAclQueueKind; label: string }[] = [
+  { value: "lists", label: "Lists" },
+  { value: "streams", label: "Streams" },
+  { value: "sorted-sets", label: "Sorted sets" },
+];
 
 function suggestedKeyPattern(username: string): string {
   if (username === "") {
@@ -18,6 +31,8 @@ function suggestedKeyPattern(username: string): string {
 export default function CreateAclUserForm({ error, submitting, onCancel, onSubmit }: CreateAclUserFormProps) {
   const [username, setUsername] = useState("");
   const [keyPattern, setKeyPattern] = useState("");
+  const [preset, setPreset] = useState<RedisAclPreset>("cache-read-write");
+  const [queueKind, setQueueKind] = useState<RedisAclQueueKind>("lists");
   const prefixEdited = useRef(false);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const titleId = useId();
@@ -33,7 +48,11 @@ export default function CreateAclUserForm({ error, submitting, onCancel, onSubmi
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    onSubmit(username, keyPattern);
+    if (preset === "queue-worker") {
+      onSubmit(username, keyPattern, preset, queueKind);
+      return;
+    }
+    onSubmit(username, keyPattern, preset);
   }
 
   return (
@@ -73,8 +92,36 @@ export default function CreateAclUserForm({ error, submitting, onCancel, onSubmi
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? errorId : undefined}
           />
-          <p className="muted-copy">Permission preset</p>
-          <p className="readonly-field">Cache read/write</p>
+          <label htmlFor="acl-create-preset">Permission preset</label>
+          <select
+            id="acl-create-preset"
+            name="preset"
+            value={preset}
+            onChange={(event) => setPreset(event.target.value as RedisAclPreset)}
+          >
+            {PRESETS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          {preset === "queue-worker" ? (
+            <>
+              <label htmlFor="acl-create-queue-type">Queue type</label>
+              <select
+                id="acl-create-queue-type"
+                name="queue_kind"
+                value={queueKind}
+                onChange={(event) => setQueueKind(event.target.value as RedisAclQueueKind)}
+              >
+                {QUEUE_KINDS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : null}
           {error ? (
             <p id={errorId} className="form-error" role="alert">
               {error}

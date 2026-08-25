@@ -110,6 +110,7 @@ input:focus-visible {
 }
 
 .field-stack input,
+.field-stack select,
 .readonly-field {
   width: 100%;
   min-height: 44px;

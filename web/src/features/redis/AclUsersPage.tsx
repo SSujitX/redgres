@@ -7,6 +7,8 @@ import {
   fetchRedisUser,
   fetchRedisUsers,
   rotateRedisUser,
+  type RedisAclPreset,
+  type RedisAclQueueKind,
   type RedisAclUserListItem,
 } from "../../api/redis";
 import { displayText } from "../../text/displayText";
@@ -341,11 +343,16 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     }
   }
 
-  async function handleCreate(username: string, keyPattern: string) {
+  async function handleCreate(
+    username: string,
+    keyPattern: string,
+    preset: RedisAclPreset,
+    queueKind?: RedisAclQueueKind,
+  ) {
     setCreating(true);
     setCreateError("");
     try {
-      const result = await createRedisUser(username, keyPattern, csrf);
+      const result = await createRedisUser(username, keyPattern, csrf, { preset, queueKind });
       if (result.status === 401) {
         clearTicket();
         setCreateOpen(false);
@@ -516,7 +523,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             </button>
           ) : null}
         </div>
-        <p>Create a cache-read/write ACL user with a project key prefix, inspect modeled rules, or rotate a non-protected password. Delete is not available in this slice.</p>
+        <p>Create an ACL user with a named permission preset and a project key prefix, inspect modeled rules, or rotate a non-protected password. Delete is not available in this slice.</p>
       </header>
       {ticket ? <CredentialTicket credential={ticket} onDismiss={dismissTicket} /> : null}
       {createOpen ? (
@@ -527,7 +534,9 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             setCreateOpen(false);
             setCreateError("");
           }}
-          onSubmit={(username, keyPattern) => void handleCreate(username, keyPattern)}
+          onSubmit={(username, keyPattern, preset, queueKind) =>
+            void handleCreate(username, keyPattern, preset, queueKind)
+          }
         />
       ) : null}
       {rotateOpen ? (
