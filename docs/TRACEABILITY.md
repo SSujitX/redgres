@@ -2119,10 +2119,21 @@ Known limitations: SETUSER-then-audit-fail leftover user; GetUser/SETUSER
  race; MemoryClient plaintext > residual; Redis 7+ PATCH selectors
  (inherited Medium); no categories; if custom set equals a named inspect
  set, inferPreset may return that named preset (expected).
-Reviewer/date: pending independent security / UI / evidence review on this
- docs commit. Verifier pending after those reviews.
+Reviewer/date: Security review (2026-08-25) on `f9457de` approve Partial;
+ no Critical/High/Medium/Low this-slice; no deny-list mistake; no
+ allow-list hole. Inherited SETUSER-then-audit-fail leftover user,
+ GetUser race, MemoryClient >, PATCH selector leftover stay out of
+ scope.
+ UI review (2026-08-25) on `f9457de` approve Partial UI; no
+ Critical/High/Medium. Optional Low: catalog 401/503 alert can remain
+ after switching Custom → named (named Create still enabled; not
+ required). Explicitly NOT viewport/zoom sign-off.
+ Evidence review (2026-08-25) on `f9457de` keep-Partial; nine mapped
+ claims supported; no required corrections. PRD category expansion
+ still out of slice.
+ Verifier pending on this pin.
  Local commits: `c333c00` (API), `0f947d2` (UI), `e2a494b` (merge UI),
- this docs record. Not pushed.
+ `f9457de` (docs record), this review pin. Not pushed.
  Keep REDIS-005 Partial.
 ```
 
