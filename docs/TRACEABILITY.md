@@ -2281,7 +2281,8 @@ Source characterization: official pgbouncer.org/usage.html console db pgbouncer
 Implementation files: internal/config/{config.go,postgres.go};
  internal/postgresadmin/{types,memory,service,adapter}.go;
  internal/platform/status.go; internal/httpapi/status_routes.go;
- web/src/features/overview/OverviewPage.tsx (presentation mapping);
+ web/src/features/overview/OverviewPage.tsx (existing presentation
+ mapping, not this-slice diff);
  web/src/App.test.tsx
 Unit tests: config pooled-port valid/invalid/partial/production-optional;
  postgresadmin PingPooled nil/canary/catalog-still-5432/simple-protocol/
@@ -2324,7 +2325,8 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  Not run: race, live PgBouncer, COMPATIBILITY.md §6, CI, viewport/zoom
 Local commits: `87b6914` (freeze), `b554b1b` (anti-patterns), `df8a9c2`
  (API), `1966cf4` (merge API), `d37f299` (UI), `4ab1f03` (merge UI),
- `01d91be` (docs record), `928cbee` (UI review pin). Not pushed.
+ `01d91be` (docs record), `928cbee` (UI review pin), `6b5f45c` (security
+ pin). Not pushed.
 Reviewer/date: Security review (2026-08-25) on `01d91be`/`df8a9c2`/`1966cf4`
  approve Partial; no Critical/High/Medium. GET /status session +
  platform.read, no CSRF/audit, no-store; 401 omits components; healthz
@@ -2337,7 +2339,10 @@ Reviewer/date: Security review (2026-08-25) on `01d91be`/`df8a9c2`/`1966cf4`
  UI review (2026-08-25) on `01d91be`/`d37f299`/`4ab1f03` approve Partial UI;
  no Critical/High/Medium. Optional Low (non-blocking): envelope 401/malformed
  tests do not name PgBouncer labels. Explicitly NOT viewport/zoom sign-off.
- Evidence/verifier pending.
+ Evidence review (2026-08-25) on `6b5f45c` keep-Partial / reject-Complete;
+ mocked UI GET is not live PgBouncer; parent npm 201 after `4ab1f03` is
+ parent-executed; OverviewPage mapping pre-existed `d37f299`. Hygiene:
+ `6b5f45c` added to local-commits. Verifier pending.
  Keep PLAT-001 Partial. Keep PG-012 Partial. Keep REDIS-005 Partial.
  Not pushed.
 ```
