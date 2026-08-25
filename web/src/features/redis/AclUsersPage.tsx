@@ -6,11 +6,13 @@ import {
   errorMessage,
   fetchRedisUser,
   fetchRedisUsers,
+  rotateRedisUser,
   type RedisAclUserListItem,
 } from "../../api/redis";
 import { displayText } from "../../text/displayText";
 import CreateAclUserForm from "./CreateAclUserForm";
 import CredentialTicket, { type ShownCredential } from "./CredentialTicket";
+import RotatePasswordDialog from "./RotatePasswordDialog";
 
 const sessionExpired = "Your session has expired. Sign in again to continue.";
 const notConfigured = "Redis is not configured.";
@@ -18,6 +20,7 @@ const emptyUsers = "No ACL users.";
 const truncatedCopy = "ACL user list truncated.";
 const notFound = "ACL user not found.";
 const redisUnavailable = "Redis is unavailable.";
+const protectedCopy = "This Redis user is protected";
 const limitedCopy = "Redgres cannot model these rules exactly. They are labeled limited rather than rewritten.";
 
 type ListUser = {
@@ -153,9 +156,13 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
   const [pendingInspect, setPendingInspect] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [rotateError, setRotateError] = useState("");
   const selectionAbort = useRef<AbortController | null>(null);
   const listAbort = useRef<AbortController | null>(null);
   const toggleAbort = useRef<AbortController | null>(null);
+  const rotateAbort = useRef<AbortController | null>(null);
   const inspectorRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -174,6 +181,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     if (result.status === 401) {
       clearTicket();
       setCreateOpen(false);
+      setRotateOpen(false);
       setList({ kind: "session_expired" });
       return;
     }
@@ -216,6 +224,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
       listAbort.current?.abort();
       selectionAbort.current?.abort();
       toggleAbort.current?.abort();
+      rotateAbort.current?.abort();
     };
   }, []);
 
@@ -228,6 +237,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     clearTicket();
     selectionAbort.current?.abort();
     toggleAbort.current?.abort();
+    rotateAbort.current?.abort();
     const controller = new AbortController();
     selectionAbort.current = controller;
     setSelected(username);
@@ -235,6 +245,9 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     setDetailError("");
     setActionError("");
     setToggling(false);
+    setRotateOpen(false);
+    setRotating(false);
+    setRotateError("");
     setLoadingDetail(true);
     void loadDetail(username, controller);
   }
@@ -249,11 +262,15 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
   function clearSelection() {
     selectionAbort.current?.abort();
     toggleAbort.current?.abort();
+    rotateAbort.current?.abort();
     setSelected(null);
     setDetail(null);
     setDetailError("");
     setActionError("");
     setToggling(false);
+    setRotateOpen(false);
+    setRotating(false);
+    setRotateError("");
     setLoadingDetail(false);
   }
 
@@ -266,6 +283,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
       if (result.status === 401) {
         clearTicket();
         setCreateOpen(false);
+        setRotateOpen(false);
         setDetail(null);
         setDetailError(sessionExpired);
         return;
@@ -309,6 +327,17 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     setPendingInspect(null);
     if (name) {
       openDetails(name);
+      return;
+    }
+    if (selected) {
+      const username = selected;
+      requestList();
+      selectionAbort.current?.abort();
+      const controller = new AbortController();
+      selectionAbort.current = controller;
+      setLoadingDetail(true);
+      setActionError("");
+      void loadDetail(username, controller);
     }
   }
 
@@ -320,6 +349,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
       if (result.status === 401) {
         clearTicket();
         setCreateOpen(false);
+        setRotateOpen(false);
         setList({ kind: "session_expired" });
         return;
       }
@@ -365,6 +395,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
       if (result.status === 401) {
         clearTicket();
         setCreateOpen(false);
+        setRotateOpen(false);
         setList({ kind: "session_expired" });
         return;
       }
@@ -404,6 +435,63 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     }
   }
 
+  async function handleRotate() {
+    if (!detail || detail.protected || list.kind !== "ok" || rotating || ticket) {
+      return;
+    }
+    const username = detail.username;
+    setRotating(true);
+    setRotateError("");
+    setActionError("");
+    rotateAbort.current?.abort();
+    const controller = new AbortController();
+    rotateAbort.current = controller;
+    try {
+      const result = await rotateRedisUser(username, csrf, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 401) {
+        clearTicket();
+        setCreateOpen(false);
+        setRotateOpen(false);
+        setList({ kind: "session_expired" });
+        return;
+      }
+      if (result.status === 404) {
+        setRotateOpen(false);
+        setDetail(null);
+        setDetailError(errorMessage(result.body, notFound));
+        return;
+      }
+      if (result.status === 403) {
+        setRotateError(errorMessage(result.body, protectedCopy));
+        return;
+      }
+      if (result.status === 200) {
+        const shown = parseCredential(result.body.credential);
+        if (!shown) {
+          setRotateError(errorMessage(result.body, redisUnavailable));
+          return;
+        }
+        setRotateOpen(false);
+        setRotateError("");
+        setTicket(shown);
+        return;
+      }
+      setRotateError(errorMessage(result.body, redisUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setRotateError(redisUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setRotating(false);
+      }
+    }
+  }
+
   const listAlert =
     list.kind === "session_expired"
       ? sessionExpired
@@ -428,7 +516,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             </button>
           ) : null}
         </div>
-        <p>Create a cache-read/write ACL user with a project key prefix, or inspect modeled rules. Rotate and delete are not available in this slice.</p>
+        <p>Create a cache-read/write ACL user with a project key prefix, inspect modeled rules, or rotate a non-protected password. Delete is not available in this slice.</p>
       </header>
       {ticket ? <CredentialTicket credential={ticket} onDismiss={dismissTicket} /> : null}
       {createOpen ? (
@@ -440,6 +528,20 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             setCreateError("");
           }}
           onSubmit={(username, keyPattern) => void handleCreate(username, keyPattern)}
+        />
+      ) : null}
+      {rotateOpen ? (
+        <RotatePasswordDialog
+          error={rotateError}
+          submitting={rotating}
+          onCancel={() => {
+            if (rotating) {
+              return;
+            }
+            setRotateOpen(false);
+            setRotateError("");
+          }}
+          onConfirm={() => void handleRotate()}
         />
       ) : null}
       {listAlert ? (
@@ -542,6 +644,20 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
                 onClick={() => void handleToggleEnabled()}
               >
                 {detail.enabled ? "Disable" : "Enable"}
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                disabled={rotating || ticket !== null}
+                onClick={() => {
+                  if (rotating || ticket) {
+                    return;
+                  }
+                  setRotateError("");
+                  setRotateOpen(true);
+                }}
+              >
+                Rotate
               </button>
             </div>
           ) : null}

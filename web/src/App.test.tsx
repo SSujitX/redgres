@@ -70,6 +70,13 @@ function isRedisUserDisable(url: string, username: string, init?: RequestInit): 
   );
 }
 
+function isRedisUserRotate(url: string, username: string, init?: RequestInit): boolean {
+  return (
+    url === `/api/v1/redis/users/${encodeURIComponent(username)}/credentials/rotate` &&
+    String(init?.method ?? "").toUpperCase() === "POST"
+  );
+}
+
 function redisAclToggleOk(extra: Record<string, unknown> = {}) {
   return jsonResponse(200, {
     user: {
@@ -84,6 +91,29 @@ function redisAclToggleOk(extra: Record<string, unknown> = {}) {
       ...extra,
     },
     request_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  });
+}
+
+function redisAclRotate200(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    resource: { type: "redis_user", name: "project_a" },
+    user: {
+      username: "project_a",
+      enabled: true,
+      key_pattern: "project_a:*",
+      preset: "cache-read-write",
+      protected: false,
+      rule_fidelity: "exact",
+      commands: ["echo", "get", "ping"],
+      categories: [],
+    },
+    credential: {
+      username: "project_a",
+      password: "canary-rotated-password-32chars!!",
+      one_time: true,
+    },
+    request_id: "cccccccccccccccccccccccccccccccc",
+    ...extra,
   });
 }
 
@@ -4117,5 +4147,466 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/disable"))).toBe(true);
     expect(screen.queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+  });
+
+  it("shows Rotate next to Enable or Disable for a non-protected inspector when the ACL list is ok", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-ok".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rotate" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(await within(details).findByRole("button", { name: "Disable" })).toBeInTheDocument();
+    const rotate = within(details).getByRole("button", { name: "Rotate" });
+    expect(rotate).toBeInTheDocument();
+    expect(rotate).toBeEnabled();
+    expect(rotate.className).not.toMatch(/danger/);
+    expect(rotate.className).toMatch(/text-button/);
+  });
+
+  it("hides Rotate for a protected ACL user", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-prot".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem({ protected: true, enabled: false })]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ protected: true, enabled: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(await within(details).findByText("Protected")).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Rotate" })).not.toBeInTheDocument();
+  });
+
+  it("hides Rotate while ACL user details are loading", async () => {
+    let releaseDetail: () => void = () => {};
+    const blockedDetail = new Promise<void>((resolve) => {
+      releaseDetail = resolve;
+    });
+    stubFetch(async (url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-load".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        await blockedDetail;
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    expect(within(details).getByText("Loading details.")).toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Rotate" })).not.toBeInTheDocument();
+    releaseDetail();
+    expect(await within(details).findByRole("button", { name: "Rotate" })).toBeInTheDocument();
+  });
+
+  it.each(["not_configured", "unavailable"] as const)(
+    "hides Rotate when the ACL list is %s",
+    async (state) => {
+      stubFetch((url) => {
+        if (url.includes("/api/v1/session")) {
+          return jsonResponse(200, { owner: { username: "admin" }, csrf_token: `acl-rotate-${state}`.padEnd(64, "0") });
+        }
+        if (isRedisUsersListUrl(url)) {
+          return jsonResponse(200, {
+            state,
+            ...(state === "unavailable" ? { reason: "unreachable" } : { users: [] }),
+            request_id: "77777777777777777777777777777777",
+          });
+        }
+        return unknownApi(url);
+      });
+      render(<App />);
+      expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+      goToAclUsers();
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Rotate" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("shows rotate confirm copy and does not POST until Rotate now", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-copy".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    expect(dialog).toHaveTextContent(/issues a new password/i);
+    expect(dialog).toHaveTextContent(/previous credential stops working immediately/i);
+    expect(dialog).toHaveTextContent(/cannot be recovered/i);
+    const rotateNow = within(dialog).getByRole("button", { name: "Rotate now" });
+    expect(rotateNow.className).not.toMatch(/danger/);
+    expect(rotateNow.className).toMatch(/primary-button/);
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Rotate password?" })).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isRedisUserRotate(String(call[0]), "project_a", call[1]))).toBe(true);
+  });
+
+  it("POSTs rotate with CSRF, an empty body, and no password", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserRotate(url, "project_a", init)) {
+        return redisAclRotate200();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Rotate password?" })).getByRole("button", { name: "Rotate now" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isRedisUserRotate(String(call[0]), "project_a", call[1]))).toBe(true);
+    });
+    const rotateCall = fetch.mock.calls.find((call) => isRedisUserRotate(String(call[0]), "project_a", call[1]));
+    expect(rotateCall?.[0]).toBe("/api/v1/redis/users/project_a/credentials/rotate");
+    expect(rotateCall?.[0]).toBe(`/api/v1/redis/users/${encodeURIComponent("project_a")}/credentials/rotate`);
+    expect(new Headers(rotateCall?.[1]?.headers).get("X-CSRF-Token")).toBe("acl-rotate".padEnd(64, "0"));
+    expect(rotateCall?.[1]?.body == null || rotateCall?.[1]?.body === "").toBe(true);
+    expect(String(rotateCall?.[1]?.body ?? "")).not.toContain("password");
+  });
+
+  it("opens the one-time ticket after rotate 200 and ignores extra secret fields", async () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-ticket".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserRotate(url, "project_a", init)) {
+        return redisAclRotate200({
+          credential: {
+            username: "project_a",
+            password: "canary-rotated-password-32chars!!",
+            one_time: true,
+            extra_secret: "should-not-render",
+            private_key: "-----BEGIN PRIVATE KEY-----",
+          },
+          extra_secret: "top-level-should-not-render",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Rotate password?" })).getByRole("button", { name: "Rotate now" }));
+    const ticket = await screen.findByRole("alertdialog", { name: /shown now/i });
+    expect(screen.queryByRole("dialog", { name: "Rotate password?" })).not.toBeInTheDocument();
+    expect(ticket).toHaveTextContent("canary-rotated-password-32chars!!");
+    expect(ticket).toHaveTextContent("project_a");
+    expect(within(ticket).getByRole("button", { name: "Copy username" })).toBeInTheDocument();
+    expect(within(ticket).getByRole("button", { name: "Copy password" })).toBeInTheDocument();
+    expect(within(ticket).queryByRole("button", { name: "Copy URL" })).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render");
+    expect(document.body.textContent).not.toContain("-----BEGIN PRIVATE KEY-----");
+    expect(document.body.textContent).not.toContain("top-level-should-not-render");
+    expect(writeText).not.toHaveBeenCalled();
+    const details = screen.getByRole("region", { name: "ACL user details" });
+    expect(within(details).getByRole("button", { name: "Rotate" })).toBeDisabled();
+    expect(within(details).queryByText("canary-rotated-password-32chars!!")).not.toBeInTheDocument();
+  });
+
+  it("shows URL copy on rotate only when credential.urls.primary is present", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-url".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserRotate(url, "project_a", init)) {
+        return redisAclRotate200({
+          credential: {
+            username: "project_a",
+            password: "canary-rotated-password-32chars!!",
+            one_time: true,
+            urls: { primary: "rediss://project_a:canary-rotated-password-32chars!!@127.0.0.1:6380/0" },
+          },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Rotate password?" })).getByRole("button", { name: "Rotate now" }));
+    const ticket = await screen.findByRole("alertdialog", { name: /shown now/i });
+    expect(within(ticket).getByRole("button", { name: "Copy URL" })).toBeInTheDocument();
+    expect(ticket).toHaveTextContent("rediss://project_a:canary-rotated-password-32chars!!@127.0.0.1:6380/0");
+  });
+
+  it("clears the rotate ticket password on dismiss and refreshes inspect without storage", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    let detailLoads = 0;
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-dismiss".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        detailLoads += 1;
+        return redisAclDetailOk({
+          commands: detailLoads === 1 ? ["get"] : ["rotated-command"],
+          categories: [],
+        });
+      }
+      if (isRedisUserRotate(url, "project_a", init)) {
+        return redisAclRotate200();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("get")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Rotate password?" })).getByRole("button", { name: "Rotate now" }));
+    expect(await screen.findByText("canary-rotated-password-32chars!!")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "ACL user details" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(screen.queryByText("canary-rotated-password-32chars!!")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("canary-rotated-password-32chars!!");
+    expect(await screen.findByRole("region", { name: "ACL user details" })).toBeInTheDocument();
+    expect(await screen.findByText("rotated-command")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /project_a/ })).toBeInTheDocument();
+    const listGets = fetch.mock.calls.filter(
+      (call) => isRedisUsersListUrl(String(call[0])) && !isRedisUsersCreate(String(call[0]), call[1]),
+    );
+    expect(listGets.length).toBeGreaterThan(1);
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("shows session-expired copy on rotate 401 without a ticket", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-401".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserRotate(url, "project_a", init)) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Rotate password?" })).getByRole("button", { name: "Rotate now" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("canary-rotated-password-32chars!!")).not.toBeInTheDocument();
+  });
+
+  it("shows not-found copy on rotate 404", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-404".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserRotate(url, "project_a", init)) {
+        return jsonResponse(404, { error: { code: "not_found", message: "Not found" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Rotate password?" })).getByRole("button", { name: "Rotate now" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not found");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("No commands.")).not.toBeInTheDocument();
+  });
+
+  it("shows protected copy on rotate 403 without a ticket", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-403".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserRotate(url, "project_a", init)) {
+        return jsonResponse(403, { error: { code: "protected_resource", message: "This Redis user is protected" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rotate now" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("This Redis user is protected");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("canary-rotated-password-32chars!!")).not.toBeInTheDocument();
+  });
+
+  it("shows Redis unavailable copy on rotate 503", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-503".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserRotate(url, "project_a", init)) {
+        return jsonResponse(503, { error: { code: "dependency_unavailable", message: "Redis is unavailable." } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rotate now" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Redis is unavailable.");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("disables Rotate while rotate is in flight", async () => {
+    let releaseRotate: () => void = () => {};
+    const blockedRotate = new Promise<void>((resolve) => {
+      releaseRotate = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-rotate-wait".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisUserRotate(url, "project_a", init)) {
+        await blockedRotate;
+        return redisAclRotate200();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "ACL user details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Rotate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate password?" });
+    const rotateNow = within(dialog).getByRole("button", { name: "Rotate now" });
+    fireEvent.click(rotateNow);
+    await waitFor(() => {
+      expect(rotateNow).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Rotate" })).toBeDisabled();
+    });
+    releaseRotate();
+    expect(await screen.findByRole("alertdialog", { name: /shown now/i })).toBeInTheDocument();
+  });
+
+  it("never POSTs rotate from the login route", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      if (url.includes("/api/v1/auth/login")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-login-rotate".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/credentials/rotate"))).toBe(true);
+    expect(screen.queryByRole("button", { name: "Rotate" })).not.toBeInTheDocument();
   });
 });
