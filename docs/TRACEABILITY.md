@@ -4218,3 +4218,47 @@ Keep PG-008 Partial. Keep AUTH-006 Partial (Redis DELETE plus this
 Not pushed.
 ```
 
+## PG-008 row delete UI review pin (2026-08-25)
+
+```text
+Requirement: PG-008 Partial UI + AUTH-006 Partial (this DELETE UI only).
+ Keep PG-010 Partial. Keep PG-007 row-browse. Do not mark Complete.
+ Playwright is Complete-only.
+Decision/ADR: freeze a05da3d (still current at 47dfa4d). AUTH-006 is
+ in-handler owner_password on DELETE
+ /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows
+ (REDIS-008 pattern). No POST /api/v1/auth/reauth.
+Reviewer/date: UI review (2026-08-25) on code SHA dad0c9f / master
+ 47dfa4d. Diff range a05da3d..47dfa4d. Approve Partial. No freeze
+ defects. Files: web/src/api/postgres.ts,
+ web/src/features/postgres/DatabasesPage.tsx,
+ web/src/features/postgres/DeleteSelectedRowsDialog.tsx,
+ web/src/styles/globals.css, web/src/App.test.tsx. Compared to
+ web/src/features/redis/DeleteAclUserDialog.tsx.
+ Freeze holds: GET primary-key with row page no CSRF abort on table
+ change; checkboxes only when primary_key.length === 1; danger Delete
+ selected not --postgres; hidden while rows loading; disabled in-flight
+ / ticket / zero selected; flag-off still shows control; 403 Row delete
+ is turned off.; dialog role=dialog title Delete selected rows Redis
+ focus trap; typed table + owner password; displayText schema.table;
+ Cannot be undone.; autocomplete off / current-password; CSRF +
+ encodeURIComponent + three frozen body fields; 200 close/clear/reload;
+ reauth_required stay + clear password keep confirmation; 401
+ session-expired clear secrets; selection clear on database/table/Back/
+ logout; no setItem; search / login / Security overview never DELETE
+ rows.
+ Parent notes (flag-off 403 keeps password; mutationBusy omits deleting;
+ selection persists on page/search; jsdom CSS vars) match the freeze.
+ Explicitly NOT viewport/zoom/Playwright sign-off. This reviewer did not
+ re-run npm tests; parent recorded 324 passed at dad0c9f (Node v25.3.0,
+ not web/.nvmrc 24.19.0).
+ Lows (non-blocking, not corrected here): off-page selection after
+ paging/search; no focus restore to Delete selected after Cancel; unused
+ errorId same as Redis Delete.
+Keep PG-008 Partial. Keep AUTH-006 Partial (Redis DELETE plus this
+ DELETE). Keep PG-010 Partial. Playwright 360×800 / 768×1024 / 1280×800 /
+ 1600×1000 + 200% zoom, live PostgreSQL 17/18, Gate 4 remain Complete
+ blockers.
+Not pushed.
+```
+
