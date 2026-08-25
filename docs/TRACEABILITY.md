@@ -3903,7 +3903,8 @@ Known limitations: handler timeout 30s; large TEMPLATE clones remain a
 Local commits: `376f11e` (freeze), `382e801` (API), `158da45` (UI),
  `0dff8d1` (merge API), this docs record.
  Not pushed.
-Reviewer/date: UI Approve Partial on `26a2a62` (this pin); security /
+Reviewer/date: UI Approve Partial on `26a2a62` (pin `a10e0d9`);
+ security Approve Partial with conditions on `26a2a62` (this pin);
  evidence / verifier still pending. Keep Partial.
 Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial.
  Keep PG-005 Partial. Keep PG-006 Partial. Keep PG-012 Partial.
@@ -3947,6 +3948,37 @@ Keep PG-010 Partial. Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005
  Keep AUTH-006 Partial. Playwright 360×800 / 768×1024 / 1280×800 /
  1600×1000 + 200% zoom, live PostgreSQL 17/18, Gate 4 remain Complete
  blockers.
+Not pushed.
+```
+
+## PG-010 POST duplicate security pin (2026-08-25)
+
+```text
+Requirement: PG-010 Partial (POST /api/v1/postgres/databases/{db}/duplicate
+ TEMPLATE clone + unique owner + vault INSERT + clone-only compensation +
+ inspector Duplicate). Keep PG-003 Partial. Keep PG-004 Partial. Keep
+ PG-005 Partial. Keep PG-006 Partial.
+Decision/ADR: ADR-004; freeze `376f11e`. AUTH-006 does not apply.
+Reviewer/date: security review (2026-08-25) on `26a2a62` Approve Partial
+ with conditions. No Critical/High. Confirmed: session + postgres.provision
+ + CSRF; no AUTH-006; protected source 404 / ineligible 403 no DDL; HTTP
+ identifiers ValidateIdentifier + QuoteIdentifier; terminate parameterized
+ on source; no REASSIGN OWNED / SET ROLE; compensation clone/role/vault
+ only; vault INSERT no ON CONFLICT; 201 no-store one_time JSON false; audit
+ metadata database+owner+source only; Security overview / search never POST
+ duplicate.
+ Medium (must fix before this Partial is security-clean): ownership
+ transfer `continue`s when catalog schema/relation/type/routine names fail
+ HTTP QuoteIdentifier (`duplicate.go` formatAlter* + transfer loops). Silent
+ skip is not the freeze skip list (protected / OwnerDenied / pg_*).
+ Conditions: (1) fail closed or catalog-safe pgx.Identifier.Sanitize without
+ the HTTP allow-list (reject empty/NUL); do not continue; (2) skip superuser
+ object owners; do not GRANT … SET TRUE those roles.
+ Lows (non-blocking for this Partial): leftover GRANT SET TRUE on
+ non-skipped owners; pg_get_function_identity_arguments interpolated
+ (freeze-allowed); compensated failures not audited; TEMPLATE datacl not
+ stripped of source CONNECT.
+ Keep PG-010 Partial. Do not mark Complete. UI pin `a10e0d9` stands.
 Not pushed.
 ```
 
