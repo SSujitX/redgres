@@ -323,7 +323,8 @@ Success `200`:
       "owner_createdb": true,
       "owner_createrole": true,
       "owner_replication": true,
-      "active_connections": 1
+      "active_connections": 1,
+      "rotation_eligible": false
     }
   ],
   "connections": [
@@ -343,7 +344,27 @@ Success `200`:
 
 When cluster `saved_credential.status` is `not_available`, `reason` is `vault_unavailable`, `missing_password_count` is omitted, and `databases`/`connections` remain present.
 
-PG-012 stays Partial: existence GET and `missing_password_count` (when the vault query succeeds) are this freeze; rotation eligibility, POST reveal, Gate 4 copied production ciphertext, `REDGRES_LEGACY_VAULT_SECRET_FILE`, live PostgreSQL 17/18, and viewport evidence remain outstanding. Do not mark Complete.
+**GET `/api/v1/postgres/security` rotation eligibility (PG-012 Partial freeze).** Path, capability, CSRF, audit, and `Cache-Control: no-store` are unchanged. No new route. Do **not** register `POST /api/v1/postgres/databases/{db}/credentials/rotate`. Do **not** emit sibling `can_rotate`. Vault `present`/`missing`/`not_available` does not change eligibility. `owner_createdb` / `owner_createrole` / `owner_replication` do not change it. No new catalog SQL: derive in the service layer from fields already on each `databases[]` row.
+
+Every `databases[]` object always includes `rotation_eligible` as a JSON boolean (never omit, never `null`):
+
+```text
+rotation_eligible =
+  owner != "" &&
+  !protected &&
+  owner_can_login &&
+  !owner_is_superuser
+```
+
+`protected` remains `!policy.Manageable(...)` (deny-listed databases/roles, admin database/user, `pg_*` owners, `datallowconn=false`; templates are omitted from this list). Empty owner is `false`. A manageable project owner that can log in and is not a superuser is `true` (example `project_a` / `project_a_role`: `"rotation_eligible": true`). The `postgres` example above is `false`.
+
+Sibling `database-app` `security_ops.get_security_overview` at `1c3e8e2` uses JSON key `can_rotate` = `rolcanlogin && !rolsuper && owner ∉ {postgres, adminpg, database_console, onelife_pg_admin}`. Redgres does **not** emit `can_rotate` and does **not** hardcode `adminpg` (operators add it via `REDGRES_POSTGRES_PROTECTED_ROLES`). Redgres uses the existing Policy plus empty-owner → false.
+
+Still forbidden on this GET: passwords, URLs, hashes, role OIDs, raw `datacl`, SQL, `err.Error()`, `connection_limit`, `size`, `size_bytes`, `has_saved_password`, **`can_rotate`**, URL templates. No summary count of eligible databases. No details-GET `rotation_eligible` field. Eligibility is diagnostic only: it does not enable rotate/reveal/create.
+
+**UI copy (frozen with this contract):** Keep the Security overview header: “All non-template databases, including protected names. Passwords are not revealed. Rotation is not available.” Add ledger/stack column **Rotation eligible** as the **last** column (after Connections). Values Yes / No / — (missing). No Rotate, Reveal, or Create controls.
+
+PG-012 stays Partial: existence GET, `missing_password_count` (when the vault query succeeds), and read-only `rotation_eligible` are this freeze; POST rotate, POST reveal, Gate 4 copied production ciphertext, `REDGRES_LEGACY_VAULT_SECRET_FILE`, live PostgreSQL 17/18, and viewport evidence remain outstanding. Do not mark Complete.
 
 ## Redis endpoints
 
