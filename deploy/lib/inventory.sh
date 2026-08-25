@@ -27,15 +27,16 @@ redgres_validate_host_binary() {
   fi
   redgres_mode_is_group_or_world_writable "${mode}" && redgres_die "${name} is not trusted"
 
-  if [[ "${EUID}" -ne 0 ]]; then
-    return 0
-  fi
   component="${candidate%/*}"
   [[ -n "${component}" ]] || component='/'
   while :; do
     [[ ! -L "${component}" && -d "${component}" ]] || redgres_die "${name} is not trusted"
     read -r owner mode < <("${stat_bin}" -Lc '%u %a' -- "${component}") || redgres_die "${name} is not trusted"
-    [[ "${owner}" == "0" ]] || redgres_die "${name} is not trusted"
+    if [[ "${EUID}" -eq 0 ]]; then
+      [[ "${owner}" == "0" ]] || redgres_die "${name} is not trusted"
+    else
+      [[ "${owner}" == "0" || "${owner}" == "${EUID}" ]] || redgres_die "${name} is not trusted"
+    fi
     redgres_mode_is_group_or_world_writable "${mode}" && redgres_die "${name} is not trusted"
     [[ "${component}" == "/" ]] && break
     component="${component%/*}"
@@ -56,6 +57,7 @@ redgres_read_host_version() {
   local bin_path
   local out status
   bin_path="$(redgres_resolve_host_binary "${bin}")"
+  redgres_validate_host_binary "${bin}" "${bin_path}"
   set +e
   out="$("${bin_path}" --version)"
   status=$?

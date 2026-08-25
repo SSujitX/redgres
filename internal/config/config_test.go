@@ -397,16 +397,28 @@ func TestLoadRejectsBaseURLUserinfo(t *testing.T) {
 }
 
 func TestLoadRejectsSQLiteURIInjection(t *testing.T) {
-	isolateConfig(t)
-	_, err := Load([]string{"-sqlite-path", "./redgres.db?mode=memory"})
-	if err == nil {
-		t.Fatal("expected sqlite path error")
-	}
-	if !strings.Contains(err.Error(), "REDGRES_SQLITE_PATH") {
-		t.Fatalf("error %q", err)
-	}
-	if strings.Contains(err.Error(), "mode=memory") {
-		t.Fatalf("error echoed path: %q", err)
+	for _, path := range []string{
+		"./canary-secret.db?mode=memory",
+		"./canary-secret.db#frag",
+		"./canary-secret%2f.db",
+		"./canary-secret%2F.db",
+		"./%2e%2e/canary-secret.db",
+		"./canary-secret%25.db",
+	} {
+		t.Run(path, func(t *testing.T) {
+			isolateConfig(t)
+			_, err := Load([]string{"-sqlite-path", path})
+			if err == nil {
+				t.Fatal("expected sqlite path error")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "REDGRES_SQLITE_PATH") {
+				t.Fatalf("error %q", err)
+			}
+			if strings.Contains(msg, "canary-secret") || strings.Contains(msg, "%2") || strings.Contains(msg, "mode=memory") || strings.Contains(msg, "#frag") {
+				t.Fatalf("error echoed path: %q", err)
+			}
+		})
 	}
 }
 
@@ -429,6 +441,26 @@ func TestValidateSQLitePathKeepsDevelopmentPaths(t *testing.T) {
 	for _, path := range []string{"./redgres.db", filepath.Join(t.TempDir(), "redgres.db")} {
 		if err := validateSQLitePath(path, false); err != nil {
 			t.Fatalf("development path %q rejected: %v", path, err)
+		}
+	}
+}
+
+func TestValidateSQLitePathRejectsPercentEncoding(t *testing.T) {
+	for _, path := range []string{
+		"/var/lib/redgres/%2fetc/redgres.db",
+		"/var/lib/redgres/%2Fetc/redgres.db",
+		"/var/lib/redgres/%2e%2e/redgres.db",
+		"/var/lib/redgres/redgres%25.db",
+		"./%2f.db",
+	} {
+		for _, production := range []bool{false, true} {
+			err := validateSQLitePath(path, production)
+			if err == nil {
+				t.Fatalf("path %q accepted (production=%v)", path, production)
+			}
+			if strings.Contains(err.Error(), path) || strings.Contains(err.Error(), "%2") {
+				t.Fatalf("error echoed path: %v", err)
+			}
 		}
 	}
 }

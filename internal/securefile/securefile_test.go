@@ -27,6 +27,110 @@ func TestOpenRegularRejectsSymlink(t *testing.T) {
 	}
 }
 
+func TestOpenRegularRejectsTrunc(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state")
+	const canary = "do-not-truncate"
+	if err := os.WriteFile(path, []byte(canary), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := OpenRegular(path, os.O_RDWR|os.O_TRUNC, 0)
+	if file != nil {
+		_ = file.Close()
+	}
+	if err == nil {
+		t.Fatal("expected O_TRUNC rejection")
+	}
+	raw, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(raw) != canary {
+		t.Fatalf("file truncated: %q", raw)
+	}
+}
+
+func TestOpenRegularRejectsIntermediateDirectorySymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jail := filepath.Join(root, "jail")
+	if err := os.Mkdir(jail, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(jail, "link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	file, err := OpenRegular(filepath.Join(link, "sub", "state"), os.O_CREATE|os.O_RDWR, 0o600)
+	if file != nil {
+		_ = file.Close()
+	}
+	if err == nil {
+		t.Fatal("expected intermediate directory symlink rejection")
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside directory was touched: %v", entries)
+	}
+}
+
+func TestOpenRegularUnderRejectsEscape(t *testing.T) {
+	jail := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(jail, "link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	file, err := OpenRegularUnder(jail, filepath.Join(link, "sub", "state"), os.O_CREATE|os.O_RDWR, 0o600)
+	if file != nil {
+		_ = file.Close()
+	}
+	if err == nil {
+		t.Fatal("expected jail escape rejection")
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside directory was touched: %v", entries)
+	}
+}
+
+func TestEnsureRealDirRejectsIntermediateSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jail := filepath.Join(root, "jail")
+	if err := os.Mkdir(jail, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(jail, "link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := EnsureRealDir(filepath.Join(link, "sub"), 0o700); err == nil {
+		t.Fatal("expected intermediate directory symlink rejection")
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside directory was touched: %v", entries)
+	}
+}
+
 func TestVerifyRegularPathRejectsReplacement(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state")

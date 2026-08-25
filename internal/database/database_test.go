@@ -50,12 +50,25 @@ func TestOpenEnablesWALAndConstraints(t *testing.T) {
 }
 
 func TestOpenRejectsURIInjection(t *testing.T) {
-	_, err := Open(filepath.Join(t.TempDir(), "redgres.db") + "?mode=memory")
-	if err == nil {
-		t.Fatal("expected path rejection")
-	}
-	if strings.Contains(err.Error(), "mode=memory") {
-		t.Fatalf("error echoed path: %q", err)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"canary-secret.db?mode=memory",
+		"canary-secret.db#frag",
+		"canary-secret%2f.db",
+		"canary-secret%2F.db",
+		"canary-secret%2e%2e.db",
+		"canary-secret%25.db",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Open(filepath.Join(dir, name))
+			if err == nil {
+				t.Fatal("expected path rejection")
+			}
+			msg := err.Error()
+			if strings.Contains(msg, "canary-secret") || strings.Contains(msg, "%2") || strings.Contains(msg, "mode=memory") || strings.Contains(msg, "#frag") {
+				t.Fatalf("error echoed path: %q", err)
+			}
+		})
 	}
 }
 
@@ -123,6 +136,45 @@ func TestOpenRejectsSymlinkedStateDirectory(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(target, "redgres.db")); !os.IsNotExist(statErr) {
 		t.Fatalf("symlink target was touched: %v", statErr)
 	}
+}
+
+func TestOpenRejectsIntermediateDirectorySymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jail := filepath.Join(root, "jail")
+	if err := os.Mkdir(jail, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(jail, "link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	db, err := Open(filepath.Join(link, "sub", "redgres.db"))
+	if db != nil {
+		_ = db.Close()
+	}
+	if err == nil {
+		t.Fatal("expected intermediate directory symlink rejection")
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside directory was touched: %v", names(entries))
+	}
+}
+
+func names(entries []os.DirEntry) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Name())
+	}
+	return out
 }
 
 func TestOpenRejectsSymlinkedWALWithoutTouchingTarget(t *testing.T) {

@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 
 	"github.com/SSujitX/redgres/internal/securefile"
 	_ "modernc.org/sqlite"
 )
+
+const productionStateDirectory = "/var/lib/redgres"
 
 var stateSidecarSuffixes = [...]string{"-journal", "-wal", "-shm"}
 
@@ -24,8 +27,7 @@ func Open(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	defer stateFile.Close()
-	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -37,6 +39,10 @@ func Open(path string) (*sql.DB, error) {
 	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("set busy timeout: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA journal_mode = WAL`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("enable wal: %w", err)
 	}
 	if err := securefile.VerifyRegularPath(path, stateFile); err != nil {
 		_ = db.Close()
@@ -53,7 +59,7 @@ func validatePath(path string) error {
 	if path == "" {
 		return fmt.Errorf("sqlite path is required")
 	}
-	if strings.ContainsAny(path, "?#") || strings.ContainsRune(path, 0) {
+	if strings.ContainsAny(path, "?#%") || strings.ContainsRune(path, 0) {
 		return fmt.Errorf("sqlite path must not contain URI reserved characters")
 	}
 	return nil
@@ -61,28 +67,42 @@ func validatePath(path string) error {
 
 func prepareStatePath(path string) (*os.File, error) {
 	dir := filepath.Dir(path)
-	if dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, fmt.Errorf("create sqlite directory: %w", err)
+	var f *os.File
+	var err error
+	if isProductionStatePath(path) {
+		f, err = securefile.OpenRegularUnder(filepath.FromSlash(productionStateDirectory), path, os.O_CREATE|os.O_RDWR, 0o600)
+	} else {
+		if dir != "." && dir != "" {
+			if err := securefile.EnsureRealDir(dir, 0o700); err != nil {
+				return nil, fmt.Errorf("create sqlite directory: %w", err)
+			}
 		}
-		if err := restrictStateDirectory(dir); err != nil {
-			return nil, err
-		}
+		f, err = securefile.OpenRegular(path, os.O_CREATE|os.O_RDWR, 0o600)
 	}
-	for _, suffix := range stateSidecarSuffixes {
-		if err := chmodIfExist(path+suffix, 0o600); err != nil {
-			return nil, err
-		}
-	}
-	f, err := securefile.OpenRegular(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("create sqlite file: %w", err)
+	}
+	if dir != "." && dir != "" {
+		if err := restrictStateDirectory(dir); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
 	}
 	if err := f.Chmod(0o600); err != nil && !ignorePermission(err) {
 		_ = f.Close()
 		return nil, fmt.Errorf("restrict sqlite file: %w", err)
 	}
 	return f, nil
+}
+
+func isProductionStatePath(path string) bool {
+	cleaned := pathpkg.Clean(strings.ReplaceAll(path, `\`, "/"))
+	prefix := productionStateDirectory + "/"
+	if !strings.HasPrefix(cleaned, prefix) {
+		return false
+	}
+	rel := strings.TrimPrefix(cleaned, prefix)
+	return rel != "" && filepath.IsLocal(filepath.FromSlash(rel))
 }
 
 func restrictStateDirectory(path string) error {

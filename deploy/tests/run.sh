@@ -707,6 +707,38 @@ else
 fi
 rm -f "${unsafe_dir}/redis-server"
 
+writable_parent="${unsafe_dir}/writable-parent"
+mkdir -p "${writable_parent}"
+cat >"${writable_parent}/postgres" <<EOF
+#!/usr/bin/env bash
+: >"${process_canary}"
+cat '${fixtures_dir}/postgres-17.11.version'
+EOF
+chmod 700 "${writable_parent}/postgres"
+chmod 777 "${writable_parent}"
+writable_parent_mode="$(/usr/bin/stat -Lc '%a' -- "${writable_parent}")"
+if redgres_test_mode_is_group_or_world_writable "${writable_parent_mode}"; then
+  DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
+  DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+  DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-1.24.1.version"
+  EXTRA_PATH_PREFIX="${writable_parent}"
+  run_install \
+    --non-interactive \
+    --dry-run \
+    --mode existing-postgres \
+    --redis-mode existing \
+    --pgbouncer-mode existing
+  expect_status_keyword 'writable-parent PATH postgres exits 1' 1 'not trusted'
+  if [[ -e "${process_canary}" ]]; then
+    fail 'writable-parent PATH postgres was executed'
+  else
+    pass 'writable-parent PATH postgres was not executed'
+  fi
+else
+  pass 'writable-parent PATH postgres test skipped (filesystem has no Unix mode semantics)'
+fi
+rm -rf "${writable_parent}"
+
 run_install \
   --non-interactive \
   --dry-run \

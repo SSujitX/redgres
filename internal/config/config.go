@@ -313,7 +313,7 @@ func validateSQLitePath(path string, production bool) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("REDGRES_SQLITE_PATH: is required")
 	}
-	if strings.ContainsAny(path, "?#") || strings.ContainsRune(path, 0) {
+	if strings.ContainsAny(path, "?#%") || strings.ContainsRune(path, 0) {
 		return errors.New("REDGRES_SQLITE_PATH: must not contain URI reserved characters")
 	}
 	if production {
