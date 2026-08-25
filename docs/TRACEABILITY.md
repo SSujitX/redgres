@@ -2326,7 +2326,7 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
 Local commits: `87b6914` (freeze), `b554b1b` (anti-patterns), `df8a9c2`
  (API), `1966cf4` (merge API), `d37f299` (UI), `4ab1f03` (merge UI),
  `01d91be` (docs record), `928cbee` (UI review pin), `6b5f45c` (security
- pin). Not pushed.
+ pin), `214dfd8` (evidence pin), this verifier record. Not pushed.
 Reviewer/date: Security review (2026-08-25) on `01d91be`/`df8a9c2`/`1966cf4`
  approve Partial; no Critical/High/Medium. GET /status session +
  platform.read, no CSRF/audit, no-store; 401 omits components; healthz
@@ -2342,7 +2342,26 @@ Reviewer/date: Security review (2026-08-25) on `01d91be`/`df8a9c2`/`1966cf4`
  Evidence review (2026-08-25) on `6b5f45c` keep-Partial / reject-Complete;
  mocked UI GET is not live PgBouncer; parent npm 201 after `4ab1f03` is
  parent-executed; OverviewPage mapping pre-existed `d37f299`. Hygiene:
- `6b5f45c` added to local-commits. Verifier pending.
+ `6b5f45c` added to local-commits.
+ Verifier (2026-08-25) PASS Partial on master `214dfd8`. Independent
+ re-runs go1.27.0 windows/amd64, Node v25.3.0 (not web/.nvmrc 24.19.0):
+  gofmt -l touched Go → empty
+  go test -count=1 ./internal/config ./internal/postgresadmin
+   ./internal/platform ./internal/httpapi
+   → ok config 0.907s; postgresadmin 0.993s; platform 0.577s; httpapi 19.506s
+  go test -count=1 ./... → ok
+  go test -race -count=1 ./internal/config ./internal/postgresadmin
+   ./internal/platform ./internal/httpapi
+   → ok config 1.716s; postgresadmin 2.143s; platform 1.317s; httpapi 28.823s
+  go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/jackc/pgx/v5 → v5.10.0
+  npm --prefix web run test:run → Tests 201 passed (201)
+  npm --prefix web run build → tsc + vite 8.2.2 (dist gitignored)
+  go.mod and migrations/001_initial.sql vs 87b6914 → unchanged
+  Go re-run after dist settled → focused + ./... ok; vet/build success
+ Not executed: live PgBouncer, §6, Playwright, viewport/zoom, gitleaks,
+ govulncheck, CI, Node 24.19.0.
  Keep PLAT-001 Partial. Keep PG-012 Partial. Keep REDIS-005 Partial.
  Not pushed.
 ```
