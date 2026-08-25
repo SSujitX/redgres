@@ -26,7 +26,7 @@ export function SectionPage({
   }
 
   if (section === "postgres") {
-    return <DatabasesPage focusDatabase={focusDatabase} focusNonce={focusNonce} />;
+    return <DatabasesPage csrf={csrf} focusDatabase={focusDatabase} focusNonce={focusNonce} />;
   }
 
   if (section === "postgres-security") {

@@ -35,9 +35,18 @@ function isDetailsUrl(url: string, name: string): boolean {
 
 function isConnectionUrl(url: string, name?: string): boolean {
   if (name !== undefined) {
-    return url.includes(`/api/v1/postgres/databases/${encodeURIComponent(name)}/connection`);
+    const path = `/api/v1/postgres/databases/${encodeURIComponent(name)}/connection`;
+    return url.includes(path) && !url.includes("/reveal");
   }
-  return url.includes("/api/v1/postgres/databases/") && url.includes("/connection");
+  return url.includes("/api/v1/postgres/databases/") && url.includes("/connection") && !url.includes("/reveal");
+}
+
+function isConnectionRevealUrl(url: string, name?: string, init?: RequestInit): boolean {
+  const isPost = String(init?.method ?? "").toUpperCase() === "POST";
+  if (name !== undefined) {
+    return url === `/api/v1/postgres/databases/${encodeURIComponent(name)}/connection/reveal` && isPost;
+  }
+  return url.includes("/connection/reveal") && isPost;
 }
 
 const maskedDirectUrl =
@@ -63,6 +72,28 @@ function postgresConnectionPresent(extra: Record<string, unknown> = {}) {
     masked_direct_url: maskedDirectUrl,
     masked_pooled_url: maskedPooledUrl,
     request_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    ...extra,
+  });
+}
+
+const revealedDirectUrl =
+  "postgresql://project_a_role:canary-pg-reveal-password-32chars!!@db.example.com:5432/project_a?sslmode=require";
+const revealedPooledUrl =
+  "postgresql://project_a_role:canary-pg-reveal-password-32chars!!@db.example.com:6432/project_a?sslmode=require";
+
+function postgresReveal200(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    resource: { type: "postgres_database", name: "project_a" },
+    credential: {
+      username: "project_a_role",
+      password: "canary-pg-reveal-password-32chars!!",
+      one_time: false,
+      urls: {
+        direct: revealedDirectUrl,
+        pooled: revealedPooledUrl,
+      },
+    },
+    request_id: "dddddddddddddddddddddddddddddddd",
     ...extra,
   });
 }
@@ -613,6 +644,7 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.every((call) => !isRedisStatusUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isSearchUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isConnectionUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/connection/reveal"))).toBe(true);
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
   });
@@ -856,6 +888,7 @@ describe("App session and login", () => {
         return method === undefined || method === "GET";
       }),
     ).toBe(true);
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/connection/reveal"))).toBe(true);
   });
 
   it("clears stale postgres hits as soon as the query changes", async () => {
@@ -1409,6 +1442,8 @@ describe("App session and login", () => {
     expect(screen.queryByText(/healthy/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/rows"))).toBe(true);
+    const details = screen.getByRole("region", { name: "Database details" });
+    expect(within(details).queryByRole("button", { name: "Reveal" })).not.toBeInTheDocument();
   });
 
   it("shows details saved-credential Not saved without reason codes", async () => {
@@ -1491,6 +1526,10 @@ describe("App session and login", () => {
     expect(isDetailsUrl("/api/v1/postgres/databases/project_a/tables", "project_a")).toBe(false);
     expect(isDetailsUrl("/api/v1/postgres/databases/project_a/connection", "project_a")).toBe(false);
     expect(isConnectionUrl("/api/v1/postgres/databases/project_a/connection", "project_a")).toBe(true);
+    expect(isConnectionUrl("/api/v1/postgres/databases/project_a/connection/reveal", "project_a")).toBe(false);
+    expect(isConnectionRevealUrl("/api/v1/postgres/databases/project_a/connection/reveal", "project_a", { method: "POST" })).toBe(
+      true,
+    );
   });
 
   it("shows copy-safe Direct URL and Pooled URL from the connection GET", async () => {
@@ -1540,7 +1579,9 @@ describe("App session and login", () => {
     fireEvent.click(within(details).getByRole("button", { name: "Copy Pooled URL" }));
     expect(writeText).toHaveBeenCalledWith(maskedPooledUrl);
     expect(screen.queryByText("YOUR_PASSWORD")).not.toBeInTheDocument();
-    expect(within(details).queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
+    const reveal = within(details).getByRole("button", { name: "Reveal" });
+    expect(reveal).toHaveClass("text-button");
+    expect(reveal).not.toHaveClass("danger-button");
     expect(within(details).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
     expect(within(details).queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
     expect(factValue("Saved credential")).toHaveTextContent("Saved");
@@ -1640,6 +1681,7 @@ describe("App session and login", () => {
     expect(within(details).queryByText("Pooled URL")).not.toBeInTheDocument();
     expect(screen.queryByText("not_available")).not.toBeInTheDocument();
     expect(screen.queryByText("********")).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
     expectNoVaultReasonCopy();
   });
 
@@ -1678,6 +1720,7 @@ describe("App session and login", () => {
     expect(screen.queryByText("Pooled URL")).not.toBeInTheDocument();
     expect(screen.queryByText(maskedDirectUrl)).not.toBeInTheDocument();
     expect(screen.queryByText(maskedPooledUrl)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
   });
 
   it("shows PostgreSQL is unavailable for a connection 503", async () => {
@@ -1709,6 +1752,7 @@ describe("App session and login", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("PostgreSQL is unavailable");
     expect(screen.queryByText("Direct URL")).not.toBeInTheDocument();
     expect(screen.queryByText("Pooled URL")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
   });
 
   it("clears previous masked URLs when the selected database changes", async () => {
@@ -1804,6 +1848,488 @@ describe("App session and login", () => {
     render(<App />);
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !isConnectionUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/connection/reveal"))).toBe(true);
+  });
+
+  it("hides Reveal while details are loading", async () => {
+    let releaseDetails: () => void = () => {};
+    const blockedDetails = new Promise<void>((resolve) => {
+      releaseDetails = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "reveal-load-d".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedDetails.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role", saved_credential: { status: "present", reason: "" } },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Loading details.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reveal" })).not.toBeInTheDocument();
+    releaseDetails();
+    expect(await screen.findByRole("button", { name: "Reveal" })).toBeInTheDocument();
+  });
+
+  it("hides Reveal while connection is loading", async () => {
+    let releaseConnection: () => void = () => {};
+    const blockedConnection = new Promise<void>((resolve) => {
+      releaseConnection = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "reveal-load-c".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role", saved_credential: { status: "present", reason: "" } },
+        });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedConnection.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return postgresConnectionPresent();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Loading connection.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reveal" })).not.toBeInTheDocument();
+    releaseConnection();
+    expect(await screen.findByRole("button", { name: "Reveal" })).toBeInTheDocument();
+  });
+
+  it("POSTs reveal with CSRF, encoded path, and empty body without a confirm dialog", async () => {
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-reveal".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role", saved_credential: { status: "present", reason: "" } },
+        });
+      }
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        return postgresReveal200();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const reveal = await screen.findByRole("button", { name: "Reveal" });
+    fireEvent.click(reveal);
+    expect(screen.queryByRole("dialog", { name: /reveal/i })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isConnectionRevealUrl(String(call[0]), "project_a", call[1]))).toBe(true);
+    });
+    const revealCall = fetch.mock.calls.find((call) => isConnectionRevealUrl(String(call[0]), "project_a", call[1]));
+    expect(revealCall?.[0]).toBe("/api/v1/postgres/databases/project_a/connection/reveal");
+    expect(revealCall?.[0]).toBe(`/api/v1/postgres/databases/${encodeURIComponent("project_a")}/connection/reveal`);
+    expect(new Headers(revealCall?.[1]?.headers).get("X-CSRF-Token")).toBe("conn-reveal".padEnd(64, "0"));
+    expect(revealCall?.[1]?.body == null || revealCall?.[1]?.body === "").toBe(true);
+    expect(String(revealCall?.[1]?.body ?? "")).not.toContain("password");
+  });
+
+  it("opens a PostgreSQL credential ticket on reveal 200 and does not paint Redis one-time copy", async () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-reveal-200".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role", saved_credential: { status: "present", reason: "" } },
+        });
+      }
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        return postgresReveal200({
+          credential: {
+            username: "project_a_role",
+            password: "canary-pg-reveal-password-32chars!!",
+            one_time: false,
+            extra_secret: "should-not-render",
+            urls: {
+              direct: revealedDirectUrl,
+              pooled: revealedPooledUrl,
+            },
+          },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reveal" }));
+    const ticket = await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." });
+    expect(ticket).toHaveTextContent("Redgres can show this password again from the encrypted vault.");
+    expect(ticket).toHaveTextContent("It is not a one-time Redis credential.");
+    expect(ticket).not.toHaveTextContent(/shown now/i);
+    expect(ticket).not.toHaveTextContent(/cannot show the password again/i);
+    expect(ticket).toHaveTextContent("canary-pg-reveal-password-32chars!!");
+    expect(ticket).toHaveTextContent("project_a_role");
+    expect(within(ticket).getByRole("button", { name: "Copy username" })).toBeInTheDocument();
+    expect(within(ticket).getByRole("button", { name: "Copy password" })).toBeInTheDocument();
+    expect(within(ticket).getByRole("button", { name: "Copy Direct URL" })).toBeInTheDocument();
+    expect(within(ticket).getByRole("button", { name: "Copy Pooled URL" })).toBeInTheDocument();
+    expect(within(ticket).queryByRole("button", { name: "Copy URL" })).not.toBeInTheDocument();
+    expect(within(ticket).getByRole("button", { name: "I have copied it — dismiss" })).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render");
+    expect(writeText).not.toHaveBeenCalled();
+    expect(localSet).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Reveal" })).toBeDisabled();
+    fireEvent.click(within(ticket).getByRole("button", { name: "Copy Direct URL" }));
+    expect(writeText).toHaveBeenCalledWith(revealedDirectUrl);
+    localSet.mockRestore();
+  });
+
+  it("shows Direct URL and Pooled URL copy on reveal only when those keys are present", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-reveal-urls".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role", saved_credential: { status: "present", reason: "" } },
+        });
+      }
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        return postgresReveal200({
+          credential: {
+            username: "project_a_role",
+            password: "canary-pg-reveal-password-32chars!!",
+            one_time: false,
+            urls: { direct: revealedDirectUrl },
+          },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reveal" }));
+    const ticket = await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." });
+    expect(within(ticket).getByRole("button", { name: "Copy Direct URL" })).toBeInTheDocument();
+    expect(within(ticket).queryByRole("button", { name: "Copy Pooled URL" })).not.toBeInTheDocument();
+    expect(ticket).toHaveTextContent(revealedDirectUrl);
+    expect(ticket).not.toHaveTextContent(revealedPooledUrl);
+  });
+
+  it("clears secrets on reveal 401 and does not leave a leftover password", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-reveal-401".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role", saved_credential: { status: "present", reason: "" } },
+        });
+      }
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        return jsonResponse(401, {
+          error: { code: "unauthorized", message: "Authentication required" },
+          credential: { username: "project_a_role", password: "should-not-render-401" },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reveal" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your session has expired. Sign in again to continue.",
+    );
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("should-not-render-401")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render-401");
+  });
+
+  it("shows not-found copy on reveal 404 and does not open a ticket", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-reveal-404".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role", saved_credential: { status: "present", reason: "" } },
+        });
+      }
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        return jsonResponse(404, {
+          error: { code: "not_found", message: "Not found" },
+          credential: { password: "should-not-render-404" },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reveal" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not found");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render-404");
+  });
+
+  it("shows PostgreSQL is unavailable on reveal 503 and does not open a ticket", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-reveal-503".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role", saved_credential: { status: "present", reason: "" } },
+        });
+      }
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        return jsonResponse(503, {
+          error: { code: "dependency_unavailable", message: "PostgreSQL is unavailable" },
+          credential: { password: "should-not-render-503" },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reveal" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("PostgreSQL is unavailable");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render-503");
+  });
+
+  it("clears the PostgreSQL ticket on dismiss, selection change, and logout", async () => {
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-reveal-clear".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, {
+          databases: [
+            { name: "project_a", owner: "owner_a" },
+            { name: "project_b", owner: "owner_b" },
+          ],
+          truncated: false,
+        });
+      }
+      if (isTablesUrl(url, "project_a") || isTablesUrl(url, "project_b")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isConnectionUrl(url, "project_b")) {
+        return postgresConnectionAbsent({
+          database: "project_b",
+          owner: "owner_b",
+          saved_credential: { status: "missing", reason: "" },
+        });
+      }
+      if (isDetailsUrl(url, "project_a") || isDetailsUrl(url, "project_b")) {
+        const name = url.includes("project_b") ? "project_b" : "project_a";
+        return jsonResponse(200, {
+          database: {
+            name,
+            owner: name === "project_b" ? "owner_b" : "owner_a",
+            saved_credential: { status: name === "project_b" ? "missing" : "present", reason: "" },
+          },
+        });
+      }
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        return postgresReveal200();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reveal" }));
+    expect(await screen.findByText("canary-pg-reveal-password-32chars!!")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(screen.queryByText("canary-pg-reveal-password-32chars!!")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("canary-pg-reveal-password-32chars!!");
+    fireEvent.click(screen.getByRole("button", { name: "Reveal" }));
+    expect(await screen.findByText("canary-pg-reveal-password-32chars!!")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_b/ }));
+    expect(await screen.findByText("owner_b")).toBeInTheDocument();
+    expect(screen.queryByText("canary-pg-reveal-password-32chars!!")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reveal" }));
+    expect(await screen.findByText("canary-pg-reveal-password-32chars!!")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByText("canary-pg-reveal-password-32chars!!")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("canary-pg-reveal-password-32chars!!");
+    expect(localSet).not.toHaveBeenCalled();
+    localSet.mockRestore();
+  });
+
+  it("disables Reveal while reveal is in flight", async () => {
+    let releaseReveal: () => void = () => {};
+    const blockedReveal = new Promise<void>((resolve) => {
+      releaseReveal = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-reveal-flight".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role", saved_credential: { status: "present", reason: "" } },
+        });
+      }
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blockedReveal.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return postgresReveal200();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const reveal = await screen.findByRole("button", { name: "Reveal" });
+    fireEvent.click(reveal);
+    expect(reveal).toBeDisabled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    releaseReveal();
+    expect(await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." })).toBeInTheDocument();
   });
 
   it("clears previous details and ignores a slower first selection", async () => {

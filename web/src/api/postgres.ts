@@ -64,6 +64,33 @@ export async function fetchPostgresConnection(name: string, init: RequestInit = 
   );
 }
 
+export type PostgresRevealCredential = {
+  username?: string;
+  password?: string;
+  one_time?: boolean;
+  urls?: {
+    direct?: string;
+    pooled?: string;
+  };
+};
+
+export type PostgresRevealPayload = {
+  resource?: { type?: string; name?: string };
+  credential?: PostgresRevealCredential;
+  request_id?: string;
+};
+
+export async function revealPostgresConnection(name: string, csrf: string, init: RequestInit = {}) {
+  return apiRequest<PostgresRevealPayload & ApiErrorBody>(
+    `/api/v1/postgres/databases/${encodeURIComponent(name)}/connection/reveal`,
+    {
+      ...init,
+      method: "POST",
+      csrf,
+    },
+  );
+}
+
 export type TableItem = {
   schema?: string;
   name?: string;
