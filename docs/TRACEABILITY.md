@@ -2651,8 +2651,27 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64, Node v25.3.0
   npm --prefix web run test:run → Tests 213 passed (213)
  Not run: race, live PostgreSQL, COMPATIBILITY.md §6, Playwright, viewport/zoom
 Local commits: `e915912` (freeze), `fea4764` (API), `2a29cf6` (UI),
- `6f55c1d` (merge UI), this docs record. Reviews pending. Not pushed.
+ `6f55c1d` (merge UI), `7bc2db6` (docs record). Security pin this commit.
+ UI/evidence/verifier pending. Not pushed.
 Keep PG-005 Partial. Keep PG-012 Partial. Do not mark Complete.
+```
+
+## PG-005/PG-012 vault existence security pin (2026-08-25)
+
+```text
+Requirement: PG-005/PG-012/PG-002 Partial (vault existence GET; no decrypt/reveal)
+Decision/ADR: ADR-004; freeze `e915912`
+Reviewer/date: Security review (2026-08-25) on `7bc2db6` approve Partial;
+ no Critical/High/Medium/Low. SQL is role_name ANY($1) only; connectTarget
+ password not logged; ErrVaultUnavailable is HTTP 200 not 503; catalog
+ failure remains 503; postgres.read; GET not audited; no-store; 401 omits
+ keys; no secret file; UI never paints reason/ciphertext. Questions
+ (non-blocking): writePostgresError has no ErrVaultUnavailable case
+ (Details/SecurityOverview never return it); unique-owner SQL cap at 500;
+ GET audit-count tests not added. Reviewer did not re-run go test.
+Keep PG-005 Partial. Keep PG-012 Partial. Gate 4, POST reveal, and
+ REDGRES_LEGACY_VAULT_SECRET_FILE remain Complete blockers.
+Not pushed.
 ```
 
 
