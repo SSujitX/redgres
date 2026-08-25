@@ -3,13 +3,14 @@ package postgresadmin
 import (
 	"context"
 	"errors"
-	"os"
+	"io/fs"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/secrets"
+	"github.com/SSujitX/redgres/internal/securefile"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -231,15 +232,19 @@ func readPasswordFile(path string, production bool) (string, error) {
 }
 
 func readSecretFile(path, envName string, production bool) ([]byte, error) {
-	info, err := os.Stat(path)
+	raw, err := securefile.ReadRegular(path, func(mode fs.FileMode) error {
+		if production && mode.Perm()&0o077 != 0 {
+			return errors.New(envName + ": must not be group or world accessible")
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, errors.New(envName + ": is unavailable")
-	}
-	if production && info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New(envName + ": must not be group or world accessible")
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
+		if errors.Is(err, securefile.ErrNotRegular) {
+			return nil, errors.New(envName + ": must be a regular file")
+		}
+		if strings.HasPrefix(err.Error(), envName+":") {
+			return nil, err
+		}
 		return nil, errors.New(envName + ": is unavailable")
 	}
 	trimmed := strings.TrimRight(string(raw), "\r\n")

@@ -122,6 +122,45 @@ func TestOpenCanaryURLAbsentFromErrors(t *testing.T) {
 	assertNoRedisCanary(t, msg)
 }
 
+func TestOpenRejectsSymlinkedURLFileWithoutReadingTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "redis-target")
+	const canary = "redis-symlink-canary"
+	if err := os.WriteFile(target, []byte("redis://:"+canary+"@127.0.0.1:61999/0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "redis-admin-url")
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	_, _, err := Open(context.Background(), config.Config{RedisAdminURLFile: path})
+	if err == nil {
+		t.Fatal("expected symlink to fail")
+	}
+	if err.Error() != "REDGRES_REDIS_ADMIN_URL_FILE: must be a regular file" {
+		t.Fatalf("err = %q", err.Error())
+	}
+	if strings.Contains(err.Error(), canary) || strings.Contains(err.Error(), path) {
+		t.Fatalf("error exposed canary or path: %q", err.Error())
+	}
+}
+
+func TestOpenRejectsNonRegularURLFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redis-admin-url")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := Open(context.Background(), config.Config{RedisAdminURLFile: path})
+	if err == nil {
+		t.Fatal("expected non-regular URL file to fail")
+	}
+	if err.Error() != "REDGRES_REDIS_ADMIN_URL_FILE: must be a regular file" {
+		t.Fatalf("err = %q", err.Error())
+	}
+}
+
 const skipVerifyCanaryURL = "rediss://:canary-secret@10.0.0.1:6379/0?skip_verify=true"
 
 func assertNoRedisCanary(t *testing.T, msg string) {

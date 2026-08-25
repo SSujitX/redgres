@@ -135,6 +135,8 @@ Never make browser confirmation the sole guard.
 
 The systemd unit should use a dedicated unprivileged user, `UMask=0077`, `NoNewPrivileges=true`, `PrivateTmp=true`, `ProtectSystem=strict`, `ProtectHome=true`, explicit `ReadWritePaths=/var/lib/redgres`, restricted address families, and the minimum required capabilities (normally none). Validate each directive against SQLite, DNS/TLS, and credential loading; do not copy hardening flags blindly.
 
+Production SQLite state is confined below `/var/lib/redgres`. Redgres rejects symlink and non-regular SQLite main/journal/WAL/SHM files, opens through a directory-rooted regular-file check, and verifies the opened file identity across SQLite startup before accepting the database. PostgreSQL password/vault files and the Redis administrator URL file use the same final-component no-symlink and file-identity pattern; production permission checks use the opened file metadata before contents are read.
+
 Redis container runs without publishing plaintext 6379 publicly, uses a pinned image digest/version, a read-only root filesystem where compatible, dropped capabilities, resource limits, restart policy, and explicit persistent mounts. PostgreSQL/PgBouncer remain dedicated host services with least-readable TLS keys.
 
 ## 9. Secret scanning and tests

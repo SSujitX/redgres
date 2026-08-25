@@ -1,7 +1,6 @@
 package config
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -60,11 +59,10 @@ func TestLoadPooledPortWithoutPostgresFails(t *testing.T) {
 
 func TestLoadProductionDoesNotRequirePooledPort(t *testing.T) {
 	isolateConfig(t)
-	abs := filepath.Join(t.TempDir(), "redgres.db")
 	t.Setenv("REDGRES_ENVIRONMENT", "production")
 	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
 	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
-	t.Setenv("REDGRES_SQLITE_PATH", abs)
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
 	t.Setenv("REDGRES_COOKIE_SECURE", "true")
 	t.Setenv("REDGRES_SESSION_TTL", "12h")
 	t.Setenv("REDGRES_ABSOLUTE_SESSION_TTL", "24h")
@@ -104,11 +102,10 @@ func TestLoadOptionalPostgresPublicHostDirectPort(t *testing.T) {
 
 func TestLoadProductionDoesNotRequirePostgresPublicHostDirectPort(t *testing.T) {
 	isolateConfig(t)
-	abs := filepath.Join(t.TempDir(), "redgres.db")
 	t.Setenv("REDGRES_ENVIRONMENT", "production")
 	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
 	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
-	t.Setenv("REDGRES_SQLITE_PATH", abs)
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
 	t.Setenv("REDGRES_COOKIE_SECURE", "true")
 	t.Setenv("REDGRES_SESSION_TTL", "12h")
 	t.Setenv("REDGRES_ABSOLUTE_SESSION_TTL", "24h")
@@ -191,11 +188,10 @@ func TestLoadLegacyVaultSecretFileDoesNotCompletePostgres(t *testing.T) {
 
 func TestLoadProductionDoesNotRequireLegacyVaultSecretFile(t *testing.T) {
 	isolateConfig(t)
-	abs := filepath.Join(t.TempDir(), "redgres.db")
 	t.Setenv("REDGRES_ENVIRONMENT", "production")
 	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
 	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
-	t.Setenv("REDGRES_SQLITE_PATH", abs)
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
 	t.Setenv("REDGRES_COOKIE_SECURE", "true")
 	t.Setenv("REDGRES_SESSION_TTL", "12h")
 	t.Setenv("REDGRES_ABSOLUTE_SESSION_TTL", "24h")

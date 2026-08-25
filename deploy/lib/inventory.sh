@@ -1,17 +1,63 @@
 #!/usr/bin/env bash
 # Host --version inventory for existing-mode --dry-run (OPS-002 Partial).
-# PATH binaries only. Do not start servers, source --config, or mutate.
+# Resolve PATH candidates once, validate them, then execute only the absolute
+# trusted path. Do not start servers, source --config, or mutate.
 # SQL SHOW / Redis INFO / PgBouncer SHOW VERSION are deferred.
 set -euo pipefail
 
+redgres_mode_is_group_or_world_writable() {
+  local mode="$1"
+  (( (8#${mode} & 8#022) != 0 ))
+}
+
+redgres_validate_host_binary() {
+  local name="$1"
+  local candidate="$2"
+  local owner mode component
+  local stat_bin='/usr/bin/stat'
+
+  [[ "${candidate}" == /* ]] || redgres_die "${name} is not trusted"
+  [[ ! -L "${candidate}" && -f "${candidate}" && -x "${candidate}" ]] || redgres_die "${name} is not trusted"
+  [[ -x "${stat_bin}" && ! -L "${stat_bin}" ]] || redgres_die "trusted stat is unavailable"
+  read -r owner mode < <("${stat_bin}" -Lc '%u %a' -- "${candidate}") || redgres_die "${name} is not trusted"
+  if [[ "${EUID}" -eq 0 ]]; then
+    [[ "${owner}" == "0" ]] || redgres_die "${name} is not trusted"
+  else
+    [[ "${owner}" == "0" || "${owner}" == "${EUID}" ]] || redgres_die "${name} is not trusted"
+  fi
+  redgres_mode_is_group_or_world_writable "${mode}" && redgres_die "${name} is not trusted"
+
+  if [[ "${EUID}" -ne 0 ]]; then
+    return 0
+  fi
+  component="${candidate%/*}"
+  [[ -n "${component}" ]] || component='/'
+  while :; do
+    [[ ! -L "${component}" && -d "${component}" ]] || redgres_die "${name} is not trusted"
+    read -r owner mode < <("${stat_bin}" -Lc '%u %a' -- "${component}") || redgres_die "${name} is not trusted"
+    [[ "${owner}" == "0" ]] || redgres_die "${name} is not trusted"
+    redgres_mode_is_group_or_world_writable "${mode}" && redgres_die "${name} is not trusted"
+    [[ "${component}" == "/" ]] && break
+    component="${component%/*}"
+    [[ -n "${component}" ]] || component='/'
+  done
+}
+
+redgres_resolve_host_binary() {
+  local name="$1"
+  local candidate
+  candidate="$(command -v -- "${name}")" || redgres_die "${name} not found"
+  redgres_validate_host_binary "${name}" "${candidate}"
+  printf '%s' "${candidate}"
+}
+
 redgres_read_host_version() {
   local bin="$1"
+  local bin_path
   local out status
-  if ! command -v "${bin}" >/dev/null 2>&1; then
-    redgres_die "${bin} not found"
-  fi
+  bin_path="$(redgres_resolve_host_binary "${bin}")"
   set +e
-  out="$("${bin}" --version)"
+  out="$("${bin_path}" --version)"
   status=$?
   set -e
   out="${out//$'\r'/}"

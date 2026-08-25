@@ -22,14 +22,25 @@ fail() {
   failures=$((failures + 1))
 }
 
-tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/redgres-install-test.XXXXXX")"
+redgres_test_mode_is_group_or_world_writable() {
+  local mode="$1"
+  (( (8#${mode} & 8#022) != 0 ))
+}
+
+tmp_base="${TMPDIR:-/tmp}"
+if [[ "${EUID}" -eq 0 ]]; then
+  tmp_base='/root'
+fi
+tmpdir="$(mktemp -d "${tmp_base}/redgres-install-test.XXXXXX")"
 stub_dir="${tmpdir}/stubs"
 detect_dir="${tmpdir}/detect"
+unsafe_dir="${tmpdir}/unsafe"
 stub_log="${tmpdir}/stub.log"
+process_canary="${tmpdir}/process-canary"
 config_file="${tmpdir}/install.env"
 plan_file="${tmpdir}/postgres-extensions.json"
 sourced_marker="${tmpdir}/config-sourced"
-mkdir -p "${stub_dir}" "${detect_dir}"
+mkdir -p "${stub_dir}" "${detect_dir}" "${unsafe_dir}"
 : >"${stub_log}"
 original_path="${PATH}"
 
@@ -103,6 +114,7 @@ STUB
 DETECT_POSTGRES=''
 DETECT_REDIS=''
 DETECT_PGBOUNCER=''
+EXTRA_PATH_PREFIX=''
 
 export PATH="${stub_dir}:${PATH}"
 
@@ -112,6 +124,7 @@ status=0
 run_install() {
   : >"${stub_log}"
   rm -f "${sourced_marker}"
+  rm -f "${process_canary}"
   clear_detect_stubs
   if [[ -n "${DETECT_POSTGRES}" ]]; then
     write_detect_stub postgres "${DETECT_POSTGRES}"
@@ -126,9 +139,10 @@ run_install() {
   DETECT_REDIS=''
   DETECT_PGBOUNCER=''
   set +e
-  output="$(PATH="${installer_path}" "${BASH}" "${install_sh}" "$@" 2>&1)"
+  output="$(PATH="${EXTRA_PATH_PREFIX:+${EXTRA_PATH_PREFIX}:}${installer_path}" "${BASH}" "${install_sh}" "$@" 2>&1)"
   status=$?
   set -e
+  EXTRA_PATH_PREFIX=''
 }
 
 assert_no_mutation() {
@@ -635,6 +649,64 @@ case "${output}" in
 esac
 
 # --- OPS-002 inventory fail-closed ---
+cat >"${unsafe_dir}/postgres-target" <<EOF
+#!/usr/bin/env bash
+: >"${process_canary}"
+cat '${fixtures_dir}/postgres-17.11.version'
+EOF
+chmod 700 "${unsafe_dir}/postgres-target"
+ln -s "${unsafe_dir}/postgres-target" "${unsafe_dir}/postgres"
+if [[ -L "${unsafe_dir}/postgres" ]]; then
+  DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
+  DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+  DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-1.24.1.version"
+  EXTRA_PATH_PREFIX="${unsafe_dir}"
+  run_install \
+    --non-interactive \
+    --dry-run \
+    --mode existing-postgres \
+    --redis-mode existing \
+    --pgbouncer-mode existing
+  expect_status_keyword 'symlinked PATH postgres exits 1' 1 'not trusted'
+  if [[ -e "${process_canary}" ]]; then
+    fail 'symlinked PATH postgres was executed'
+  else
+    pass 'symlinked PATH postgres was not executed'
+  fi
+else
+  pass 'symlinked PATH postgres test skipped (filesystem has no symlink semantics)'
+fi
+rm -f "${unsafe_dir}/postgres" "${unsafe_dir}/postgres-target"
+
+cat >"${unsafe_dir}/redis-server" <<EOF
+#!/usr/bin/env bash
+: >"${process_canary}"
+cat '${fixtures_dir}/redis-8.2.0.version'
+EOF
+chmod 777 "${unsafe_dir}/redis-server"
+unsafe_mode="$(/usr/bin/stat -Lc '%a' -- "${unsafe_dir}/redis-server")"
+if redgres_test_mode_is_group_or_world_writable "${unsafe_mode}"; then
+  DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
+  DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+  DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-1.24.1.version"
+  EXTRA_PATH_PREFIX="${unsafe_dir}"
+  run_install \
+    --non-interactive \
+    --dry-run \
+    --mode existing-postgres \
+    --redis-mode existing \
+    --pgbouncer-mode existing
+  expect_status_keyword 'writable PATH redis-server exits 1' 1 'not trusted'
+  if [[ -e "${process_canary}" ]]; then
+    fail 'writable PATH redis-server was executed'
+  else
+    pass 'writable PATH redis-server was not executed'
+  fi
+else
+  pass 'writable PATH redis-server test skipped (filesystem has no Unix mode semantics)'
+fi
+rm -f "${unsafe_dir}/redis-server"
+
 run_install \
   --non-interactive \
   --dry-run \

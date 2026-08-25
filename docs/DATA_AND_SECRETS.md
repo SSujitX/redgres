@@ -113,6 +113,8 @@ Recommended:
 
 If systemd runs as `redgres`, root-only secret files cannot be read directly after privilege drop. Prefer systemd credentials (`LoadCredential=`) or a narrowly permissioned `root:redgres 0640` application secret file. The implementation must choose and document one coherent mechanism; do not publish an impossible permission model.
 
+Application secret inputs must be regular files, not symlinks. Redgres validates the final path component and the opened file identity, then checks production permissions from the open file before reading its contents.
+
 ## Rotation
 
 Every secret class needs owner, trigger, steps, verification, rollback/compensation, and dependent-service inventory. Rotating a database/Redis project credential requires explicit downstream application coordination; Redgres cannot update unknown consumers automatically.

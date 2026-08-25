@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const productionSQLitePath = ProductionStateDirectory + "/redgres.db"
+
 func isolateConfig(t *testing.T) {
 	t.Helper()
 	t.Chdir(t.TempDir())
@@ -116,7 +118,7 @@ func TestLoadDotEnvBeatsDefault(t *testing.T) {
 }
 
 func TestLoadProductionFailClosed(t *testing.T) {
-	absDB := filepath.Join(t.TempDir(), "redgres.db")
+	absDB := productionSQLitePath
 	cases := []struct {
 		name    string
 		env     map[string]string
@@ -293,7 +295,7 @@ func TestLoadRejectsDevAssetDirInProduction(t *testing.T) {
 	t.Setenv("REDGRES_ENVIRONMENT", "production")
 	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
 	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
-	t.Setenv("REDGRES_SQLITE_PATH", filepath.Join(t.TempDir(), "redgres.db"))
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
 	t.Setenv("REDGRES_COOKIE_SECURE", "true")
 	t.Setenv("REDGRES_SESSION_TTL", "12h")
 	t.Setenv("REDGRES_ABSOLUTE_SESSION_TTL", "24h")
@@ -350,11 +352,10 @@ func TestLoadRejectsUnusableDevAssetDir(t *testing.T) {
 
 func TestLoadAcceptsProductionLoopback(t *testing.T) {
 	isolateConfig(t)
-	abs := filepath.Join(t.TempDir(), "redgres.db")
 	t.Setenv("REDGRES_ENVIRONMENT", "production")
 	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
 	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
-	t.Setenv("REDGRES_SQLITE_PATH", abs)
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
 	t.Setenv("REDGRES_COOKIE_SECURE", "true")
 	t.Setenv("REDGRES_SESSION_TTL", "12h")
 	t.Setenv("REDGRES_ABSOLUTE_SESSION_TTL", "24h")
@@ -376,11 +377,10 @@ func TestLoadAcceptsProductionLoopback(t *testing.T) {
 
 func TestLoadRejectsBaseURLUserinfo(t *testing.T) {
 	isolateConfig(t)
-	abs := filepath.Join(t.TempDir(), "redgres.db")
 	t.Setenv("REDGRES_ENVIRONMENT", "production")
 	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
 	t.Setenv("REDGRES_BASE_URL", "https://canary-user:canary-secret@console.example.com")
-	t.Setenv("REDGRES_SQLITE_PATH", abs)
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
 	t.Setenv("REDGRES_COOKIE_SECURE", "true")
 
 	_, err := Load(nil)
@@ -407,6 +407,29 @@ func TestLoadRejectsSQLiteURIInjection(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "mode=memory") {
 		t.Fatalf("error echoed path: %q", err)
+	}
+}
+
+func TestValidateSQLitePathConstrainsProductionState(t *testing.T) {
+	if err := validateSQLitePath("/var/lib/redgres/redgres.db", true); err != nil {
+		t.Fatalf("documented production path rejected: %v", err)
+	}
+	for _, path := range []string{
+		"/var/lib/redgres",
+		"/var/lib/redgres/../other/redgres.db",
+		"/tmp/redgres.db",
+	} {
+		if err := validateSQLitePath(path, true); err == nil {
+			t.Fatalf("production path %q accepted", path)
+		}
+	}
+}
+
+func TestValidateSQLitePathKeepsDevelopmentPaths(t *testing.T) {
+	for _, path := range []string{"./redgres.db", filepath.Join(t.TempDir(), "redgres.db")} {
+		if err := validateSQLitePath(path, false); err != nil {
+			t.Fatalf("development path %q rejected: %v", path, err)
+		}
 	}
 }
 

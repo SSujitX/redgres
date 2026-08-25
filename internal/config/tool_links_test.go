@@ -1,7 +1,6 @@
 package config
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -207,7 +206,7 @@ func setProductionCore(t *testing.T) {
 	t.Setenv("REDGRES_ENVIRONMENT", "production")
 	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
 	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
-	t.Setenv("REDGRES_SQLITE_PATH", filepath.Join(t.TempDir(), "redgres.db"))
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
 	t.Setenv("REDGRES_COOKIE_SECURE", "true")
 	t.Setenv("REDGRES_SESSION_TTL", "12h")
 	t.Setenv("REDGRES_ABSOLUTE_SESSION_TTL", "24h")

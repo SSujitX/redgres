@@ -10,14 +10,13 @@ import (
 
 func TestDotEnvSkippedInProduction(t *testing.T) {
 	isolateConfig(t)
-	abs := filepath.Join(t.TempDir(), "redgres.db")
 	if err := os.WriteFile(".env", []byte("REDGRES_ADDRESS=127.0.0.1:9500\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("REDGRES_ENVIRONMENT", "production")
 	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
 	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
-	t.Setenv("REDGRES_SQLITE_PATH", abs)
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
 	t.Setenv("REDGRES_COOKIE_SECURE", "true")
 
 	cfg, err := Load(nil)
@@ -132,12 +131,11 @@ func TestLoadRepositoryEnvExample(t *testing.T) {
 
 func TestProductionFlagIgnoresDotEnv(t *testing.T) {
 	isolateConfig(t)
-	abs := filepath.Join(t.TempDir(), "redgres.db")
 	if err := os.WriteFile(".env", []byte("REDGRES_ADDRESS=127.0.0.1:9500\nHTTP_PROXY=http://attacker.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
-	t.Setenv("REDGRES_SQLITE_PATH", abs)
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
 	t.Setenv("REDGRES_COOKIE_SECURE", "true")
 
 	cfg, err := Load([]string{"-environment", "production", "-address", "127.0.0.1:8790"})

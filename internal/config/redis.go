@@ -2,10 +2,13 @@ package config
 
 import (
 	"errors"
+	"io/fs"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/SSujitX/redgres/internal/securefile"
 )
 
 func (c *Config) loadRedis() error {
@@ -88,20 +91,25 @@ func looksLikeRedisURL(value string) bool {
 }
 
 func readRedisURLFile(path string, production bool) (string, error) {
-	info, err := os.Stat(path)
+	const envName = "REDGRES_REDIS_ADMIN_URL_FILE"
+	raw, err := securefile.ReadRegular(path, func(mode fs.FileMode) error {
+		if production && mode.Perm()&0o077 != 0 {
+			return errors.New(envName + ": must not be group or world accessible")
+		}
+		return nil
+	})
 	if err != nil {
-		return "", errors.New("REDGRES_REDIS_ADMIN_URL_FILE: is unavailable")
-	}
-	if production && info.Mode().Perm()&0o077 != 0 {
-		return "", errors.New("REDGRES_REDIS_ADMIN_URL_FILE: must not be group or world accessible")
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", errors.New("REDGRES_REDIS_ADMIN_URL_FILE: is unavailable")
+		if errors.Is(err, securefile.ErrNotRegular) {
+			return "", errors.New(envName + ": must be a regular file")
+		}
+		if strings.HasPrefix(err.Error(), envName+":") {
+			return "", err
+		}
+		return "", errors.New(envName + ": is unavailable")
 	}
 	value := strings.TrimSpace(string(raw))
 	if value == "" {
-		return "", errors.New("REDGRES_REDIS_ADMIN_URL_FILE: is empty")
+		return "", errors.New(envName + ": is empty")
 	}
 	return value, nil
 }

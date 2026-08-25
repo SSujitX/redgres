@@ -70,6 +70,45 @@ func TestLoadVaultKeyMissingIsNamedEnv(t *testing.T) {
 	}
 }
 
+func TestLoadVaultKeyRejectsSymlinkWithoutReadingTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "vault-target")
+	const canary = "vault-symlink-canary"
+	if err := os.WriteFile(target, []byte(canary), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "vault-secret")
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	_, err := loadVaultKey(config.Config{LegacyVaultSecretFile: path})
+	if err == nil {
+		t.Fatal("expected symlink to fail")
+	}
+	if err.Error() != "REDGRES_LEGACY_VAULT_SECRET_FILE: must be a regular file" {
+		t.Fatalf("err = %q", err.Error())
+	}
+	if strings.Contains(err.Error(), canary) || strings.Contains(err.Error(), path) {
+		t.Fatalf("error exposed canary or path: %q", err.Error())
+	}
+}
+
+func TestLoadVaultKeyRejectsNonRegularFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vault-secret")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := loadVaultKey(config.Config{LegacyVaultSecretFile: path})
+	if err == nil {
+		t.Fatal("expected non-regular file to fail")
+	}
+	if err.Error() != "REDGRES_LEGACY_VAULT_SECRET_FILE: must be a regular file" {
+		t.Fatalf("err = %q", err.Error())
+	}
+}
+
 func TestLoadVaultKeyProductionRejectsGroupWorldReadable(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX file modes are not enforced on Windows")

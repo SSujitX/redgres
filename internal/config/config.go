@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ const (
 	DefaultSessionTTL         = 12 * time.Hour
 	DefaultAbsoluteSessionTTL = 24 * time.Hour
 	DefaultLogLevel           = "info"
+	ProductionStateDirectory  = "/var/lib/redgres"
 
 	MinSessionTTL     = 5 * time.Minute
 	MaxSessionTTL     = 24 * time.Hour
@@ -314,8 +316,11 @@ func validateSQLitePath(path string, production bool) error {
 	if strings.ContainsAny(path, "?#") || strings.ContainsRune(path, 0) {
 		return errors.New("REDGRES_SQLITE_PATH: must not contain URI reserved characters")
 	}
-	if production && !filepath.IsAbs(path) {
-		return errors.New("REDGRES_SQLITE_PATH: production path must be absolute")
+	if production {
+		cleaned := pathpkg.Clean(strings.ReplaceAll(path, `\`, "/"))
+		if !strings.HasPrefix(cleaned, ProductionStateDirectory+"/") {
+			return errors.New("REDGRES_SQLITE_PATH: production path must be under /var/lib/redgres")
+		}
 	}
 	return nil
 }
