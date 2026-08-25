@@ -41,7 +41,9 @@ Cloudflare, the VPS provider, OS root, and backup administrator are privileged t
 
 ## 3.1 Legacy Fernet vault (PG-005 Partial)
 
-`internal/secrets` decrypts committed Python `cryptography==49.0.0` fixtures with the sibling KDF (`database-console-vault-v1:` + secret, SHA-256, URL-safe Base64) and no Fernet TTL. Invalid, tampered, malformed, and wrong-key tokens fail as a single `ErrInvalidToken` and must not echo the key, token, or plaintext. The package does not read env, query PostgreSQL, or expose HTTP. Copied production ciphertext (Gate 4), GET masked metadata, POST reveal, vault SQL, and `REDGRES_LEGACY_VAULT_SECRET_FILE` are not implemented. HTTP `saved_credential` remains `vault_not_implemented`. See [DATA_AND_SECRETS.md](DATA_AND_SECRETS.md).
+`internal/secrets` decrypts committed Python `cryptography==49.0.0` fixtures with the sibling KDF (`database-console-vault-v1:` + secret, SHA-256, URL-safe Base64) and no Fernet TTL. Invalid, tampered, malformed, and wrong-key tokens fail as a single `ErrInvalidToken` and must not echo the key, token, or plaintext. The package does not read env, query PostgreSQL, or expose HTTP.
+
+HTTP vault existence (same Partial): `GET /api/v1/postgres/databases/{db}` and `GET /api/v1/postgres/security` may query `public.project_credentials` for **role_name existence only** (`postgres.read`, not `postgres.credentials`). Ciphertext, `updated_at`, passwords, and `err.Error()` must not appear in HTTP, logs, or audit. Vault connect/query failure is 200 `not_available`/`vault_unavailable`, not 503. Copied production ciphertext (Gate 4), POST reveal, decrypt of vault rows, and `REDGRES_LEGACY_VAULT_SECRET_FILE` are not implemented. See [DATA_AND_SECRETS.md](DATA_AND_SECRETS.md) and [API.md](API.md).
 
 ## 4. Authorization model
 

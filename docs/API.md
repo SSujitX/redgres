@@ -214,7 +214,7 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 |---|---|---|
 | GET | `/api/v1/postgres/databases` | Manageable databases only (implemented) |
 | POST | `/api/v1/postgres/databases` | Create database/role; one-time credentials; `no-store` |
-| GET | `/api/v1/postgres/databases/{db}` | Details/security metadata (implemented; vault status is `not_available`) |
+| GET | `/api/v1/postgres/databases/{db}` | Details/security metadata (implemented; vault existence `present`/`missing`/`not_available`) |
 | GET | `/api/v1/postgres/databases/{db}/connection` | Masked URLs and saved status only |
 | POST | `/api/v1/postgres/databases/{db}/connection/reveal` | Full saved URLs; `no-store`; optionally fresh reauth by policy |
 | POST | `/api/v1/postgres/databases/{db}/credentials/rotate` | Rotate; typed confirmation; `no-store` |
@@ -224,15 +224,40 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 | GET | `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` | Bounded rows/search (implemented; offset/limit; `q` max 128) |
 | DELETE | `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` | PK values + confirmations/reauth |
 | POST | `/api/v1/postgres/databases/{db}/truncate` | Explicit target confirmation + reauth |
-| GET | `/api/v1/postgres/security` | Cluster security overview (implemented; vault status is `not_available`) |
+| GET | `/api/v1/postgres/security` | Cluster security overview (implemented; vault existence query) |
 
 Database/role names in URL segments are decoded then validated. Transport validation never replaces PostgreSQL identifier quoting.
 
-**Implemented now:** `GET /api/v1/postgres/databases`, `GET /api/v1/postgres/databases/{db}`, `GET /api/v1/postgres/databases/{db}/tables`, `GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows`, and `GET /api/v1/postgres/security` require a session and the `postgres.read` capability. List and table list are unpaginated and hard-capped at 500 (`truncated: true` if more rows exist). Details include owner, size, collation/ctype, locale fields, connection count, and security flags. `saved_credential.status` is always `not_available` with reason `vault_not_implemented` in this slice; no vault query or decrypt occurs. Table list returns `{schema,name}` for `information_schema` `BASE TABLE` rows outside `pg_catalog` and `information_schema`. Schema/table names on the table list are result columns. Row browse quotes schema, table, and column names with `pgx.Identifier` and parameterizes values. Query `q` is optional (no minimum); more than 128 Unicode code points returns `400` `validation_error` with `fields.q` and does not query. `q` `ILIKE`s columns whose `data_type` contains `text`, `character`, or `citext` (same predicate as `database-app` `fetch_table_data` at `1c3e8e2`; `citext` stored as `USER-DEFINED` is therefore usually not searched). `%` and `_` in `q` remain LIKE wildcards. Default `limit` is 50; `limit<=0` or `limit>500` clamps to 50; `offset<0` clamps to 0; non-integer `limit`/`offset` is `400`. Response is `{columns,rows,total,offset,limit,request_id}`. A missing or non-`BASE TABLE` schema/table, `pg_catalog`/`information_schema`, or a table with no columns is `404` `not_found` (same message as a missing database). An existing table with columns and zero matching rows is `200` with `rows: []` and `total: 0`. Cell values use JSON-safe encoding (`null`, bool, finite numbers, `numeric` as string, `bytea` as PostgreSQL `\x` hex text, timestamps as RFC3339). Encode/connect/query failure is `503` `dependency_unavailable` and never a healthy empty page. Protected names, protected owners, templates, and `datallowconn=false` are omitted from the list and return the same `404` `not_found` as a missing database (not `protected_resource`); table list and rows do not open a per-database connection for those names. Invalid identifiers return `400` `validation_error` without querying. `GET /api/v1/healthz` does not ping PostgreSQL. `DELETE .../rows` is not implemented.
+**Implemented now:** `GET /api/v1/postgres/databases`, `GET /api/v1/postgres/databases/{db}`, `GET /api/v1/postgres/databases/{db}/tables`, `GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows`, and `GET /api/v1/postgres/security` require a session and the `postgres.read` capability. List and table list are unpaginated and hard-capped at 500 (`truncated: true` if more rows exist). Details include owner, size, collation/ctype, locale fields, connection count, and security flags. Details `saved_credential` is a vault **existence** result for the database owner (`present` / `missing` / `not_available` with reason `vault_unavailable`). Ciphertext is never selected or returned. `vault_not_implemented` is not used. Table list returns `{schema,name}` for `information_schema` `BASE TABLE` rows outside `pg_catalog` and `information_schema`. Schema/table names on the table list are result columns. Row browse quotes schema, table, and column names with `pgx.Identifier` and parameterizes values. Query `q` is optional (no minimum); more than 128 Unicode code points returns `400` `validation_error` with `fields.q` and does not query. `q` `ILIKE`s columns whose `data_type` contains `text`, `character`, or `citext` (same predicate as `database-app` `fetch_table_data` at `1c3e8e2`; `citext` stored as `USER-DEFINED` is therefore usually not searched). `%` and `_` in `q` remain LIKE wildcards. Default `limit` is 50; `limit<=0` or `limit>500` clamps to 50; `offset<0` clamps to 0; non-integer `limit`/`offset` is `400`. Response is `{columns,rows,total,offset,limit,request_id}`. A missing or non-`BASE TABLE` schema/table, `pg_catalog`/`information_schema`, or a table with no columns is `404` `not_found` (same message as a missing database). An existing table with columns and zero matching rows is `200` with `rows: []` and `total: 0`. Cell values use JSON-safe encoding (`null`, bool, finite numbers, `numeric` as string, `bytea` as PostgreSQL `\x` hex text, timestamps as RFC3339). Encode/connect/query failure is `503` `dependency_unavailable` and never a healthy empty page. Protected names, protected owners, templates, and `datallowconn=false` are omitted from the list and return the same `404` `not_found` as a missing database (not `protected_resource`); table list and rows do not open a per-database connection for those names. Invalid identifiers return `400` `validation_error` without querying. `GET /api/v1/healthz` does not ping PostgreSQL. `DELETE .../rows` is not implemented.
 
-**GET `/api/v1/postgres/security`** requires a session cookie and the `postgres.read` capability, and does not require CSRF. There are no query parameters. The path is exact. Other methods are `405` `method_not_allowed`. Missing session is `401` `unauthorized` with no `summary`, `databases`, `connections`, `saved_credential`, or `truncated` keys. Nil adapter or catalog/query failure is `503` `dependency_unavailable` (same operator copy as other PostgreSQL GETs) and is never a `200` with empty arrays. Responses are `Cache-Control: no-store`. This GET is not a mutation and does not write an audit event. Responses never include passwords, URLs, hashes, role OIDs, raw `datacl`, SQL, `err.Error()`, `connection_limit`, `size`, `size_bytes`, `has_saved_password`, `can_rotate`, `missing_password_count`, or URL templates.
+**GET `/api/v1/postgres/security`** requires a session cookie and the `postgres.read` capability, and does not require CSRF. There are no query parameters. The path is exact. Other methods are `405` `method_not_allowed`. Missing session is `401` `unauthorized` with no `summary`, `databases`, `connections`, `saved_credential`, or `truncated` keys. Nil adapter or catalog/query failure is `503` `dependency_unavailable` (same operator copy as other PostgreSQL GETs) and is never a `200` with empty arrays. Responses are `Cache-Control: no-store`. This GET is not a mutation and does not write an audit event. Responses never include passwords, URLs, hashes, role OIDs, raw `datacl`, SQL, `err.Error()`, `connection_limit`, `size`, `size_bytes`, `has_saved_password`, `can_rotate`, or URL templates. `summary.missing_password_count` is present only when the vault existence query succeeded (see below).
 
-This cluster view is a documented delta from `GET /api/v1/postgres/databases`: it lists **all non-template** databases, including `postgres` and `database_console_vault`, so PUBLIC CONNECT on protected targets is visible. Templates (`datistemplate`) are omitted. `protected` is `true` when the row is not `policy.Manageable` (same policy as list/details, including configured deny-lists and the admin database/role). List/details still omit those names (`404`). Vault is not queried: `saved_credential` is always `{ "status": "not_available", "reason": "vault_not_implemented" }`.
+This cluster view is a documented delta from `GET /api/v1/postgres/databases`: it lists **all non-template** databases, including `postgres` and `database_console_vault`, so PUBLIC CONNECT on protected targets is visible. Templates (`datistemplate`) are omitted. `protected` is `true` when the row is not `policy.Manageable` (same policy as list/details, including configured deny-lists and the admin database/role). List/details still omit those names (`404`).
+
+**Vault existence (PG-005/PG-012 Partial freeze).** Capability stays `postgres.read` (not `postgres.credentials`). No new paths. No decrypt, `REDGRES_LEGACY_VAULT_SECRET_FILE`, `ensure_vault` DDL, URL templates, or `internal/secrets` on the request path. SQL is `SELECT role_name FROM public.project_credentials WHERE role_name = ANY($1)` (or parameterized `IN` of unique owners, capped by the existing 500-database list) after `connectTarget` to `database_console_vault`. The query must not mention `encrypted_password` or `updated_at`. Sibling `except Exception: return set()` is not copied.
+
+GET `/api/v1/postgres/databases/{db}` `saved_credential` is always present on 200:
+
+| `status` | `reason` | Meaning |
+|---|---|---|
+| `present` | `""` | Vault query succeeded; owner is in the returned `role_name` set |
+| `missing` | `""` | Vault query succeeded; owner is not in the set |
+| `not_available` | `vault_unavailable` | Vault DB missing, table missing, CONNECT/query denied, or timeout. **200 still**, not 503 |
+
+Never `vault_not_implemented`. Never ciphertext, `updated_at`, role lists, or passwords.
+
+GET `/api/v1/postgres/security` cluster `saved_credential` is vault-query health, not a password:
+
+| `status` | `reason` | Meaning |
+|---|---|---|
+| `ok` | `""` | Existence query succeeded |
+| `not_available` | `vault_unavailable` | Same failure class; **200** with existing `databases`/`connections` |
+
+Catalog List or connection-group failure remains **503**. `summary.missing_password_count` is a JSON number (including `0`) only when cluster status is `ok`; **omit** the key when `vault_unavailable`. Count is **pre-cap**, over the same non-template `databases` array already returned (includes `postgres` and `database_console_vault`). Missing means the row’s `owner` is not in the returned role_name set.
+
+Documented sibling delta (`security_ops.get_security_overview` at `1c3e8e2`): sibling excludes `database_console_vault` from the database list (`datname <> VAULT_DATABASE`) and uses boolean `has_saved_password`. Redgres keeps listing the vault DB and **does not** add `has_saved_password`. Count may be +1 vs sibling.
+
+**UI copy (frozen with this contract):** Details: Saved / Not saved / Not available. Never render `reason` strings. Security: if `ok`, fact **Missing vault entries** = count; if unavailable, **Saved credential** = Not available. No Reveal/Rotate/Create controls.
 
 Database rows reuse existing catalog facts (`datname`, owner, `public_can_connect`, owner superuser/login/createdb/createrole/replication, `active_connections` from the existing `pg_stat_activity` count). Sort by database name ascending. Connection groups match database-app `get_security_overview` at `1c3e8e2`: `backend_type = 'client backend' AND pid <> pg_backend_pid()`, grouped by `datname`, `usename`, `client_addr`, `application_name`, `state`. `database` is `datname` or `"(none)"`; `user` is `usename` or `"(unknown)"`; `client` is `COALESCE(client_addr::text, 'local')`; `application` is `application_name` or `"—"`; `state` is `state` or `"unknown"`; `count` is the group size. No query text.
 
@@ -246,9 +271,10 @@ Success `200`:
     "database_count": 2,
     "public_connect_count": 1,
     "active_connection_count": 3,
-    "connection_group_count": 2
+    "connection_group_count": 2,
+    "missing_password_count": 1
   },
-  "saved_credential": { "status": "not_available", "reason": "vault_not_implemented" },
+  "saved_credential": { "status": "ok", "reason": "" },
   "databases": [
     {
       "name": "postgres",
@@ -278,7 +304,9 @@ Success `200`:
 }
 ```
 
-PG-012 stays Partial: vault existence, missing-password counts, and rotation eligibility are not implemented. Live PostgreSQL 17/18 and viewport evidence are not this slice.
+When cluster `saved_credential.status` is `not_available`, `reason` is `vault_unavailable`, `missing_password_count` is omitted, and `databases`/`connections` remain present.
+
+PG-012 stays Partial: existence GET and `missing_password_count` (when the vault query succeeds) are this freeze; rotation eligibility, POST reveal, Gate 4 copied production ciphertext, `REDGRES_LEGACY_VAULT_SECRET_FILE`, live PostgreSQL 17/18, and viewport evidence remain outstanding. Do not mark Complete.
 
 ## Redis endpoints
 
