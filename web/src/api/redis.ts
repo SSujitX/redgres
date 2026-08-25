@@ -208,6 +208,21 @@ export async function fetchRedisCommands(init: RequestInit = {}) {
   return apiRequest<RedisCommandsPayload & ApiErrorBody>("/api/v1/redis/commands", init);
 }
 
+export type RedisPresetCatalogItem = {
+  preset?: string;
+  queue_kind?: string;
+  commands?: string[];
+};
+
+export type RedisPresetsPayload = {
+  presets?: RedisPresetCatalogItem[];
+  request_id?: string;
+};
+
+export async function fetchRedisPresets(init: RequestInit = {}) {
+  return apiRequest<RedisPresetsPayload & ApiErrorBody>("/api/v1/redis/presets", init);
+}
+
 export type RedisDeleteUserPayload = {
   request_id?: string;
 };

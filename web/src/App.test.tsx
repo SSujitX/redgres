@@ -491,6 +491,23 @@ function redisAclCommandsOk(commands: string[] = ["echo", "get", "ping", "set"])
   });
 }
 
+function redisPresetsOk(presets: unknown[] = redisNamedPresetCatalog()) {
+  return jsonResponse(200, {
+    presets,
+    request_id: "cccccccccccccccccccccccccccccccc",
+  });
+}
+
+function redisNamedPresetCatalog() {
+  return [
+    { preset: "cache-read-write", commands: ["get", "set"] },
+    { preset: "read-only", commands: ["ping"] },
+    { preset: "queue-worker", queue_kind: "lists", commands: ["lpush"] },
+    { preset: "queue-worker", queue_kind: "streams", commands: ["xadd"] },
+    { preset: "queue-worker", queue_kind: "sorted-sets", commands: ["zadd"] },
+  ];
+}
+
 function redisAclPatch200(extra: Record<string, unknown> = {}) {
   return jsonResponse(200, {
     user: {
@@ -612,6 +629,15 @@ function redisAclDetailOk(extra: Record<string, unknown> = {}) {
 function goToAclUsers() {
   fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
   fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "ACL users" }));
+}
+
+function goToPermissionPresets() {
+  fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "ACL users" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Permission presets" }),
+  );
 }
 
 function fillDeleteDialog(dialog: HTMLElement, username = "project_a", password = "owner-secret-15") {
@@ -8422,6 +8448,7 @@ describe("App session and login", () => {
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/redis/users"))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isRedisCommandsUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
   });
 
   it("shows honest Redis ACL search states from the ACL users page", async () => {
@@ -11422,5 +11449,207 @@ describe("App session and login", () => {
     fireEvent.click(await within(dialog).findByRole("button", { name: /project_a/ }));
     expect(await screen.findByRole("region", { name: "ACL user details" })).toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => String(call[1]?.method ?? "").toUpperCase() !== "DELETE")).toBe(true);
+  });
+
+  it("shows the Permission presets catalog instead of the placeholder and GETs /presets once without CSRF", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "presets-a".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisPresetsUrl(url)) {
+        return redisPresetsOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToPermissionPresets();
+    expect(await screen.findByRole("heading", { name: "Permission presets" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Named Redis command sets used when creating or editing ACL users. Custom is not listed here."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("This adapter is not available yet.")).not.toBeInTheDocument();
+    expect(screen.queryByText("This view is not available yet.")).not.toBeInTheDocument();
+    const header = screen.getByRole("heading", { name: "Permission presets" }).closest("header");
+    expect(header).not.toBeNull();
+    expect(header).toHaveClass("page-header", "page-header-redis");
+    expect(within(header as HTMLElement).queryByRole("button")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetch.mock.calls.filter((call) => isRedisPresetsUrl(String(call[0]))).length).toBe(1);
+    });
+    const presetsCall = fetch.mock.calls.find((call) => isRedisPresetsUrl(String(call[0])));
+    expect(presetsCall?.[0]).toBe("/api/v1/redis/presets");
+    const method = presetsCall?.[1]?.method;
+    expect(method === undefined || method === "GET").toBe(true);
+    expect(new Headers(presetsCall?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+  });
+
+  it("paints five named preset rows with payload commands and queue kinds", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "presets-b".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisPresetsUrl(url)) {
+        return redisPresetsOk([
+          ...redisNamedPresetCatalog(),
+          { preset: "custom", commands: ["eval"] },
+        ]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToPermissionPresets();
+    const cache = await screen.findByRole("heading", { name: "Cache read/write" });
+    expect(within(cache.closest("section") as HTMLElement).getByText("get")).toBeInTheDocument();
+    expect(within(cache.closest("section") as HTMLElement).getByText("set")).toBeInTheDocument();
+    const readOnly = screen.getByRole("heading", { name: "Read only" });
+    expect(within(readOnly.closest("section") as HTMLElement).getByText("ping")).toBeInTheDocument();
+    const queueHeadings = screen.getAllByRole("heading", { name: "Queue/worker" });
+    expect(queueHeadings).toHaveLength(3);
+    expect(within(queueHeadings[0]?.closest("section") as HTMLElement).getByText("Lists")).toBeInTheDocument();
+    expect(within(queueHeadings[0]?.closest("section") as HTMLElement).getByText("lpush")).toBeInTheDocument();
+    expect(within(queueHeadings[1]?.closest("section") as HTMLElement).getByText("Streams")).toBeInTheDocument();
+    expect(within(queueHeadings[1]?.closest("section") as HTMLElement).getByText("xadd")).toBeInTheDocument();
+    expect(within(queueHeadings[2]?.closest("section") as HTMLElement).getByText("Sorted sets")).toBeInTheDocument();
+    expect(within(queueHeadings[2]?.closest("section") as HTMLElement).getByText("zadd")).toBeInTheDocument();
+    expect(screen.queryByText("Custom")).not.toBeInTheDocument();
+    expect(screen.queryByText("eval")).not.toBeInTheDocument();
+    expect(document.querySelector(".command-checklist")).toBeNull();
+  });
+
+  it("shows session-expired copy without catalog rows when GET /presets is 401", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "presets-401".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisPresetsUrl(url)) {
+        return jsonResponse(401, {
+          error: { code: "unauthorized", message: "Authentication required" },
+          presets: [{ preset: "cache-read-write", commands: ["leaked-cmd"] }],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToPermissionPresets();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your session has expired. Sign in again to continue.",
+    );
+    expect(screen.queryByRole("heading", { name: "Cache read/write" })).not.toBeInTheDocument();
+    expect(screen.queryByText("leaked-cmd")).not.toBeInTheDocument();
+    expect(screen.queryByText("get")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["missing presets", { request_id: "dddddddddddddddddddddddddddddddd" }],
+    ["non-array presets", { presets: { preset: "cache-read-write" }, request_id: "dddddddddddddddddddddddddddddddd" }],
+    ["empty presets", { presets: [], request_id: "dddddddddddddddddddddddddddddddd" }],
+    ["unknown presets only", { presets: [{ preset: "custom", commands: ["eval"] }], request_id: "dddddddddddddddddddddddddddddddd" }],
+  ] as const)("shows unavailable copy for %s and no catalog rows", async (_label, body) => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: `presets-${_label}`.padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisPresetsUrl(url)) {
+        return jsonResponse(200, body);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToPermissionPresets();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Permission presets are unavailable.");
+    expect(screen.queryByText("Redis is unavailable.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Redis is not configured.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No ACL users.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Cache read/write" })).not.toBeInTheDocument();
+    expect(screen.queryByText("eval")).not.toBeInTheDocument();
+  });
+
+  it("does not fetch Redis presets on the login route", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+  });
+
+  it("does not GET /presets from Create ACL user or Edit permissions", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "presets-forms".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk();
+      }
+      if (isRedisCommandsUrl(url)) {
+        return redisAclCommandsOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    expect(await screen.findByRole("dialog", { name: "Create ACL user" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    expect(await screen.findByRole("dialog", { name: "Edit permissions" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+  });
+
+  it("does not persist permission presets in localStorage or sessionStorage", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "presets-store".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisPresetsUrl(url)) {
+        return redisPresetsOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToPermissionPresets();
+    expect(await screen.findByRole("heading", { name: "Cache read/write" })).toBeInTheDocument();
+    expect(screen.getByText("get")).toBeInTheDocument();
+    expect(setItem).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Permission presets" })).not.toBeInTheDocument();
+    expect(screen.queryByText("get")).not.toBeInTheDocument();
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
   });
 });

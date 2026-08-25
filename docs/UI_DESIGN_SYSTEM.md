@@ -155,7 +155,7 @@ Every page header has one title, optional concise description, service/status co
 ### Forms and checklists
 
 - Dialog fields use `.field-stack` (column flex, `--space-3` gaps, 44px control height).
-- Allow-list command catalogs (Edit permissions Custom and Create ACL user Custom) use `.command-checklist`: one labeled checkbox per row, `min-height: 44px`, `min-width: 0`, `--space-2` label gap, and `--line` / `--radius-surface` fieldset chrome. Do not wrap commands as inline labels.
+- Allow-list command catalogs (Edit permissions Custom and Create ACL user Custom) use `.command-checklist`: one labeled checkbox per row, `min-height: 44px`, `min-width: 0`, `--space-2` label gap, and `--line` / `--radius-surface` fieldset chrome. Do not wrap commands as inline labels. The Permission presets page is a read-only named-command catalog: stacked headings plus `.rule-list`, never `.command-checklist`.
 
 ### Status and metrics
 

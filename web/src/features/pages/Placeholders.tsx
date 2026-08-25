@@ -4,6 +4,7 @@ import OverviewPage from "../overview/OverviewPage";
 import DatabasesPage from "../postgres/DatabasesPage";
 import SecurityOverview from "../postgres/SecurityOverview";
 import AclUsersPage from "../redis/AclUsersPage";
+import PresetsPage from "../redis/PresetsPage";
 
 type PageProps = {
   section: SectionId;
@@ -46,6 +47,10 @@ export function SectionPage({
 
   if (section === "redis") {
     return <AclUsersPage csrf={csrf} focusUsername={focusUsername} focusNonce={focusNonce} />;
+  }
+
+  if (section === "redis-presets") {
+    return <PresetsPage />;
   }
 
   const adapter =
