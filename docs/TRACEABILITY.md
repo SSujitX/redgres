@@ -1694,20 +1694,32 @@ Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
  Parent review of API then FF onto master `711e0f3`:
   go test -count=1 ./internal/redisadmin ./internal/httpapi
    → ok redisadmin 1.644s; httpapi 14.604s
- Writer UI feat/redis-007-rotate-ui `74cd219`:
+ Writer UI feat/redis-007-rotate-ui `74cd219` (writer-attributed, Node v25.3.0;
+ web/.nvmrc pins 24.19.0):
   npm --prefix web test -- --run → Tests 154 passed (154)
- Parent after UI merge `2b1fca5` + this docs commit:
+  npm --prefix web ci → 113 packages (writer)
+  npm --prefix web run build → tsc + vite 8.2.2 (writer; dist gitignored)
+ Parent after UI merge `2b1fca5` + docs `c150289`:
   go test -count=1 ./internal/redisadmin ./internal/httpapi
    → ok redisadmin 2.045s; httpapi 16.661s
   npm --prefix web test -- --run → Tests 154 passed (154)
-Not run: live Redis, COMPATIBILITY.md §6, gitleaks, govulncheck, CI,
- Playwright, npm production build, viewport/zoom, Node 24.19.0
+  go vet ./... → no findings; go build -o NUL ./cmd/redgres → success
+Not run by parent: live Redis, COMPATIBILITY.md §6, gitleaks, govulncheck,
+ CI, Playwright, npm production build, viewport/zoom, Node 24.19.0
 Known limitations: SETUSER-then-audit-fail leftover password (not returned);
  GetUser/SETUSER recreate race; MemoryClient stores >password (real Redis
  hashes); no viewport sign-off; REDIS-003 residuals unchanged.
-Reviewer/date: pending parent security + UI + evidence + verifier.
- Local commits: `711e0f3` (API), `74cd219` (UI), `2b1fca5` (merge UI).
- Not pushed. Keep REDIS-007 Partial.
+ UI Medium residuals (not reject): confirm sheet does not name the ACL user;
+ focus does not return to Rotate; Escape/search can cover the confirm;
+ ticket focus-trap still absent (REDIS-003).
+Reviewer/date: Security review (2026-08-25) approve Partial; no
+ Critical/High/Medium. Reject gates absent. UI review (2026-08-25) approve
+ Partial UI; no Critical/High. Explicitly NOT viewport/zoom sign-off.
+ Evidence review (2026-08-25) keep-Partial; no required corrections.
+ Writer-only ./... / vet / build and UI npm ci/build are not parent-after-merge
+ re-runs. Verifier pending this pin commit.
+ Local commits: `711e0f3` (API), `74cd219` (UI), `2b1fca5` (merge UI),
+ `c150289` (docs record). Not pushed. Keep REDIS-007 Partial.
 ```
 
 
