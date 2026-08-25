@@ -15,6 +15,10 @@ import (
 )
 
 const postgresCreateTimeout = 30 * time.Second
+const postgresRotateTimeout = 30 * time.Second
+const postgresRotateConfirmMessage = "Type the database name exactly to confirm rotation"
+const postgresRotateInProgressMessage = "A password rotation is already in progress for this role."
+const postgresRotateVaultUnsyncedMessage = "The PostgreSQL password was changed but the vault could not be saved. Rotate again."
 
 type postgresListBody struct {
 	postgresadmin.ListResult
@@ -240,6 +244,73 @@ func (s *Server) handlePostgresConnectionReveal(w http.ResponseWriter, r *http.R
 	})
 }
 
+type postgresRotateRequest struct {
+	Confirmation string `json:"confirmation"`
+}
+
+func (s *Server) handlePostgresCredentialsRotate(w http.ResponseWriter, r *http.Request) {
+	name, err := decodePathIdentifier(chi.URLParam(r, "db"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid database name")
+		return
+	}
+	var body postgresRotateRequest
+	if err := decodeJSON(r, &body); err != nil {
+		s.writeDecodeError(w, r, err)
+		return
+	}
+	if body.Confirmation != name {
+		s.writeErrorFields(w, r, http.StatusBadRequest, CodeValidationError, postgresRotateConfirmMessage, map[string]string{"confirmation": "invalid"})
+		return
+	}
+	sess := sessionFrom(r)
+	meta := map[string]any{"database": name}
+	if s.postgres == nil {
+		_ = s.audit.Record(sess.Username, "postgres.credential.rotate", name, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), postgresRotateTimeout)
+	defer cancel()
+	rotated, err := s.postgres.Rotate(ctx, name)
+	if err != nil {
+		var unsynced postgresadmin.VaultUnsynced
+		if errors.As(err, &unsynced) {
+			_ = s.audit.Record(sess.Username, "postgres.credential.rotate", unsynced.Database, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), map[string]any{"database": unsynced.Database, "owner": unsynced.Owner})
+		}
+		s.writePostgresError(w, r, err)
+		return
+	}
+	cred := postgresRevealCredential{
+		Username: rotated.Owner,
+		Password: rotated.Password,
+		OneTime:  false,
+	}
+	var urls postgresRevealURLs
+	if s.cfg.PostgresPublicHost != "" && s.cfg.PostgresDirectPort != "" {
+		if u, urlErr := postgresadmin.ProjectConnectionURL(s.cfg.PostgresPublicHost, s.cfg.PostgresDirectPort, rotated.Owner, rotated.Password, rotated.Database); urlErr == nil {
+			urls.Direct = u
+		}
+	}
+	if s.cfg.PostgresPublicHost != "" && s.cfg.PostgresPooledPort != "" {
+		if u, urlErr := postgresadmin.ProjectConnectionURL(s.cfg.PostgresPublicHost, s.cfg.PostgresPooledPort, rotated.Owner, rotated.Password, rotated.Database); urlErr == nil {
+			urls.Pooled = u
+		}
+	}
+	if urls.Direct != "" || urls.Pooled != "" {
+		cred.URLs = &urls
+	}
+	if err := s.audit.Record(sess.Username, "postgres.credential.rotate", rotated.Database, "success", requestID(r), auth.ClientIP(r.RemoteAddr), map[string]any{"database": rotated.Database, "owner": rotated.Owner}); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, postgresRevealResponse{
+		Resource:   postgresRevealResource{Type: "postgres_database", Name: rotated.Database},
+		Credential: cred,
+		RequestID:  requestID(r),
+	})
+}
+
 type postgresTablesBody struct {
 	postgresadmin.TableListResult
 	RequestID string `json:"request_id"`
@@ -357,6 +428,10 @@ func (s *Server) writePostgresError(w http.ResponseWriter, r *http.Request, err 
 		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid database name")
 	case errors.Is(err, postgresadmin.ErrProtected):
 		s.writeError(w, r, http.StatusForbidden, CodeProtectedResource, "This PostgreSQL name is protected")
+	case errors.Is(err, postgresadmin.ErrOperationInProgress):
+		s.writeError(w, r, http.StatusConflict, CodeOperationInProgress, postgresRotateInProgressMessage)
+	case errors.Is(err, postgresadmin.ErrVaultUnsynced):
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, postgresRotateVaultUnsyncedMessage)
 	case errors.Is(err, postgresadmin.ErrConflict):
 		var conflict postgresadmin.Conflict
 		if errors.As(err, &conflict) && conflict.Field != "" {

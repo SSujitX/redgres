@@ -3,14 +3,32 @@ package postgresadmin
 import "errors"
 
 var (
-	ErrInvalidIdentifier = errors.New("invalid identifier")
-	ErrNotFound          = errors.New("not found")
-	ErrUnavailable       = errors.New("dependency unavailable")
-	ErrNotConfigured     = errors.New("not configured")
-	ErrVaultUnavailable  = errors.New("vault unavailable")
-	ErrProtected         = errors.New("protected resource")
-	ErrConflict          = errors.New("conflict")
+	ErrInvalidIdentifier   = errors.New("invalid identifier")
+	ErrNotFound            = errors.New("not found")
+	ErrUnavailable         = errors.New("dependency unavailable")
+	ErrNotConfigured       = errors.New("not configured")
+	ErrVaultUnavailable    = errors.New("vault unavailable")
+	ErrProtected           = errors.New("protected resource")
+	ErrConflict            = errors.New("conflict")
+	ErrOperationInProgress = errors.New("operation in progress")
+	ErrVaultUnsynced       = errors.New("vault unsynced after rotate")
 )
+
+const vaultUnsyncedMessage = "The PostgreSQL password was changed but the vault could not be saved. Rotate again."
+
+// VaultUnsynced is a 503 after ALTER succeeded but vault upsert failed.
+type VaultUnsynced struct {
+	Database string
+	Owner    string
+}
+
+func (VaultUnsynced) Error() string {
+	return vaultUnsyncedMessage
+}
+
+func (VaultUnsynced) Unwrap() error {
+	return ErrVaultUnsynced
+}
 
 const (
 	conflictFieldDatabase = "database"

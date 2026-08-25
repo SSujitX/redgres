@@ -369,19 +369,26 @@ func TestPostgresCreateAuditFailClosed(t *testing.T) {
 	}
 }
 
-func TestPostgresCreateRotateStillUnregistered(t *testing.T) {
+func TestPostgresRotatePathIsRegistered(t *testing.T) {
 	fx := loadPython49(t)
-	srv := createServer(t, createMemory(t), secrets.DeriveVaultKey(fx.SessionSecret))
+	cat := &postgresadmin.MemoryCatalog{Rows: []postgresadmin.CatalogRow{
+		{Name: "project_a", Owner: "app_project_a", AllowConn: true, OwnerCanLogin: true},
+	}}
+	srv := createServer(t, cat, secrets.DeriveVaultKey(fx.SessionSecret))
 	seedOwner(t, srv)
 	h := srv.Handler()
 	cookie, csrf := login(t, h)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, authed(http.MethodPost, postgresRotatePath, cookie, csrf, `{}`))
-	if rec.Code != http.StatusMethodNotAllowed && rec.Code != http.StatusNotFound {
-		t.Fatalf("rotate status = %d %s", rec.Code, rec.Body.String())
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(method, postgresRotatePath, cookie, csrf, postgresRotateBody))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s status = %d %s", method, rec.Code, rec.Body.String())
+		}
 	}
-	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
-		t.Fatal("POST rotate must stay unregistered")
+	post := httptest.NewRecorder()
+	h.ServeHTTP(post, authed(http.MethodPost, postgresRotatePath, cookie, csrf, postgresRotateBody))
+	if post.Code != http.StatusOK {
+		t.Fatalf("POST rotate status = %d %s", post.Code, post.Body.String())
 	}
 	item := httptest.NewRecorder()
 	h.ServeHTTP(item, authed(http.MethodPost, "/api/v1/postgres/databases/project_a", cookie, csrf, postgresCreateBody))

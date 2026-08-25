@@ -39,6 +39,8 @@ type Catalog interface {
 	CreateDatabase(ctx context.Context, database, owner string) error
 	LockConnect(ctx context.Context, database, owner string) error
 	InsertCredential(ctx context.Context, role, encrypted string) error
+	AlterRolePassword(ctx context.Context, owner, password string) error
+	UpsertCredential(ctx context.Context, role, encrypted string) error
 	DeleteCredential(ctx context.Context, role string) error
 	TerminateAndDropDatabase(ctx context.Context, database string) error
 	OwnedDatabaseCount(ctx context.Context, owner string) (int, error)
@@ -57,6 +59,7 @@ type Inventory interface {
 	Connection(ctx context.Context, name string) (Connection, error)
 	Reveal(ctx context.Context, name string) (RevealedConnection, error)
 	Create(ctx context.Context, database, owner string) (CreatedDatabase, error)
+	Rotate(ctx context.Context, name string) (CreatedDatabase, error)
 	Ping(ctx context.Context) error
 	PingPooled(ctx context.Context) error
 }
