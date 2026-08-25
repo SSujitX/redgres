@@ -3172,4 +3172,23 @@ Keep REDIS-008 Partial. Keep AUTH-006 Partial. Keep PG-012 Partial.
 Not pushed.
 ```
 
+## REDIS-008 ACL delete evidence pin (2026-08-25)
+
+```text
+Requirement: REDIS-008 Partial + AUTH-006 Partial (DELETE /api/v1/redis/users/{username}
+ in-handler reauth + inspector Delete; no POST /api/v1/auth/reauth)
+Decision/ADR: AUTH-006 in-handler; freeze `372fbfa`
+Reviewer/date: Evidence review (2026-08-25) on `bae3c8f` keep-Partial /
+ reject-Complete. Freeze criteria map to implementation and claimed tests.
+ Status rows AUTH-006 / REDIS-008 Partial; AGENTS.md current truth names
+ this DELETE only. Canonical API/UX/SECURITY/DATA_AND_SECRETS/ARCHITECTURE
+ updated at freeze. Historical TRACEABILITY “not started” slices left
+ archival. Independent UI pin `062fb4c` and security pin `bae3c8f` already
+ landed (reviewers did not re-run tests). Parent command set remains after
+ `967e156`. This reviewer did not re-run tests. Do not mark Complete.
+Keep REDIS-008 Partial. Keep AUTH-006 Partial. Keep PG-012 Partial.
+ Keep PG-004 Partial. Keep PG-005 Partial.
+ Verifier pending. Not pushed.
+```
+
 
