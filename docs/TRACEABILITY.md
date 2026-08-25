@@ -7,7 +7,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
-| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH through `AllowedCommands()` + GET `/api/v1/redis/commands` + inspector Custom checklist (no POST create custom); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete); REDIS-008 not started | Partial |
+| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003/004 Partial: POST create `on` + named presets + GET `/api/v1/redis/presets` + one-time ticket; REDIS-005 Partial: custom PATCH + POST create custom through `AllowedCommands()` + GET `/api/v1/redis/commands` + Edit/Create Custom checklists (no categories); REDIS-006 Partial: PATCH named-preset prefix/grants (password preserved) + inspector Edit permissions; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete); REDIS-008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
@@ -2042,6 +2042,87 @@ Reviewer/date: Security review (2026-08-25) on `ed64500` approve Partial;
  `ed64500` (docs record), `9f81257` (checklist layout), `d6a5b69`
  (review pin), `e595b1c` (UI re-check pin), this verifier record.
  Not pushed.
+ Keep REDIS-005 Partial.
+```
+
+## REDIS-005 POST create custom allow-list (2026-08-25)
+
+```text
+Requirement: REDIS-005 (Partial residual: POST /api/v1/redis/users
+ accepts preset=custom plus commands ⊆ AllowedCommands(); Create
+ dialog Custom checklist). Keep REDIS-005 Partial until live Redis /
+ COMPATIBILITY.md §6 / viewport exist. Do not mark Complete. No
+ categories. No POST enabled/password. Create stays on-only.
+ REDIS-008 / AUTH-006 not started. Named create (REDIS-003/004)
+ unchanged except commands is a known field (omitted/empty OK;
+ non-empty on named/defaulted preset → 400 fields.commands).
+ go-redis stays v9.22.0. inspect* unchanged vs 74e41a2.
+Decision/ADR: ADR-001; ADR-006 (fail-closed allow-list, not deny-list).
+ Create SETUSER: reset on >password ~prefix:* resetchannels -@all +CMD;
+ no nocommands (PATCH-only); no +@all; no clearselectors. Capability
+ redis.provision. AllowedCommands() unchanged. Audit redis.user.create:
+ username, preset (actual/inferred), key_pattern, plus queue_kind only
+ when actual preset is queue-worker — never the command list.
+ GET /commands unchanged. GET /presets still has no custom row.
+Source: redis-ui CommandsForPreset / AssertSafeCommands / deniedAlways
+ at D:\code\github\redis-ui (read-only ANTI-PATTERN). Not ported.
+Implementation files: internal/redisadmin/{service.go,create_test.go,
+ allowlist_test.go};
+ internal/httpapi/{server.go,redis_users_routes.go,
+ redis_users_routes_test.go,redis_commands_routes_test.go};
+ web/src/{api/redis.ts,features/redis/CreateAclUserForm.tsx,
+ features/redis/AclUsersPage.tsx,App.test.tsx};
+ docs/{API,ARCHITECTURE,SECURITY,UX,UI_DESIGN_SYSTEM,TRACEABILITY}.md;
+ AGENTS.md
+ TRACEABILITY.md / AGENTS.md owned by parent after writer commits.
+Unit/HTTP: custom 201 SETUSER reset/on/>/~/resetchannels/-@all/+CMD,
+ no nocommands/flushall/acl/@all; named + non-empty commands 400
+ fields.commands before Redis (ACLListErr unused); custom
+ empty/omitted/[]/flushall/@all/acl 400 fields.commands before Redis;
+ named omitted/[] and {username,key_pattern} still 201; inferPreset
+ may label custom grants as a named preset; audit success/failure omit
+ command list/password/>; SETUSER-then-audit-fail 503, no credential;
+ CSRF/401/403/409/503 plus PATCH custom + GET /commands + named PATCH
+ + enable + rotate regressions. inspect* == 74e41a2.
+Frontend: Create dialog Custom option; GET /commands (cookie, no CSRF)
+ when preset is Custom; no inspect prefill; empty/catalog-fail disables
+ Create, no invented list; POST {username,key_pattern,preset:custom,
+ commands} CSRF, no queue_kind/password; named POST omits commands;
+ 201 still ticket; login never GET /commands; Edit Custom unchanged.
+ stacked .command-checklist reused.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
+ Writer API feat/redis-005-create-custom-api `c333c00`:
+  gofmt -l touched Go → empty
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 1.643s; httpapi 22.397s
+  go test -count=1 ./... → ok; go vet ./... → no findings
+  go build -o NUL ./cmd/redgres → success
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+  TestInspectSetsEqual74e41a2 → ok
+ Parent review of API then FF onto master `c333c00`:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 1.599s; httpapi 18.479s
+ Writer UI feat/redis-005-create-custom-ui `0f947d2` (Node v25.3.0):
+  npm --prefix web run test:run → Tests 184 passed (184)
+  npm --prefix web run build → tsc + vite (writer; dist gitignored)
+ Parent after UI merge `e2a494b` + this docs commit:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 2.041s; httpapi 21.361s
+  go test -count=1 ./... → ok
+  npm --prefix web run test:run → Tests 184 passed (184)
+  go vet ./... → no findings; go build -o NUL ./cmd/redgres → success
+  go list -m github.com/redis/go-redis/v9 → v9.22.0
+Not run by parent: live Redis, COMPATIBILITY.md §6, gitleaks, govulncheck,
+ CI, Playwright, npm production build, viewport/zoom, Node 24.19.0,
+ go test -race.
+Known limitations: SETUSER-then-audit-fail leftover user; GetUser/SETUSER
+ race; MemoryClient plaintext > residual; Redis 7+ PATCH selectors
+ (inherited Medium); no categories; if custom set equals a named inspect
+ set, inferPreset may return that named preset (expected).
+Reviewer/date: pending independent security / UI / evidence review on this
+ docs commit. Verifier pending after those reviews.
+ Local commits: `c333c00` (API), `0f947d2` (UI), `e2a494b` (merge UI),
+ this docs record. Not pushed.
  Keep REDIS-005 Partial.
 ```
 
