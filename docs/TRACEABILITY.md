@@ -1636,12 +1636,14 @@ Not run: live Redis, §6, gitleaks, govulncheck, CI, Playwright,
 Known limitations: SETUSER-then-audit-fail leftover toggle;
  GetUser/SETUSER recreate race; disable does not kill connections;
  no rotate; no viewport sign-off; REDIS-003 residuals unchanged.
-Reviewer/date: Evidence review (2026-08-25) docs-correction-required
- then keep-Partial: catalog enable/disable marked implemented; local
- commits include docs SHAs. Security and UI reviews still pending.
- Verifier pending. Do not mark Complete (rotate missing).
+Reviewer/date: Security review (2026-08-25) approve Partial; no
+ Critical/High/Medium. L1 GetUser/SETUSER recreate race accepted
+ unfixed. Evidence review (2026-08-25) docs-correction-required then
+ keep-Partial (`014e0dc`). UI review still pending. Verifier pending.
+ Do not mark Complete (rotate missing).
  Local commits: `beaa606` (API), `8158c6a` (UI), `6ecd075` (merge UI),
- `8eac4eb` (docs record), `74af2c4` (parent test results). Not pushed.
+ `8eac4eb` (docs record), `74af2c4` (parent test results), `014e0dc`
+ (catalog implemented). Not pushed.
 ```
 
 
