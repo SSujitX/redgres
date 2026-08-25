@@ -77,7 +77,7 @@ export type RedisCreateUserPayload = {
   request_id?: string;
 };
 
-export type RedisAclPreset = "cache-read-write" | "read-only" | "queue-worker";
+export type RedisAclPreset = "cache-read-write" | "read-only" | "queue-worker" | "custom";
 export type RedisAclQueueKind = "lists" | "streams" | "sorted-sets";
 
 export type RedisCreateUserOptions = {
@@ -159,6 +159,7 @@ export type RedisPatchUserOptions = {
   keyPattern: string;
   preset: RedisAclPreset;
   queueKind?: RedisAclQueueKind;
+  commands?: string[];
 };
 
 export async function patchRedisUser(
@@ -171,12 +172,16 @@ export async function patchRedisUser(
     key_pattern: string;
     preset: RedisAclPreset;
     queue_kind?: RedisAclQueueKind;
+    commands?: string[];
   } = {
     key_pattern: options.keyPattern,
     preset: options.preset,
   };
   if (options.preset === "queue-worker") {
     body.queue_kind = options.queueKind ?? "lists";
+  }
+  if (options.preset === "custom") {
+    body.commands = options.commands ?? [];
   }
   return apiRequest<RedisPatchUserPayload & ApiErrorBody>(
     `/api/v1/redis/users/${encodeURIComponent(username)}`,
@@ -187,6 +192,15 @@ export async function patchRedisUser(
       body: JSON.stringify(body),
     },
   );
+}
+
+export type RedisCommandsPayload = {
+  commands?: string[];
+  request_id?: string;
+};
+
+export async function fetchRedisCommands(init: RequestInit = {}) {
+  return apiRequest<RedisCommandsPayload & ApiErrorBody>("/api/v1/redis/commands", init);
 }
 
 export { errorMessage };

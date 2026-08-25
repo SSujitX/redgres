@@ -124,10 +124,10 @@ function IsolatedId({ value }: { value: string }) {
 }
 
 function namedPreset(value: string): RedisAclPreset {
-  if (value === "read-only" || value === "queue-worker" || value === "cache-read-write") {
+  if (value === "read-only" || value === "queue-worker" || value === "cache-read-write" || value === "custom") {
     return value;
   }
-  return "cache-read-write";
+  return "custom";
 }
 
 function namedQueueKind(value: string): RedisAclQueueKind {
@@ -538,7 +538,12 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
     }
   }
 
-  async function handlePatch(keyPattern: string, preset: RedisAclPreset, queueKind?: RedisAclQueueKind) {
+  async function handlePatch(
+    keyPattern: string,
+    preset: RedisAclPreset,
+    queueKind?: RedisAclQueueKind,
+    commands?: string[],
+  ) {
     if (!detail || detail.protected || list.kind !== "ok" || editing || toggling || rotating || ticket) {
       return;
     }
@@ -553,7 +558,9 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
       const result = await patchRedisUser(
         username,
         csrf,
-        { keyPattern, preset, queueKind },
+        preset === "custom"
+          ? { keyPattern, preset, commands: commands ?? [] }
+          : { keyPattern, preset, queueKind },
         { signal: controller.signal },
       );
       if (controller.signal.aborted) {
@@ -644,7 +651,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             </button>
           ) : null}
         </div>
-        <p>Create an ACL user with a named permission preset and a project key prefix, inspect modeled rules, edit named-preset permissions, or rotate a non-protected password. Delete is not available in this slice.</p>
+        <p>Create an ACL user with a named permission preset and a project key prefix, inspect modeled rules, edit named or custom allow-list permissions, or rotate a non-protected password. Delete is not available in this slice.</p>
       </header>
       {ticket ? <CredentialTicket credential={ticket} onDismiss={dismissTicket} /> : null}
       {createOpen ? (
@@ -680,6 +687,7 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
           keyPattern={detail.key_pattern}
           preset={namedPreset(detail.preset)}
           queueKind={namedQueueKind(detail.queue_kind)}
+          inspectCommands={detail.commands}
           error={editError}
           submitting={editing}
           onCancel={() => {
@@ -689,7 +697,9 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             setEditOpen(false);
             setEditError("");
           }}
-          onSubmit={(keyPattern, preset, queueKind) => void handlePatch(keyPattern, preset, queueKind)}
+          onSubmit={(keyPattern, preset, queueKind, commands) =>
+            void handlePatch(keyPattern, preset, queueKind, commands)
+          }
         />
       ) : null}
       {listAlert ? (
