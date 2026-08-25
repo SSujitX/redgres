@@ -25,6 +25,7 @@ var hardcodedProtectedRoles = []string{
 type Policy struct {
 	databases map[string]struct{}
 	roles     map[string]struct{}
+	adminUser string
 }
 
 func NewPolicy(cfg config.Config) Policy {
@@ -38,7 +39,11 @@ func NewPolicy(cfg config.Config) Policy {
 	if cfg.PostgresUser != "" {
 		roles[cfg.PostgresUser] = struct{}{}
 	}
-	return Policy{databases: databases, roles: roles}
+	return Policy{databases: databases, roles: roles, adminUser: cfg.PostgresUser}
+}
+
+func (p Policy) AdminUser() string {
+	return p.adminUser
 }
 
 func (p Policy) DatabaseDenied(name string) bool {

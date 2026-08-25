@@ -67,6 +67,44 @@ func TestDeriveVaultKeyMatchesPython49(t *testing.T) {
 	}
 }
 
+func TestEncryptRoundtripASCIIFixturePlaintext(t *testing.T) {
+	fx := loadPython49(t)
+	key := DeriveVaultKey(fx.SessionSecret)
+	token, err := Encrypt(key, []byte(fx.ASCII.Plaintext))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Decrypt(key, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, []byte(fx.ASCII.Plaintext)) {
+		t.Fatalf("plaintext %q, want %q", got, fx.ASCII.Plaintext)
+	}
+}
+
+func TestEncryptRoundtripUnicodeFixturePlaintext(t *testing.T) {
+	fx := loadPython49(t)
+	key := DeriveVaultKey(fx.SessionSecret)
+	token, err := Encrypt(key, []byte(fx.Unicode.Plaintext))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Decrypt(key, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, []byte(fx.Unicode.Plaintext)) {
+		t.Fatalf("plaintext %q, want %q", got, fx.Unicode.Plaintext)
+	}
+}
+
+func TestEncryptInvalidKeyFailsClosed(t *testing.T) {
+	fx := loadPython49(t)
+	_, err := Encrypt("not-a-fernet-key", []byte(fx.ASCII.Plaintext))
+	assertInvalidToken(t, err, fx, "", fx.ASCII.Plaintext)
+}
+
 func TestDecryptASCIIPassword(t *testing.T) {
 	fx := loadPython49(t)
 	got, err := Decrypt(DeriveVaultKey(fx.SessionSecret), fx.ASCII.Token)

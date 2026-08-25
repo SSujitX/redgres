@@ -4,10 +4,13 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
+	"time"
 )
 
 // ErrInvalidToken is the single public Decrypt failure class.
@@ -25,6 +28,37 @@ const (
 	fernetHMACLen    = sha256.Size
 	fernetMinLen     = fernetVersionLen + fernetTSLen + fernetIVLen + aes.BlockSize + fernetHMACLen
 )
+
+// Encrypt produces a Fernet token (version 0x80). No TTL is encoded as expiry;
+// the timestamp is the current Unix seconds. key is a URL-safe Base64 Fernet key.
+func Encrypt(key string, plaintext []byte) (string, error) {
+	keyBytes, err := decodeURLBase64(key)
+	if err != nil || len(keyBytes) != fernetKeyLen {
+		return "", ErrInvalidToken
+	}
+	iv := make([]byte, fernetIVLen)
+	if _, err := rand.Read(iv); err != nil {
+		return "", ErrInvalidToken
+	}
+	padded := pkcs7Pad(plaintext, aes.BlockSize)
+	block, err := aes.NewCipher(keyBytes[fernetSigningLen:])
+	if err != nil {
+		return "", ErrInvalidToken
+	}
+	ciphertext := make([]byte, len(padded))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, padded)
+
+	token := make([]byte, fernetVersionLen+fernetTSLen+fernetIVLen+len(ciphertext)+fernetHMACLen)
+	token[0] = fernetVersion
+	binary.BigEndian.PutUint64(token[fernetVersionLen:fernetVersionLen+fernetTSLen], uint64(time.Now().Unix()))
+	copy(token[fernetVersionLen+fernetTSLen:fernetVersionLen+fernetTSLen+fernetIVLen], iv)
+	copy(token[fernetVersionLen+fernetTSLen+fernetIVLen:len(token)-fernetHMACLen], ciphertext)
+
+	mac := hmac.New(sha256.New, keyBytes[:fernetSigningLen])
+	mac.Write(token[:len(token)-fernetHMACLen])
+	copy(token[len(token)-fernetHMACLen:], mac.Sum(nil))
+	return base64.URLEncoding.EncodeToString(token), nil
+}
 
 // Decrypt recovers Fernet plaintext. No TTL is applied; old timestamps succeed.
 // key is a URL-safe Base64 Fernet key (32 raw bytes).
@@ -80,6 +114,16 @@ func decodeURLBase64(s string) ([]byte, error) {
 		s += "="
 	}
 	return base64.URLEncoding.DecodeString(s)
+}
+
+func pkcs7Pad(buf []byte, blockSize int) []byte {
+	pad := blockSize - (len(buf) % blockSize)
+	out := make([]byte, len(buf)+pad)
+	copy(out, buf)
+	for i := len(buf); i < len(out); i++ {
+		out[i] = byte(pad)
+	}
+	return out
 }
 
 func pkcs7Unpad(buf []byte, blockSize int) ([]byte, bool) {

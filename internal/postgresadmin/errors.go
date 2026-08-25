@@ -8,4 +8,31 @@ var (
 	ErrUnavailable       = errors.New("dependency unavailable")
 	ErrNotConfigured     = errors.New("not configured")
 	ErrVaultUnavailable  = errors.New("vault unavailable")
+	ErrProtected         = errors.New("protected resource")
+	ErrConflict          = errors.New("conflict")
 )
+
+const (
+	conflictFieldDatabase = "database"
+	conflictFieldOwner    = "owner"
+)
+
+// Conflict is a 409 with fields.database or fields.owner.
+type Conflict struct {
+	Field string
+}
+
+func (c Conflict) Error() string {
+	switch c.Field {
+	case conflictFieldDatabase:
+		return "A PostgreSQL database with this name already exists"
+	case conflictFieldOwner:
+		return "A PostgreSQL role with this name already exists"
+	default:
+		return "conflict"
+	}
+}
+
+func (c Conflict) Unwrap() error {
+	return ErrConflict
+}

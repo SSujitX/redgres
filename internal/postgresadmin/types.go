@@ -32,6 +32,17 @@ type Catalog interface {
 	ListConnectionGroups(ctx context.Context) ([]ConnectionGroup, error)
 	SavedRoleNames(ctx context.Context, roles []string) (map[string]struct{}, error)
 	EncryptedPassword(ctx context.Context, role string) (string, error)
+	DatabaseExists(ctx context.Context, name string) (bool, error)
+	RoleExists(ctx context.Context, name string) (bool, error)
+	CreateRole(ctx context.Context, owner, password string) error
+	GrantSetRole(ctx context.Context, owner, admin string) error
+	CreateDatabase(ctx context.Context, database, owner string) error
+	LockConnect(ctx context.Context, database, owner string) error
+	InsertCredential(ctx context.Context, role, encrypted string) error
+	DeleteCredential(ctx context.Context, role string) error
+	TerminateAndDropDatabase(ctx context.Context, database string) error
+	OwnedDatabaseCount(ctx context.Context, owner string) (int, error)
+	DropRole(ctx context.Context, owner string) error
 	Ping(ctx context.Context) error
 	PingPooled(ctx context.Context) error
 }
@@ -45,8 +56,15 @@ type Inventory interface {
 	SecurityOverview(ctx context.Context) (SecurityOverview, error)
 	Connection(ctx context.Context, name string) (Connection, error)
 	Reveal(ctx context.Context, name string) (RevealedConnection, error)
+	Create(ctx context.Context, database, owner string) (CreatedDatabase, error)
 	Ping(ctx context.Context) error
 	PingPooled(ctx context.Context) error
+}
+
+type CreatedDatabase struct {
+	Database string
+	Owner    string
+	Password string
 }
 
 type SearchHit struct {

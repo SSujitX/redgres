@@ -411,7 +411,7 @@ func catalogSchemaDenied(schema string) bool {
 }
 
 func mapCatalogError(err error) error {
-	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidIdentifier) || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrNotConfigured) || errors.Is(err, ErrVaultUnavailable) {
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidIdentifier) || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrNotConfigured) || errors.Is(err, ErrVaultUnavailable) || errors.Is(err, ErrProtected) || errors.Is(err, ErrConflict) {
 		return err
 	}
 	return ErrUnavailable
