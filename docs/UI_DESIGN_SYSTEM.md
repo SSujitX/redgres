@@ -152,6 +152,11 @@ Every page header has one title, optional concise description, service/status co
 - Search/filter/sort state is shareable only when it contains non-sensitive query parameters. Credentials never enter URLs.
 - Empty states state why the list is empty and present the safe next action.
 
+### Forms and checklists
+
+- Dialog fields use `.field-stack` (column flex, `--space-3` gaps, 44px control height).
+- Allow-list command catalogs (Edit permissions Custom) use `.command-checklist`: one labeled checkbox per row, `min-height: 44px`, `min-width: 0`, `--space-2` label gap, and `--line` / `--radius-surface` fieldset chrome. Do not wrap commands as inline labels.
+
 ### Status and metrics
 
 - Prefer compact labeled facts and short trends only when historical data exists. Do not invent charts from one instantaneous value.

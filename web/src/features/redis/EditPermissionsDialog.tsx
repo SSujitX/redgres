@@ -182,8 +182,8 @@ export default function EditPermissionsDialog({
               value={keyPattern}
               onChange={(event) => setKeyPattern(event.target.value)}
               required
-              aria-invalid={shownError ? true : undefined}
-              aria-describedby={shownError ? errorId : undefined}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? errorId : undefined}
             />
             <label htmlFor="acl-edit-preset">Permission preset</label>
             <select
@@ -222,7 +222,7 @@ export default function EditPermissionsDialog({
             </p>
           ) : null}
           {preset === "custom" && catalog ? (
-            <fieldset>
+            <fieldset className="command-checklist">
               <legend>Commands</legend>
               {catalog.map((command) => {
                 const id = `acl-edit-cmd-${command}`;
@@ -236,7 +236,7 @@ export default function EditPermissionsDialog({
                       checked={selected.has(command)}
                       onChange={(event) => toggleCommand(command, event.target.checked)}
                       disabled={submitting}
-                    />{" "}
+                    />
                     <span className="bidi-isolate identifier">{displayText(command)}</span>
                   </label>
                 );

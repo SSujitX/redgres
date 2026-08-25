@@ -4885,6 +4885,7 @@ describe("App session and login", () => {
     expect(within(dialog).getByLabelText("Permission preset")).toHaveValue("custom");
     expect(within(dialog).queryByLabelText("Queue type")).not.toBeInTheDocument();
     expect(await within(dialog).findByRole("checkbox", { name: "get" })).toBeChecked();
+    expect(within(dialog).getByRole("group", { name: "Commands" })).toHaveClass("command-checklist");
     expect(within(dialog).getByRole("checkbox", { name: "ping" })).toBeChecked();
     expect(within(dialog).getByRole("checkbox", { name: "echo" })).not.toBeChecked();
     expect(within(dialog).getByRole("checkbox", { name: "set" })).not.toBeChecked();
@@ -4895,6 +4896,34 @@ describe("App session and login", () => {
     expect(String(commandsCall?.[1]?.method ?? "GET").toUpperCase()).toBe("GET");
     expect(new Headers(commandsCall?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
     expect(fetch.mock.calls.every((call) => !isRedisPresetsUrl(String(call[0])))).toBe(true);
+  });
+
+  it("disables Save when every catalog command is unchecked", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "acl-patch-empty".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem({ preset: "custom" })]);
+      }
+      if (isRedisUserDetailUrl(url, "project_a")) {
+        return redisAclDetailOk({ preset: "custom", commands: ["get", "ping"] });
+      }
+      if (isRedisCommandsUrl(url)) {
+        return redisAclCommandsOk(["echo", "get", "ping"]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
+    fireEvent.click(await within(dialog).findByRole("checkbox", { name: "get" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "ping" }));
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(fetch.mock.calls.every((call) => String(call[1]?.method ?? "").toUpperCase() !== "PATCH")).toBe(true);
   });
 
   it("includes queue_kind only for queue-worker and never sends password or commands", async () => {
@@ -5444,6 +5473,7 @@ describe("App session and login", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Edit permissions" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit permissions" });
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(copy);
+    expect(within(dialog).getByLabelText("Key prefix")).not.toHaveAttribute("aria-invalid");
     expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
     expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("checkbox", { name: "get" })).not.toBeInTheDocument();
