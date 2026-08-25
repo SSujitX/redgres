@@ -7,7 +7,7 @@ This file prevents “documented” from being mistaken for “implemented.” A
 | AUTH-001..006 | PRD, Security, ADR-005 | `internal/auth`, `internal/httpapi` | AUTH-001–005 unit/HTTP/CLI tests; AUTH-006 not started | Partial |
 | PLAT-001..004 | PRD, Architecture, UX, UI Design System | `internal/platform`, `internal/audit`, `web/` | `GET /api/v1/healthz`; authenticated `GET /api/v1/status` + Overview live cards (PLAT-001 Partial: Redis Ping + Overview metrics, PgBouncer still `not_implemented`); PLAT-003 audit read API + history UI; PLAT-004 `GET /api/v1/search` + grouped palette (Partial: Redis ACL username hits, no docs corpus/deep links/command palette) | Partial |
 | PG-001..012 | PRD, Source Systems, ADR-004 | `internal/postgresadmin` | PG-001/002 unit+HTTP+UI; PG-007 table-list API+UI + row-browse API+UI; no DELETE; PG-003–006/008–012 not started | Partial |
-| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003 Partial: POST create `on` + cache-read-write + one-time ticket; REDIS-007 Partial: POST enable/disable `on`/`off` only (no rotate); REDIS-004–006/008 not started | Partial |
+| REDIS-001..008 | PRD, Source Systems, ADR-006 | `internal/redisadmin` | REDIS-001 Partial: Ping on GET `/api/v1/status`; metrics + typed failures on GET `/api/v1/redis/status` + Overview; REDIS-002 Partial: ACL list/inspect GET + UI; REDIS-003 Partial: POST create `on` + cache-read-write + one-time ticket; REDIS-007 Partial: POST enable/disable `on`/`off` plus rotate `resetpass` + `>password` and inspector UI (no delete/PATCH); REDIS-004–006/008 not started | Partial |
 | OPS-001..007 | Deployment, Installer, PostgreSQL Provisioning, Backup, Compatibility, ADR-008/009 | `deploy/`, `internal/platform` | TODO | Planned |
 | NFR-001..012 | PRD, Architecture, Testing, Compatibility, UI Design System | cross-cutting | Wave 0 pins, headers, WAL, CGO-free build local; race/cross-compile CI-only | Partial |
 
@@ -1649,6 +1649,65 @@ Reviewer/date: Security review (2026-08-25) approve Partial; no
  `8eac4eb` (docs record), `74af2c4` (parent test results), `014e0dc`
  (catalog implemented), `c45f05f` (security approve), `85586b8`
  (UI approve). Not pushed.
+```
+
+## REDIS-007 rotate ACL password (2026-08-25)
+
+```text
+Requirement: REDIS-007 (Partial: POST enable/disable + rotate; no delete/PATCH).
+ Keep REDIS-007 Partial until live Redis / §6 / viewport exist. Do not mark
+ Complete. REDIS-003 create and REDIS-002 GET unchanged. REDIS-004–006/008
+ not started. go-redis stays v9.22.0.
+Decision/ADR: ADR-001; ADR-006 unused for rotate grants (resetpass +
+ >password only). AUTH-006 does not apply (delete only). Capability is
+ redis.credentials, not redis.destructive.
+Source: redis-ui Adapter.Rotate / handleRotateUser at D:\code\github\redis-ui
+ (read-only). Redgres generates GeneratePassword() in the service, not HTTP.
+ Official Redis ACL SETUSER: resetpass clears passwords/nopass; >password adds
+ a new secret; SETUSER upserts so GetUser/LIST is mandatory
+ (https://redis.io/commands/acl-setuser). go-redis v9.22.0 ACLSetUser unchanged.
+Implementation files: internal/redisadmin/{service.go,memory.go,rotate_test.go};
+ internal/httpapi/{server.go,redis_users_routes.go,redis_users_routes_test.go};
+ web/src/{api/redis.ts,features/redis/AclUsersPage.tsx,
+ features/redis/RotatePasswordDialog.tsx,App.test.tsx};
+ docs/{API,ARCHITECTURE,SECURITY,UX,TRACEABILITY}.md; AGENTS.md
+ credentials.go reused (GeneratePassword, ProjectConnectionURL).
+Unit/HTTP: resetpass+> only; grants/on-off/prefix/channels preserved via
+ MemoryClient merge (strip #/>/!/nopass, do not replace the line);
+ protected/missing no SETUSER; limited/custom/disabled rotatable; inspect
+ omits >canary; SETUSER errors classified without ERR/>password; 200 envelope
+ + one_time; optional urls.primary; CSRF/401/400/403/404/503; GET/PATCH/PUT/
+ DELETE 405; no POST .../rotate alias; extra body ignored; audit username
+ only; audit-fail after SETUSER returns no credential/password/user;
+ create/enable/GET regressions; Cache-Control no-store.
+Frontend: inspector Rotate text-button (not danger); confirm “Rotate password?”;
+ CSRF empty body encodeURIComponent; existing CredentialTicket via
+ parseCredential; extra secret fields ignored; hidden for protected /
+ degraded / loading; disabled in flight or while ticket open; 401/404/403/503
+ copy; dismiss stays on user and refreshes list+detail; no storage.
+Commands executed locally (2026-08-25), go1.27.0 windows/amd64:
+ Writer rotate API worktree feat/redis-007-rotate-api `711e0f3`:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 1.558s; httpapi 13.020s
+  go test -count=1 ./... → ok; go vet ./... → no findings;
+  go build -o NUL ./cmd/redgres → success
+ Parent review of API then FF onto master `711e0f3`:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 1.644s; httpapi 14.604s
+ Writer UI feat/redis-007-rotate-ui `74cd219`:
+  npm --prefix web test -- --run → Tests 154 passed (154)
+ Parent after UI merge `2b1fca5` + this docs commit:
+  go test -count=1 ./internal/redisadmin ./internal/httpapi
+   → ok redisadmin 2.045s; httpapi 16.661s
+  npm --prefix web test -- --run → Tests 154 passed (154)
+Not run: live Redis, COMPATIBILITY.md §6, gitleaks, govulncheck, CI,
+ Playwright, npm production build, viewport/zoom, Node 24.19.0
+Known limitations: SETUSER-then-audit-fail leftover password (not returned);
+ GetUser/SETUSER recreate race; MemoryClient stores >password (real Redis
+ hashes); no viewport sign-off; REDIS-003 residuals unchanged.
+Reviewer/date: pending parent security + UI + evidence + verifier.
+ Local commits: `711e0f3` (API), `74cd219` (UI), `2b1fca5` (merge UI).
+ Not pushed. Keep REDIS-007 Partial.
 ```
 
 
