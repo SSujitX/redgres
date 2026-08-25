@@ -3303,4 +3303,53 @@ Keep PG-005 Partial. Keep PG-004 Partial. Keep PG-012 Partial.
  Keep REDIS-008 Partial. Keep AUTH-006 Partial. Do not mark Complete.
 ```
 
+## PG-005 POST reveal UI pin (2026-08-25)
+
+```text
+Requirement: PG-005 Partial (inspector Reveal ticket; GET connection still no decrypt)
+Decision/ADR: ADR-004; freeze `cece386`
+Reviewer/date: UI review (2026-08-25) on `8e411ff` approve Partial;
+ no Critical/High/Medium. Frozen copy holds: title This PostgreSQL password
+ is still saved; vault-repeatable; not a one-time Redis credential. CSRF
+ via Placeholders; encodeURIComponent; empty body; no confirm dialog.
+ Clearing holds (dismiss/selection/logout; 401/404/503 no ticket).
+ Security overview still no Reveal. Login/search never POST reveal. Redis
+ tickets still shown now. Explicitly NOT viewport/zoom sign-off. Missing
+ evidence (non-blocking): Playwright; focus trap (same as Redis tickets);
+ dedicated Back-to-databases clearing test (page has no that control).
+ Optional polish (non-blocking): header still says “Passwords are not
+ revealed.”
+Keep PG-005 Partial. Keep PG-004 Partial. Keep PG-012 Partial.
+ Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Playwright 360×800 / 768×1024 / 1280×800 / 1600×1000 + 200% zoom, live
+ PostgreSQL 17/18, Gate 4, COMPATIBILITY.md §6 remain Complete blockers.
+Not pushed.
+```
+
+## PG-005 POST reveal security pin (2026-08-25)
+
+```text
+Requirement: PG-005 Partial (POST /api/v1/postgres/databases/{db}/connection/reveal
+ + inspector Reveal). Keep PG-004 Partial (GET /connection still no decrypt).
+Decision/ADR: ADR-004; freeze `cece386`. AUTH-006 does not apply.
+Reviewer/date: Security review (2026-08-25) on `8e411ff` approve Partial;
+ no Critical/High/Medium. Freeze holds: session + postgres.credentials +
+ CSRF; GET connection still postgres.read and SavedRoleNames only; empty
+ body never owner_password; path 400 no catalog/vault/audit; protected
+ never SELECT ciphertext; parameterized EncryptedPassword SQL; no
+ ensure_vault; vault file fail-closed; derived key on Service only; unset
+ file Open succeeds Reveal 503; audit-fail 503 no credential; 200 no-store
+ one_time false; public host/ports sslmode=require; canary absent from
+ audit/errors; no POST /api/v1/auth/reauth; pgx v5.10.0; go-redis v9.22.0.
+ Residual questions (non-blocking): requireCapability is static owner
+ allow-list (CSRF is the extra POST control vs GET). Reviewer could not
+ re-check working-tree cleanliness from sandbox; parent tree at pin time
+ is clean on `8e411ff`. Independent UI pin on the same product SHA.
+Keep PG-005 Partial. Keep PG-004 Partial. Keep PG-012 Partial.
+ Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Gate 4, live PostgreSQL 17/18, Playwright, PG-003/PG-006, production
+ vault-secret probe remain Complete blockers.
+Not pushed.
+```
+
 
