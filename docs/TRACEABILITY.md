@@ -3491,7 +3491,8 @@ Local commits: `7e85055` (freeze), `70cd1ab` (API), `584c075` (UI),
  Not pushed.
 Reviewer/date: Security Approve Partial on `0ec4af6`; UI first pass at
  `0ec4af6` (Medium 1–2); UI Approve Partial on correction `f49d9e5`
- (Medium 1–2 closed). Evidence/verifier pending. Keep Partial.
+ (Medium 1–2 closed). Evidence PASS Partial on `b4c7575`; verifier pending.
+ Keep Partial.
 Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
  Do not mark Complete.
@@ -3547,6 +3548,31 @@ Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
  Playwright 360×800 / 768×1024 / 1280×800 / 1600×1000 + 200% zoom, live
  PostgreSQL 17/18, Gate 4 remain Complete blockers.
 Not pushed.
+```
+
+## PG-003 POST create evidence pin (2026-08-25)
+
+```text
+Requirement: PG-003 Partial (POST /api/v1/postgres/databases create + vault INSERT
+ + compensation + Databases Create dialog + ticket-open guards). Keep PG-004
+ Partial. Keep PG-005 Partial.
+Decision/ADR: ADR-004; freeze `7e85055`. AUTH-006 does not apply.
+Reviewer/date: Evidence review (2026-08-25) on `b4c7575` PASS Partial /
+ reject-Complete. Freeze criteria map to implementation and claimed tests.
+ Status row PG-003 Partial; AGENTS.md names POST create + ticket-open guards
+ + list GET 401 clear. Canonical freeze docs at `7e85055`. Independent
+ security Approve Partial on `0ec4af6`; UI Approve Partial on `f49d9e5`.
+ This reviewer did not re-run tests; parent recorded 269 passed at `f49d9e5`.
+ Over-mapped (non-blocking): search-while-ticket shares nav path, no dedicated
+ test; capability test proves export denied not provision wiring (server.go:91);
+ GRANT skip empty-admin / admin==role implemented, only postgres-admin skip
+ tested; writer SHAs 70cd1ab / 584c075 not on first-parent reflog.
+ Historical remainder lists still name PG-003 unimplemented (Wave 0; PG-005
+ remainder); current-facing TRACEABILITY:9 and AGENTS.md are Partial.
+ Do not mark Complete.
+Keep PG-003 Partial. Keep PG-004 Partial. Keep PG-005 Partial.
+ Keep PG-012 Partial. Keep REDIS-008 Partial. Keep AUTH-006 Partial.
+ Verifier pending. Not pushed.
 ```
 
 
