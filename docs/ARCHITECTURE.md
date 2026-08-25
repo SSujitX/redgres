@@ -125,7 +125,7 @@ Use at least two connection profiles:
 
 Use cases own policy; adapter owns SQL mechanics. Protected target validation must run immediately before mutations, not only when the UI renders.
 
-Long operations (clone, backup verification) create an operation record and run under bounded context/cancellation. A per-target lock prevents overlapping rotate/drop/clone operations. PG-006 Partial rotate is **in-request**: an in-process per-owner TryLock only (no SQLite `operations` row, no `GET /api/v1/operations/{id}`).
+Long operations (clone, backup verification) create an operation record and run under bounded context/cancellation. A per-target lock prevents overlapping rotate/drop/clone operations. PG-006 Partial rotate is **in-request**: an in-process per-owner TryLock only (no SQLite `operations` row, no `GET /api/v1/operations/{id}`). PG-010 Partial duplicate is **in-request 201**: an in-process TryLock on source name + new database + new owner (no SQLite `operations` row, no `202`, no `GET /api/v1/operations/{id}`). Official PostgreSQL 17/18 `CREATE DATABASE` cannot run inside a transaction block and fails if another session is connected to the template database ([17](https://www.postgresql.org/docs/17/sql-createdatabase.html), [18](https://www.postgresql.org/docs/18/sql-createdatabase.html)). `REASSIGN OWNED` is forbidden because it also reassigns shared objects (databases, tablespaces) ([17](https://www.postgresql.org/docs/17/sql-reassign-owned.html), [18](https://www.postgresql.org/docs/18/sql-reassign-owned.html)). Compensation never mutates the source. Handler timeout is 30s; clones that exceed it remain a later-operations Complete limitation.
 
 ## 8. Redis adapter
 
@@ -141,6 +141,7 @@ Generated credential → create/alter PostgreSQL role → persist encrypted vaul
 
 - Create: if vault write fails, remove only the newly created database/role after dependency checks, or mark credential recovery required.
 - Rotate: keep the generated password only in process memory; if vault write fails after role alteration, retry vault persistence (3) without re-ALTER and block additional rotation with an in-process per-owner lock for the duration of the request. Report a recoverable incident without logging the password: HTTP 503 copy that the PostgreSQL password was changed but the vault could not be saved; the next POST rotate is recovery. A future dual-secret/transaction design needs its own ADR. Frozen `POST /api/v1/postgres/databases/{db}/credentials/rotate` (session + `postgres.credentials` + CSRF) uses `Inventory.Rotate`: eligibility re-read, `GeneratePassword`, `secrets.Encrypt`, `ALTER ROLE … WITH PASSWORD … CONNECTION LIMIT 20`, parameterized `ON CONFLICT` upsert. Create INSERT stays without upsert. No `ensure_vault`. No SQLite storage of the project password.
+- Duplicate: create a new restricted login and `CREATE DATABASE … TEMPLATE {source} OWNER {new_owner}` in-request; persist encrypted vault INSERT (no upsert); return 201 no-store. Frozen `POST /api/v1/postgres/databases/{db}/duplicate` (session + `postgres.provision` + CSRF) uses `Inventory.Duplicate`. Compensation drops only created clone/role/vault row. Never `REASSIGN OWNED`. Never mutate the source on failure. No operations row.
 
 ### Redis
 

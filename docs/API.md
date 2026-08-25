@@ -218,7 +218,7 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 | GET | `/api/v1/postgres/databases/{db}/connection` | Masked URLs and saved status only (implemented; PG-004/PG-005 Partial) |
 | POST | `/api/v1/postgres/databases/{db}/connection/reveal` | Saved password + URLs; `no-store`; `postgres.credentials` + CSRF (PG-005 Partial freeze; no AUTH-006) |
 | POST | `/api/v1/postgres/databases/{db}/credentials/rotate` | Rotate; typed confirmation; vaulted credentials (`one_time: false`); `no-store`; `postgres.credentials` + CSRF (PG-006 Partial freeze; no AUTH-006) |
-| POST | `/api/v1/postgres/databases/{db}/duplicate` | Starts bounded operation; may return 202 + operation ID |
+| POST | `/api/v1/postgres/databases/{db}/duplicate` | Duplicate; new unique owner; vaulted credentials (`one_time: false`); `no-store`; `postgres.provision` + CSRF (PG-010 Partial freeze; 201 in-request; no AUTH-006; no 202) |
 | DELETE | `/api/v1/postgres/databases/{db}` | Exact confirmation + owner password |
 | GET | `/api/v1/postgres/databases/{db}/tables` | BASE TABLE names (implemented; cap 500) |
 | GET | `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` | Bounded rows/search (implemented; offset/limit; `q` max 128) |
@@ -228,7 +228,7 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 
 Database/role names in URL segments are decoded then validated. Transport validation never replaces PostgreSQL identifier quoting.
 
-**Implemented now:** `GET /api/v1/postgres/databases`, `GET /api/v1/postgres/databases/{db}`, `GET /api/v1/postgres/databases/{db}/connection`, `GET /api/v1/postgres/databases/{db}/tables`, `GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows`, and `GET /api/v1/postgres/security` require a session and the `postgres.read` capability. `POST /api/v1/postgres/databases/{db}/connection/reveal` requires a session, `postgres.credentials`, and CSRF (PG-005 Partial). `POST /api/v1/postgres/databases` requires a session, `postgres.provision`, and CSRF (PG-003 Partial). `POST /api/v1/postgres/databases/{db}/credentials/rotate` requires a session, `postgres.credentials`, and CSRF (PG-006 Partial). List and table list are unpaginated and hard-capped at 500 (`truncated: true` if more rows exist). Details include owner, size, collation/ctype, locale fields, connection count, and security flags. Details `saved_credential` is a vault **existence** result for the database owner (`present` / `missing` / `not_available` with reason `vault_unavailable`). Ciphertext is never selected or returned. `vault_not_implemented` is not used. Table list returns `{schema,name}` for `information_schema` `BASE TABLE` rows outside `pg_catalog` and `information_schema`. Schema/table names on the table list are result columns. Row browse quotes schema, table, and column names with `pgx.Identifier` and parameterizes values. Query `q` is optional (no minimum); more than 128 Unicode code points returns `400` `validation_error` with `fields.q` and does not query. `q` `ILIKE`s columns whose `data_type` contains `text`, `character`, or `citext` (same predicate as `database-app` `fetch_table_data` at `1c3e8e2`; `citext` stored as `USER-DEFINED` is therefore usually not searched). `%` and `_` in `q` remain LIKE wildcards. Default `limit` is 50; `limit<=0` or `limit>500` clamps to 50; `offset<0` clamps to 0; non-integer `limit`/`offset` is `400`. Response is `{columns,rows,total,offset,limit,request_id}`. A missing or non-`BASE TABLE` schema/table, `pg_catalog`/`information_schema`, or a table with no columns is `404` `not_found` (same message as a missing database). An existing table with columns and zero matching rows is `200` with `rows: []` and `total: 0`. Cell values use JSON-safe encoding (`null`, bool, finite numbers, `numeric` as string, `bytea` as PostgreSQL `\x` hex text, timestamps as RFC3339). Encode/connect/query failure is `503` `dependency_unavailable` and never a healthy empty page. Protected names, protected owners, templates, and `datallowconn=false` are omitted from the list and return the same `404` `not_found` as a missing database (not `protected_resource`); table list and rows do not open a per-database connection for those names. Invalid identifiers return `400` `validation_error` without querying. `GET /api/v1/healthz` does not ping PostgreSQL. `DELETE .../rows` is not implemented.
+**Implemented now:** `GET /api/v1/postgres/databases`, `GET /api/v1/postgres/databases/{db}`, `GET /api/v1/postgres/databases/{db}/connection`, `GET /api/v1/postgres/databases/{db}/tables`, `GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows`, and `GET /api/v1/postgres/security` require a session and the `postgres.read` capability. `POST /api/v1/postgres/databases/{db}/connection/reveal` requires a session, `postgres.credentials`, and CSRF (PG-005 Partial). `POST /api/v1/postgres/databases` requires a session, `postgres.provision`, and CSRF (PG-003 Partial). `POST /api/v1/postgres/databases/{db}/credentials/rotate` requires a session, `postgres.credentials`, and CSRF (PG-006 Partial). `POST /api/v1/postgres/databases/{db}/duplicate` requires a session, `postgres.provision`, and CSRF (PG-010 Partial). List and table list are unpaginated and hard-capped at 500 (`truncated: true` if more rows exist). Details include owner, size, collation/ctype, locale fields, connection count, and security flags. Details `saved_credential` is a vault **existence** result for the database owner (`present` / `missing` / `not_available` with reason `vault_unavailable`). Ciphertext is never selected or returned. `vault_not_implemented` is not used. Table list returns `{schema,name}` for `information_schema` `BASE TABLE` rows outside `pg_catalog` and `information_schema`. Schema/table names on the table list are result columns. Row browse quotes schema, table, and column names with `pgx.Identifier` and parameterizes values. Query `q` is optional (no minimum); more than 128 Unicode code points returns `400` `validation_error` with `fields.q` and does not query. `q` `ILIKE`s columns whose `data_type` contains `text`, `character`, or `citext` (same predicate as `database-app` `fetch_table_data` at `1c3e8e2`; `citext` stored as `USER-DEFINED` is therefore usually not searched). `%` and `_` in `q` remain LIKE wildcards. Default `limit` is 50; `limit<=0` or `limit>500` clamps to 50; `offset<0` clamps to 0; non-integer `limit`/`offset` is `400`. Response is `{columns,rows,total,offset,limit,request_id}`. A missing or non-`BASE TABLE` schema/table, `pg_catalog`/`information_schema`, or a table with no columns is `404` `not_found` (same message as a missing database). An existing table with columns and zero matching rows is `200` with `rows: []` and `total: 0`. Cell values use JSON-safe encoding (`null`, bool, finite numbers, `numeric` as string, `bytea` as PostgreSQL `\x` hex text, timestamps as RFC3339). Encode/connect/query failure is `503` `dependency_unavailable` and never a healthy empty page. Protected names, protected owners, templates, and `datallowconn=false` are omitted from the list and return the same `404` `not_found` as a missing database (not `protected_resource`); table list and rows do not open a per-database connection for those names. Invalid identifiers return `400` `validation_error` without querying. `GET /api/v1/healthz` does not ping PostgreSQL. `DELETE .../rows` is not implemented.
 
 **GET `/api/v1/postgres/security`** requires a session cookie and the `postgres.read` capability, and does not require CSRF. There are no query parameters. The path is exact. Other methods are `405` `method_not_allowed`. Missing session is `401` `unauthorized` with no `summary`, `databases`, `connections`, `saved_credential`, or `truncated` keys. Nil adapter or catalog/query failure is `503` `dependency_unavailable` (same operator copy as other PostgreSQL GETs) and is never a `200` with empty arrays. Responses are `Cache-Control: no-store`. This GET is not a mutation and does not write an audit event. Responses never include passwords, URLs, hashes, role OIDs, raw `datacl`, SQL, `err.Error()`, `connection_limit`, `size`, `size_bytes`, `has_saved_password`, `can_rotate`, or URL templates. `summary.missing_password_count` is present only when the vault existence query succeeded (see below).
 
@@ -409,13 +409,97 @@ PG-006 stays Partial. Live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright, G
 
 **UI copy (frozen with this POST contract):** Databases inspector **Rotate** is a `text-button` (not `--danger`). Show when details are loaded and `owner` is non-empty and `security.owner_can_login` is true and `security.owner_is_superuser` is false (missing flags → hide), including when `saved_credential.status` is `missing`. Hidden while details loading. Disabled while rotate/reveal/create is in flight or a credential ticket is open. Confirm `role=dialog`, title **Rotate password?**, same focus trap as Redis rotate. Typed database name; **Rotate now** disabled until the confirmation equals the selected database name exactly. Copy: old credentials stop working; the new password is saved in the vault; update every application. Client confirmation is not authorization. POST uses CSRF, `encodeURIComponent(db)`, JSON `{ "confirmation": "<db>" }`. HTTP 200: close dialog, open the **existing** PostgreSQL vault-repeatable ticket (title **This PostgreSQL password is still saved.**) plus ticket `form-warning`: **Update every application using this project user. The previous password stops working.** 401: session-expired, clear secrets, no leftover password. 400/403: stay on the dialog and announce the error. 404 / generic 503: inspector not-found / PostgreSQL-unavailable families; do not paint a ticket. Vault-out-of-sync 503 uses the distinct copy above (password already changed). Memory only; clear on dismiss, selection change, Back, logout. Security overview / search / login never POST rotate. Redis tickets stay one-time “shown now.” Header sentence “Passwords are not revealed.” is out of this freeze.
 
+**POST `/api/v1/postgres/databases/{db}/duplicate` (PG-010 Partial freeze).** Session cookie, `postgres.provision` (not `postgres.read`, not `postgres.credentials`, not `postgres.destructive`), and CSRF (`requireMutation`). Register **before** `GET .../databases/{db}` (next to POST rotate):
+
+```go
+r.With(s.requireSession, s.requireCapability("postgres.provision"), s.requireMutation).Post("/api/v1/postgres/databases/{db}/duplicate", s.handlePostgresDatabasesDuplicate)
+```
+
+GET/PUT/PATCH/DELETE on this path are `405` `method_not_allowed`. Collection POST `/api/v1/postgres/databases` is the PG-003 freeze. `POST /api/v1/postgres/databases/{db}` (no suffix) stays `405`. There is no feature flag (`REDGRES_FEATURE_POSTGRES_DUPLICATE` / sibling `ENABLE_DESTRUCTIVE_ACTIONS` do not apply). There is no `POST /api/v1/auth/reauth` and no `owner_password` (AUTH-006 does not apply). Handler timeout is **30s**. Compensation after successful DDL uses a **detached** context if the request context is canceled (same as create). Responses are `Cache-Control: no-store`. Path `{db}` is the **source** (`decodePathIdentifier`). This Partial is **201 in-request**. It does not return `202`, does not allocate an operation ID, and does not read or write `GET /api/v1/operations/{id}` or `migrations/002_operations.sql` (ADR-005 later file). Large TEMPLATE clones that exceed 30s remain a Complete / later-operations limitation.
+
+**Body** (`DisallowUnknownFields`). Only:
+
+```json
+{ "database": "project_a_copy", "owner": "app_project_a_copy" }
+```
+
+`database` is the **new** name. `owner` is the **new** unique project role. No client password. No `create_owner_role`. No `confirmation`. Unknown fields (`new_owner_password`, `create_owner_role`, `password`, `confirmation`, `owner_password`) → `400` `validation_error` (`Unknown field`), no audit, no DDL.
+
+**Check order:**
+
+1. Middleware: session, `postgres.provision`, CSRF.
+2. Path `{db}` decode. Invalid identifier → `400` `validation_error`, no catalog.
+3. JSON decode. Invalid JSON / unknown field → `400`, no audit, no DDL.
+4. Validate new `database` and `owner` with existing `ValidateIdentifier`. Invalid → `400` with `fields.database` and/or `fields.owner`. Copy: **Invalid database name** / **Invalid role name.**
+5. Source equals new `database` → `400` `validation_error` with `fields.database`, copy **The copy must use a new database name.** No catalog mutation.
+6. Protected **new** names (`Policy.DatabaseDenied` / `OwnerDenied`) → `403` `protected_resource`, **This PostgreSQL name is protected**, no DDL.
+7. Nil adapter / PostgreSQL not configured → `503` `dependency_unavailable`. Failure audit if names are valid.
+8. Missing/unreadable vault key (`Open` stored none) → **503 before any DDL**.
+9. `Service.Duplicate`: source lookup like details. Protected, template, `datallowconn=false`, missing name, or empty owner → `404` `not_found` (same operator copy as details). Source owner superuser, non-login, or `OwnerDenied` → `403` `protected_resource`. New owner equals source owner → `400` `validation_error` with `fields.owner`, copy **Choose a different project user than the source database owner.** New database or role already exists → `409` `conflict` with the same fields/messages as create. Vault reachability probe (`SavedRoleNames` / connect to `database_console_vault`; **no ciphertext**; **no `ensure_vault`**) → **503 before DDL**.
+10. In-process TryLock on **source name + new database + new owner**. Fail → `409` `operation_in_progress`, copy **A database duplicate is already in progress.** No second TEMPLATE clone. The lock is request-scoped process memory only. `writePostgresError` must not reuse the rotate 409 sentence for this error.
+11. Snapshot source `pg_get_userbyid(datdba)` and `COALESCE(datacl::text, '')` (sibling `_database_ownership_snapshot` at `1c3e8e2`).
+12. `CREATE ROLE` using the same SQL as create (`GeneratePassword`, `CONNECTION LIMIT 20`, `QuoteIdentifier` + `quoteStringLiteral`). `GRANT {owner} TO {admin} WITH INHERIT TRUE, SET TRUE` when `cfg.PostgresUser` is not `postgres` and is not the new role.
+13. `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()` — **source `datname` only**, parameterized.
+14. `CREATE DATABASE {new} TEMPLATE {source} OWNER {new_owner}` (quoted identifiers; simple-protocol `Exec`; **not** inside a transaction). Official PostgreSQL 17 and 18: `CREATE DATABASE` cannot be executed inside a transaction block; no other sessions may be connected to the template database while it is copied ([CREATE DATABASE](https://www.postgresql.org/docs/17/sql-createdatabase.html), [18](https://www.postgresql.org/docs/18/sql-createdatabase.html)).
+15. `REVOKE CONNECT ON DATABASE {new} FROM PUBLIC` and `GRANT CONNECT ON DATABASE {new} TO {new_owner}` on the **new** database only.
+16. Assert source fingerprint unchanged. Mismatch → compensate (clone + new role + vault row only) then `503` `dependency_unavailable`, copy **The source database ownership or CONNECT ACL changed during duplicate. The clone was rolled back.** Never drop or terminate the source as cleanup.
+17. `secrets.Encrypt` + parameterized vault **INSERT** (create SQL; **no** `ON CONFLICT`; **no** `ensure_vault`). Unique violation → **409** + compensate.
+18. Per-object `ALTER … OWNER TO` on the **clone only**. Never `REASSIGN OWNED` (official PostgreSQL: that command also reassigns **shared** objects including databases and tablespaces — [REASSIGN OWNED](https://www.postgresql.org/docs/17/sql-reassign-owned.html)). Never `SET ROLE` to the old owner (sibling `_alter_owner_as`). Skip protected / `OwnerDenied` / `pg_*` current owners. Then clone-local `GRANT ALL` / `ALTER DEFAULT PRIVILEGES` on `public` as sibling. Catalog-derived `pg_get_function_identity_arguments` may be interpolated; user input must not.
+19. Assert source fingerprint again (same mismatch handling as step 16).
+20. Success audit then **201**. Audit-fail after cluster+vault success → **503** fail-closed, **do not** return the credential (operator can Reveal).
+
+```sql
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()
+```
+
+```sql
+CREATE DATABASE {new} TEMPLATE {source} OWNER {new_owner}
+```
+
+```sql
+INSERT INTO public.project_credentials (role_name, encrypted_password, updated_at)
+VALUES ($1, $2, now())
+```
+
+Create INSERT stays **without** `ON CONFLICT`. Rotate upsert is unchanged. Identifiers via `QuoteIdentifier`. Never concatenate unquoted identifiers or password. Never `err.Error()`. Never echo password, token, ciphertext, SQL, or env contents.
+
+**Compensation:** only the **created** clone database, **created** role (if `OwnedDatabaseCount == 0`), and **inserted** vault row. Reuse create’s terminate+`DROP DATABASE IF EXISTS` **on the clone name only**. **Never** drop, alter, or `pg_terminate_backend` the source as cleanup.
+
+**Audit:** success `postgres.database.duplicate` with metadata `database` (new name), `owner` (new role), and `source` (path `{db}`) only.
+
+Sibling deltas (do not copy): FastAPI no CSRF; `ENABLE_DESTRUCTIVE_ACTIONS`; client `new_owner_password`; `ensure_vault`; `{duplicated, new_database, warning, transferred_from, source_owner}` envelope; HTTP 500 + `str(e)`; weaker protected set.
+
+Success **201** (same envelope as create/reveal; `one_time` JSON **false**; `resource.name` is the **new** database; `credential.username` is the **new** owner):
+
+```json
+{
+  "resource": { "type": "postgres_database", "name": "project_a_copy" },
+  "credential": {
+    "username": "app_project_a_copy",
+    "password": "<plaintext>",
+    "one_time": false,
+    "urls": {
+      "direct": "postgresql://app_project_a_copy:<enc>@db.example.com:5432/project_a_copy?sslmode=require",
+      "pooled": "postgresql://app_project_a_copy:<enc>@db.example.com:6432/project_a_copy?sslmode=require"
+    }
+  },
+  "request_id": "<32 lowercase hex>"
+}
+```
+
+Always on 201: `resource`, `credential.username` (= new owner), `credential.password`, `credential.one_time` JSON `false`, `request_id`. Reuse `ProjectConnectionURL` / `encodeRFC3986Unreserved`; public host/ports; `sslmode=require`. Omit `urls` keys like create. No sibling `warning` field (the warning is UI). No Redis `urls.primary`. No extra `database` object (UI refreshes GET list).
+
+PG-010 stays Partial. Live PostgreSQL 17/18, COMPATIBILITY.md §6, Playwright, Gate 4, Python Gate 2 if not executed, `002_operations.sql`, `GET /api/v1/operations/{id}`, `POST /api/v1/auth/reauth`, `ensure_vault`, dual-secret ADR, and production vault-secret probe remain outstanding. Do not mark Complete.
+
+**UI copy (frozen with this POST contract):** Databases inspector **Duplicate** is a `text-button` (not `--danger`), not a header/nav action. Show when details are loaded and `owner` is non-empty and `security.owner_can_login` is true and `security.owner_is_superuser` is false (missing flags → hide). Hidden while details loading. Disabled while duplicate/create/reveal/rotate is in flight or a credential ticket is open. Dialog `role=dialog`, title **Duplicate database**, same focus trap as Create database. Fields: **New database name**, **Project user**. Suggest owner `app_${database}` until the owner field is edited. No password field. Helper: Redgres generates the password and saves it in the encrypted vault. Warning (`form-warning`, not `--danger`): a unique project user is required; **N active connections to {source} will be terminated** (`N` from loaded details `connection_count`, including 0; `{source}` via `displayText`); object owners inside the copy change; source ownership is verified unchanged. Submit **Duplicate** disabled until both identifiers are valid and the new database name is not equal to the source. Client confirmation is not authorization. POST uses CSRF, `encodeURIComponent(source)`, JSON `{ "database", "owner" }`. HTTP 201: close dialog, refresh list, open the **existing** PostgreSQL vault-repeatable ticket (title **This PostgreSQL password is still saved.**). After dismiss, select the **new** database in memory. 401: session-expired, clear secrets, no leftover password. 400/403/409: stay on the dialog and announce the error. 404 / generic 503: inspector not-found / PostgreSQL-unavailable families; do not paint a ticket. Isolation-rollback 503 uses the distinct copy above. Memory only; clear on dismiss, selection change, Back, logout. Security overview / search / login never POST duplicate. No `postgres-duplicate` nav id. Redis tickets stay one-time “shown now.” Header sentence “Passwords are not revealed.” is out of this freeze.
+
 **POST `/api/v1/postgres/databases` (PG-003 Partial freeze).** Session cookie, `postgres.provision` (not `postgres.read`, not `postgres.credentials`, not `postgres.destructive`), and CSRF (`requireMutation`). Register next to GET `/api/v1/postgres/databases`:
 
 ```go
 r.With(s.requireSession, s.requireCapability("postgres.provision"), s.requireMutation).Post("/api/v1/postgres/databases", s.handlePostgresDatabasesCreate)
 ```
 
-PUT/PATCH/DELETE on the collection are `405` `method_not_allowed`. POST `/api/v1/postgres/databases/{db}` (no suffix) stays `405`. POST rotate is the PG-006 freeze (registered before GET `{db}`). There is no feature flag (`REDGRES_FEATURE_POSTGRES_CREATE` does not exist). There is no `POST /api/v1/auth/reauth` and no `owner_password` (AUTH-006 does not apply). Handler timeout is **30s**. Compensation after successful DDL uses a **detached** context if the request context is canceled. Responses are `Cache-Control: no-store`.
+PUT/PATCH/DELETE on the collection are `405` `method_not_allowed`. POST `/api/v1/postgres/databases/{db}` (no suffix) stays `405`. POST rotate is the PG-006 freeze and POST duplicate is the PG-010 freeze (both registered before GET `{db}`). There is no feature flag (`REDGRES_FEATURE_POSTGRES_CREATE` does not exist). There is no `POST /api/v1/auth/reauth` and no `owner_password` (AUTH-006 does not apply). Handler timeout is **30s**. Compensation after successful DDL uses a **detached** context if the request context is canceled. Responses are `Cache-Control: no-store`.
 
 **Body** (`DisallowUnknownFields`). Only:
 

@@ -92,6 +92,8 @@ DO UPDATE SET encrypted_password = EXCLUDED.encrypted_password, updated_at = now
 
 Create INSERT stays without `ON CONFLICT`. No `ensure_vault` DDL. The generated password stays in process memory only; SQLite must not store it (ADR-005 `operations` table is out of this slice). If upsert fails after `ALTER ROLE`, Redgres reports that the PostgreSQL password was changed but the vault could not be saved and does not return the credential; rotate again is recovery. `internal/secrets` still does not read env or HTTP. Gate 4 remains outstanding.
 
+PG-010 Partial HTTP duplicate (vault INSERT): `POST /api/v1/postgres/databases/{db}/duplicate` encrypts a newly generated password with `secrets.Encrypt` and INSERTs using the **create** SQL (no `ON CONFLICT`). No `ensure_vault` DDL. Unique `role_name` violation is HTTP 409 plus compensation of the clone/role/vault row only. Compensation never deletes a pre-existing source vault row. `one_time` is JSON `false`. SQLite must not store the project password (`002_operations.sql` is out of this slice). `internal/secrets` still does not read env or HTTP. Gate 4 remains outstanding.
+
 Do not rotate or repurpose the legacy secret in the same change as the application migration. A future dedicated key/versioned envelope needs an ADR and reversible migration tool.
 
 ## Configuration files
