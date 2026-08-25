@@ -232,7 +232,7 @@ Database/role names in URL segments are decoded then validated. Transport valida
 | PATCH | `/api/v1/redis/users/{username}` | Permissions/prefix only |
 | POST | `/api/v1/redis/users/{username}/enable` | Enable (implemented) |
 | POST | `/api/v1/redis/users/{username}/disable` | Disable (implemented) |
-| POST | `/api/v1/redis/users/{username}/credentials/rotate` | One-time credential; `no-store` |
+| POST | `/api/v1/redis/users/{username}/credentials/rotate` | One-time credential; `no-store` (implemented) |
 | DELETE | `/api/v1/redis/users/{username}` | Exact confirmation + owner password |
 | GET | `/api/v1/redis/presets` | Versioned available presets/commands for UI/docs |
 
@@ -383,7 +383,35 @@ Success `200` is inspect detail (same `user` fields as GET detail) plus `request
 
 Actions are `redis.user.enable` / `redis.user.disable`; target is the username; metadata is `username` only. If SETUSER succeeds but the audit insert fails, the handler returns `503` and does not return `user`. Disable blocks new AUTH; it does not kill existing connections.
 
-`PATCH` permissions, rotate, delete, and `GET /api/v1/redis/presets` are not implemented in this slice.
+**POST `/api/v1/redis/users/{username}/credentials/rotate`** requires a session cookie, the `redis.credentials` capability, and CSRF (`requireMutation`). It is not `redis.destructive` and does not require owner reauthentication. Username path validation matches GET inspect (`parseRedisUsernameParam`: 1–64 `[A-Za-z0-9_-]`), not the create regex. There is no JSON body; a body, if present, is ignored and never supplies the password. `GET`, `PUT`, `PATCH`, and `DELETE` on this path are `405` `method_not_allowed`. There is no `POST /api/v1/redis/users/{username}/rotate` alias. `POST /api/v1/redis/users/{username}` (no suffix) stays `405`. The probe uses a 2s timeout. Responses are `Cache-Control: no-store`.
+
+The service generates the password with `GeneratePassword()` (24 bytes, `base64.RawURLEncoding`, 32 characters — same as create) and does not accept a client password. The adapter loads the user via `ACL LIST` (`GetUser`) first because `ACL SETUSER` upserts, then issues one `ACLSetUser` with only `resetpass` and `>password`. It does not send `reset`, `resetkeys`, `resetchannels`, `nocommands`, `-@all`, `on`/`off`, or `~…`, and does not call `ACL GETUSER`, `ACL USERS`, `ACLGenPass`, generic `Do`, or `CLIENT KILL`. Protected names return `403` `protected_resource` without SETUSER. A missing user returns `404` `not_found` with message `Not found` without SETUSER. `custom` / `limited` / disabled users may be rotated.
+
+Success `200` when SETUSER and the success audit both succeed:
+
+```json
+{
+  "resource": { "type": "redis_user", "name": "project_a" },
+  "user": { "username": "project_a", "enabled": true, "key_pattern": "project_a:*", "preset": "cache-read-write", "protected": false, "rule_fidelity": "exact", "commands": ["echo", "get", "ping"], "categories": [] },
+  "credential": { "username": "project_a", "password": "<one-time>", "one_time": true },
+  "request_id": "<32 hex>"
+}
+```
+
+`user` is inspect detail (same fields as GET detail / enable). There is no `state` key. `credential.urls` is omitted unless both `REDGRES_REDIS_PUBLIC_HOST` and `REDGRES_REDIS_PUBLIC_PORT` are set. Then `urls.primary` is `rediss://` + URL-encoded userinfo + `host:port` + `/0`. The URL never copies administrator userinfo or host. There is no silent port default. Errors never include `err.Error()`, Redis `ERR` text, `>password`, passwords, URLs, or hashes. There is no `reason` key.
+
+| Status | Code | When |
+|---|---|---|
+| 401 | `unauthorized` | Missing session. No `credential`, `user`, or `state`. |
+| 403 | `csrf_invalid` | Origin or CSRF failure. |
+| 400 | `validation_error` | Invalid username path. No Redis. No audit. Raw param not echoed. |
+| 403 | `protected_resource` | Reserved or configured administrator. No SETUSER. Failure audit. |
+| 404 | `not_found` | Username absent from `ACL LIST`. Message `Not found`. No SETUSER. Failure audit. |
+| 503 | `dependency_unavailable` | Nil adapter, `ErrNotConfigured`, Redis failure, public-URL build failure, or audit insert fail after SETUSER. No `reason` key. Never Redis `ERR` / `err.Error()` / `>password`. |
+
+The action is `redis.user.rotate`; target is the username; metadata is `username` only. Passwords, URLs, and CSRF values are never audited. If SETUSER succeeds but the audit insert fails, the handler returns `503` and does not return `credential`, `password`, or `user`. Rotation invalidates the previous password immediately. If the one-time response is lost, rotate again.
+
+`PATCH` permissions, delete, and `GET /api/v1/redis/presets` are not implemented in this slice.
 
 ## Credential payload
 

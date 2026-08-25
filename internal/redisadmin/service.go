@@ -38,6 +38,11 @@ type CreateResult struct {
 	Password string
 }
 
+type RotateResult struct {
+	User     User
+	Password string
+}
+
 func NewService(client Client) *Service {
 	return &Service{client: client}
 }
@@ -206,6 +211,31 @@ func (s *Service) SetEnabled(ctx context.Context, username string, enabled bool)
 		return User{}, classifyRedisError(err)
 	}
 	return s.GetUser(ctx, username)
+}
+
+func (s *Service) RotateUser(ctx context.Context, username string) (RotateResult, error) {
+	adminUser := ""
+	if s != nil {
+		adminUser = s.adminUser
+	}
+	if IsProtectedUsername(username, adminUser) {
+		return RotateResult{}, ErrProtectedUser
+	}
+	if _, err := s.GetUser(ctx, username); err != nil {
+		return RotateResult{}, err
+	}
+	password, err := GeneratePassword()
+	if err != nil {
+		return RotateResult{}, ErrUnavailable
+	}
+	if err := s.client.ACLSetUser(ctx, username, "resetpass", ">"+password); err != nil {
+		return RotateResult{}, classifyRedisError(err)
+	}
+	user, err := s.GetUser(ctx, username)
+	if err != nil {
+		return RotateResult{}, err
+	}
+	return RotateResult{User: user, Password: password}, nil
 }
 
 func (s *Service) loadUsers(ctx context.Context) ([]User, error) {

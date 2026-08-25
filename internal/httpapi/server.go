@@ -25,6 +25,7 @@ type redisHealth interface {
 	GetUser(ctx context.Context, username string) (redisadmin.User, error)
 	CreateUser(ctx context.Context, username, keyPattern string) (redisadmin.CreateResult, error)
 	SetEnabled(ctx context.Context, username string, enabled bool) (redisadmin.User, error)
+	RotateUser(ctx context.Context, username string) (redisadmin.RotateResult, error)
 	Search(ctx context.Context, q string, limit int) (redisadmin.SearchResult, error)
 }
 
@@ -75,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/users/{username}", s.handleRedisUser)
 	r.With(s.requireSession, s.requireCapability("redis.provision"), s.requireMutation).Post("/api/v1/redis/users/{username}/enable", s.handleRedisUserEnable)
 	r.With(s.requireSession, s.requireCapability("redis.provision"), s.requireMutation).Post("/api/v1/redis/users/{username}/disable", s.handleRedisUserDisable)
+	r.With(s.requireSession, s.requireCapability("redis.credentials"), s.requireMutation).Post("/api/v1/redis/users/{username}/credentials/rotate", s.handleRedisUserRotate)
 	r.Post("/api/v1/auth/login", s.handleLogin)
 	r.With(s.requireSession, s.requireMutation).Post("/api/v1/auth/logout", s.handleLogout)
 	r.With(s.requireSession).Get("/api/v1/session", s.handleSession)

@@ -89,6 +89,13 @@ type redisUserEnableResponse struct {
 	RequestID string          `json:"request_id"`
 }
 
+type redisUserRotateResponse struct {
+	Resource   redisCreateResource   `json:"resource"`
+	User       redisUserDetail       `json:"user"`
+	Credential redisCreateCredential `json:"credential"`
+	RequestID  string                `json:"request_id"`
+}
+
 func (s *Server) handleRedisUsers(w http.ResponseWriter, r *http.Request) {
 	if s.redis == nil {
 		empty := []redisUserSummary{}
@@ -180,6 +187,53 @@ func (s *Server) handleRedisUsersCreate(w http.ResponseWriter, r *http.Request) 
 	s.writeJSON(w, r, http.StatusCreated, redisUserCreateResponse{
 		Resource:   redisCreateResource{Type: "redis_user", Name: created.User.Username},
 		User:       toRedisUserSummary(created.User),
+		Credential: cred,
+		RequestID:  requestID(r),
+	})
+}
+
+func (s *Server) handleRedisUserRotate(w http.ResponseWriter, r *http.Request) {
+	username, err := parseRedisUsernameParam(chi.URLParam(r, "username"))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid username")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), redisUsersTimeout)
+	defer cancel()
+	sess := sessionFrom(r)
+	meta := map[string]any{"username": username}
+	if s.redis == nil {
+		_ = s.audit.Record(sess.Username, "redis.user.rotate", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
+		return
+	}
+	rotated, err := s.redis.RotateUser(ctx, username)
+	if err != nil {
+		_ = s.audit.Record(sess.Username, "redis.user.rotate", username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+		s.writeRedisEnableError(w, r, err)
+		return
+	}
+	cred := redisCreateCredential{
+		Username: rotated.User.Username,
+		Password: rotated.Password,
+		OneTime:  true,
+	}
+	if s.cfg.RedisPublicHost != "" && s.cfg.RedisPublicPort != "" {
+		primary, urlErr := redisadmin.ProjectConnectionURL(s.cfg.RedisPublicHost, s.cfg.RedisPublicPort, rotated.User.Username, rotated.Password)
+		if urlErr != nil {
+			_ = s.audit.Record(sess.Username, "redis.user.rotate", rotated.User.Username, "failure", requestID(r), auth.ClientIP(r.RemoteAddr), meta)
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, redisUnavailableMessage)
+			return
+		}
+		cred.URLs = &redisCreateURLs{Primary: primary}
+	}
+	if err := s.audit.Record(sess.Username, "redis.user.rotate", rotated.User.Username, "success", requestID(r), auth.ClientIP(r.RemoteAddr), meta); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, redisUserRotateResponse{
+		Resource:   redisCreateResource{Type: "redis_user", Name: rotated.User.Username},
+		User:       toRedisUserDetail(rotated.User),
 		Credential: cred,
 		RequestID:  requestID(r),
 	})

@@ -62,6 +62,9 @@ func (m *MemoryClient) ACLSetUser(_ context.Context, username string, rules ...s
 	if mergeOnOffOnly(m.ACLLines, username, copied) {
 		return nil
 	}
+	if mergePasswordReset(m.ACLLines, username, copied) {
+		return nil
+	}
 	line := "user " + username
 	if len(copied) > 0 {
 		line += " " + strings.Join(copied, " ")
@@ -105,6 +108,31 @@ func mergeOnOffOnly(lines []string, username string, rules []string) bool {
 			fields = merged
 		}
 		lines[i] = strings.Join(fields, " ")
+		return true
+	}
+	return false
+}
+
+func mergePasswordReset(lines []string, username string, rules []string) bool {
+	if len(rules) != 2 || rules[0] != "resetpass" || !strings.HasPrefix(rules[1], ">") || rules[1] == ">" {
+		return false
+	}
+	password := rules[1]
+	for i, existing := range lines {
+		fields := strings.Fields(existing)
+		if len(fields) < 2 || fields[0] != "user" || fields[1] != username {
+			continue
+		}
+		kept := make([]string, 0, len(fields)+1)
+		kept = append(kept, fields[0], fields[1])
+		for _, f := range fields[2:] {
+			if f == "nopass" || strings.HasPrefix(f, "#") || strings.HasPrefix(f, ">") || strings.HasPrefix(f, "!") {
+				continue
+			}
+			kept = append(kept, f)
+		}
+		kept = append(kept, password)
+		lines[i] = strings.Join(kept, " ")
 		return true
 	}
 	return false
