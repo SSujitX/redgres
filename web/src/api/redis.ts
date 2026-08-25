@@ -77,12 +77,39 @@ export type RedisCreateUserPayload = {
   request_id?: string;
 };
 
-export async function createRedisUser(username: string, keyPattern: string, csrf: string, init: RequestInit = {}) {
+export type RedisAclPreset = "cache-read-write" | "read-only" | "queue-worker";
+export type RedisAclQueueKind = "lists" | "streams" | "sorted-sets";
+
+export type RedisCreateUserOptions = {
+  preset: RedisAclPreset;
+  queueKind?: RedisAclQueueKind;
+};
+
+export async function createRedisUser(
+  username: string,
+  keyPattern: string,
+  csrf: string,
+  options: RedisCreateUserOptions,
+  init: RequestInit = {},
+) {
+  const body: {
+    username: string;
+    key_pattern: string;
+    preset: RedisAclPreset;
+    queue_kind?: RedisAclQueueKind;
+  } = {
+    username,
+    key_pattern: keyPattern,
+    preset: options.preset,
+  };
+  if (options.preset === "queue-worker") {
+    body.queue_kind = options.queueKind ?? "lists";
+  }
   return apiRequest<RedisCreateUserPayload & ApiErrorBody>("/api/v1/redis/users", {
     ...init,
     method: "POST",
     csrf,
-    body: JSON.stringify({ username, key_pattern: keyPattern }),
+    body: JSON.stringify(body),
   });
 }
 
