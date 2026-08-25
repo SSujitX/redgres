@@ -121,6 +121,30 @@ func (s *Service) Details(ctx context.Context, name string) (DatabaseDetails, er
 	}, nil
 }
 
+func (s *Service) Connection(ctx context.Context, name string) (Connection, error) {
+	if err := ValidateIdentifier(name); err != nil {
+		return Connection{}, err
+	}
+	if s == nil || s.catalog == nil {
+		return Connection{}, ErrUnavailable
+	}
+	if s.policy.DatabaseDenied(name) {
+		return Connection{}, ErrNotFound
+	}
+	row, err := s.catalog.Lookup(ctx, name)
+	if err != nil {
+		return Connection{}, mapCatalogError(err)
+	}
+	if !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate) {
+		return Connection{}, ErrNotFound
+	}
+	return Connection{
+		Database:        row.Name,
+		Owner:           row.Owner,
+		SavedCredential: s.savedCredential(ctx, row.Owner),
+	}, nil
+}
+
 func (s *Service) Tables(ctx context.Context, name string) (TableListResult, error) {
 	if err := ValidateIdentifier(name); err != nil {
 		return TableListResult{}, err

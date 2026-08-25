@@ -544,3 +544,303 @@ func TestPostgresRowsCanaryErrorIsRedacted(t *testing.T) {
 		t.Fatalf("leaked %s", rec.Body.String())
 	}
 }
+
+const postgresConnectionPath = "/api/v1/postgres/databases/project_a/connection"
+
+func connectionInventory(saved []string, vaultErr error) postgresadmin.Inventory {
+	return postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		Rows:       []postgresadmin.CatalogRow{{Name: "project_a", Owner: "project_a_role", AllowConn: true}},
+		SavedRoles: saved,
+		VaultErr:   vaultErr,
+	}, postgresadmin.NewPolicy(config.Config{PostgresDatabase: "postgres", PostgresUser: "redgres_console"}))
+}
+
+func TestPostgresConnectionRequiresSession(t *testing.T) {
+	srv := testServerWithPostgres(t, connectionInventory([]string{"project_a_role"}, nil))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, postgresConnectionPath, nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"database", "owner", "saved_credential", "masked_direct_url", "masked_pooled_url"} {
+		if _, ok := body[key]; ok {
+			t.Fatalf("401 must not include %s: %s", key, rec.Body.String())
+		}
+	}
+}
+
+func TestPostgresConnectionUnavailableWithoutAdapter(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, postgresConnectionPath, cookie, csrf, ""))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "dependency_unavailable") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"database"`) || strings.Contains(rec.Body.String(), `"masked_direct_url"`) {
+		t.Fatal("unavailable connection must not look healthy")
+	}
+}
+
+func TestPostgresConnectionProtectedIsNotFound(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{Rows: []postgresadmin.CatalogRow{
+		{Name: "project_a", Owner: "project_a_role", AllowConn: true},
+	}}, postgresadmin.NewPolicy(config.Config{PostgresDatabase: "postgres", PostgresProtectedDatabases: []string{"ops_extra"}}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	for _, name := range []string{"postgres", "template0", "template1", "database_console_vault", "ops_extra", "missing_db"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/"+name+"/connection", cookie, csrf, ""))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s status = %d %s", name, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `"not_found"`) {
+			t.Fatalf("%s body = %s", name, rec.Body.String())
+		}
+	}
+}
+
+func TestPostgresConnectionRejectsInvalidName(t *testing.T) {
+	srv := testServerWithPostgres(t, connectionInventory(nil, nil))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/bad-name/connection", cookie, csrf, ""))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostgresConnectionPresentEmitsBothURLs(t *testing.T) {
+	srv := testServerWithPostgres(t, connectionInventory([]string{"project_a_role"}, nil))
+	srv.cfg.PostgresPublicHost = "db.example.com"
+	srv.cfg.PostgresDirectPort = "5432"
+	srv.cfg.PostgresPooledPort = "6432"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, postgresConnectionPath, cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("cache = %q", rec.Header().Get("Cache-Control"))
+	}
+	body := decodeConnectionBody(t, rec)
+	if body["database"] != "project_a" || body["owner"] != "project_a_role" {
+		t.Fatalf("identity = %#v", body)
+	}
+	cred, _ := body["saved_credential"].(map[string]any)
+	if cred["status"] != "present" || cred["reason"] != "" {
+		t.Fatalf("saved_credential = %#v", body["saved_credential"])
+	}
+	if body["masked_direct_url"] != "postgresql://project_a_role:********@db.example.com:5432/project_a?sslmode=require" {
+		t.Fatalf("direct = %#v", body["masked_direct_url"])
+	}
+	if body["masked_pooled_url"] != "postgresql://project_a_role:********@db.example.com:6432/project_a?sslmode=require" {
+		t.Fatalf("pooled = %#v", body["masked_pooled_url"])
+	}
+	if _, ok := body["request_id"].(string); !ok {
+		t.Fatal("missing request_id")
+	}
+	assertForbiddenConnectionKeys(t, body)
+	if strings.Contains(rec.Body.String(), "canary-secret") || strings.Contains(rec.Body.String(), "YOUR_PASSWORD") {
+		t.Fatalf("leaked secret in %s", rec.Body.String())
+	}
+}
+
+func TestPostgresConnectionPresentOmitsURLsWhenPublicHostUnset(t *testing.T) {
+	srv := testServerWithPostgres(t, connectionInventory([]string{"project_a_role"}, nil))
+	srv.cfg.PostgresDirectPort = "5432"
+	srv.cfg.PostgresPooledPort = "6432"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, postgresConnectionPath, cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	body := decodeConnectionBody(t, rec)
+	cred, _ := body["saved_credential"].(map[string]any)
+	if cred["status"] != "present" {
+		t.Fatalf("saved_credential = %#v", body["saved_credential"])
+	}
+	if _, ok := body["masked_direct_url"]; ok {
+		t.Fatalf("direct must be omitted: %#v", body)
+	}
+	if _, ok := body["masked_pooled_url"]; ok {
+		t.Fatalf("pooled must be omitted: %#v", body)
+	}
+	assertForbiddenConnectionKeys(t, body)
+}
+
+func TestPostgresConnectionPresentOmitsPooledWhenPortUnset(t *testing.T) {
+	srv := testServerWithPostgres(t, connectionInventory([]string{"project_a_role"}, nil))
+	srv.cfg.PostgresPublicHost = "db.example.com"
+	srv.cfg.PostgresDirectPort = "5432"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, postgresConnectionPath, cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	body := decodeConnectionBody(t, rec)
+	if body["masked_direct_url"] != "postgresql://project_a_role:********@db.example.com:5432/project_a?sslmode=require" {
+		t.Fatalf("direct = %#v", body["masked_direct_url"])
+	}
+	if _, ok := body["masked_pooled_url"]; ok {
+		t.Fatalf("pooled must be omitted: %#v", body)
+	}
+}
+
+func TestPostgresConnectionPresentOmitsDirectWhenPortUnset(t *testing.T) {
+	srv := testServerWithPostgres(t, connectionInventory([]string{"project_a_role"}, nil))
+	srv.cfg.PostgresPublicHost = "db.example.com"
+	srv.cfg.PostgresPooledPort = "6432"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, postgresConnectionPath, cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	body := decodeConnectionBody(t, rec)
+	if body["masked_pooled_url"] != "postgresql://project_a_role:********@db.example.com:6432/project_a?sslmode=require" {
+		t.Fatalf("pooled = %#v", body["masked_pooled_url"])
+	}
+	if _, ok := body["masked_direct_url"]; ok {
+		t.Fatalf("direct must be omitted: %#v", body)
+	}
+}
+
+func TestPostgresConnectionMissingOmitsURLs(t *testing.T) {
+	srv := testServerWithPostgres(t, connectionInventory(nil, nil))
+	srv.cfg.PostgresPublicHost = "db.example.com"
+	srv.cfg.PostgresDirectPort = "5432"
+	srv.cfg.PostgresPooledPort = "6432"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, postgresConnectionPath, cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	body := decodeConnectionBody(t, rec)
+	cred, _ := body["saved_credential"].(map[string]any)
+	if cred["status"] != "missing" || cred["reason"] != "" {
+		t.Fatalf("saved_credential = %#v", body["saved_credential"])
+	}
+	if _, ok := body["masked_direct_url"]; ok {
+		t.Fatalf("direct must be omitted: %#v", body)
+	}
+	if _, ok := body["masked_pooled_url"]; ok {
+		t.Fatalf("pooled must be omitted: %#v", body)
+	}
+	assertForbiddenConnectionKeys(t, body)
+}
+
+func TestPostgresConnectionUnavailableOmitsURLs(t *testing.T) {
+	srv := testServerWithPostgres(t, connectionInventory(nil, errors.New("postgresql://canary-secret@10.0.0.1/db")))
+	srv.cfg.PostgresPublicHost = "db.example.com"
+	srv.cfg.PostgresDirectPort = "5432"
+	srv.cfg.PostgresPooledPort = "6432"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, postgresConnectionPath, cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	body := decodeConnectionBody(t, rec)
+	cred, _ := body["saved_credential"].(map[string]any)
+	if cred["status"] != "not_available" || cred["reason"] != "vault_unavailable" {
+		t.Fatalf("saved_credential = %#v", body["saved_credential"])
+	}
+	if _, ok := body["masked_direct_url"]; ok {
+		t.Fatalf("direct must be omitted: %#v", body)
+	}
+	if _, ok := body["masked_pooled_url"]; ok {
+		t.Fatalf("pooled must be omitted: %#v", body)
+	}
+	assertForbiddenConnectionKeys(t, body)
+	if strings.Contains(rec.Body.String(), "canary-secret") {
+		t.Fatalf("leaked canary password in %s", rec.Body.String())
+	}
+}
+
+func TestPostgresConnectionGETWithoutCSRFSucceeds(t *testing.T) {
+	srv := testServerWithPostgres(t, connectionInventory([]string{"project_a_role"}, nil))
+	srv.cfg.PostgresPublicHost = "db.example.com"
+	srv.cfg.PostgresDirectPort = "5432"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, _ := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, postgresConnectionPath, cookie, "", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostgresConnectionRejectsPOST(t *testing.T) {
+	srv := testServerWithPostgres(t, connectionInventory([]string{"project_a_role"}, nil))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, postgresConnectionPath, cookie, csrf, `{}`))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("connection POST status = %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "method_not_allowed") {
+		t.Fatalf("connection POST body = %s", rec.Body.String())
+	}
+	reveal := httptest.NewRecorder()
+	h.ServeHTTP(reveal, authed(http.MethodPost, postgresConnectionPath+"/reveal", cookie, csrf, `{}`))
+	if reveal.Code != http.StatusNotFound {
+		t.Fatalf("reveal POST status = %d %s", reveal.Code, reveal.Body.String())
+	}
+	if strings.Contains(reveal.Body.String(), `"masked_direct_url"`) || strings.Contains(reveal.Body.String(), `"direct_url"`) {
+		t.Fatalf("reveal must not be implemented: %s", reveal.Body.String())
+	}
+}
+
+func decodeConnectionBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func assertForbiddenConnectionKeys(t *testing.T, body map[string]any) {
+	t.Helper()
+	for _, key := range []string{
+		"direct_url", "pooled_url", "url", "raw_url", "masked_url",
+		"username", "has_saved_password", "credential_status", "password",
+	} {
+		if _, ok := body[key]; ok {
+			t.Fatalf("forbidden key %s present: %#v", key, body)
+		}
+	}
+}
