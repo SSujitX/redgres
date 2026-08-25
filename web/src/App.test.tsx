@@ -98,6 +98,35 @@ function postgresReveal200(extra: Record<string, unknown> = {}) {
   });
 }
 
+const createdDirectUrl =
+  "postgresql://app_project_a:canary-pg-create-password-32chars!!@db.example.com:5432/project_a?sslmode=require";
+const createdPooledUrl =
+  "postgresql://app_project_a:canary-pg-create-password-32chars!!@db.example.com:6432/project_a?sslmode=require";
+
+function isPostgresDatabasesCreate(url: string, init?: RequestInit): boolean {
+  return (
+    (url === "/api/v1/postgres/databases" || url.endsWith("/api/v1/postgres/databases")) &&
+    String(init?.method ?? "").toUpperCase() === "POST"
+  );
+}
+
+function postgresCreate201(extra: Record<string, unknown> = {}) {
+  return jsonResponse(201, {
+    resource: { type: "postgres_database", name: "project_a" },
+    credential: {
+      username: "app_project_a",
+      password: "canary-pg-create-password-32chars!!",
+      one_time: false,
+      urls: {
+        direct: createdDirectUrl,
+        pooled: createdPooledUrl,
+      },
+    },
+    request_id: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    ...extra,
+  });
+}
+
 function isAuditUrl(url: string): boolean {
   return url === "/api/v1/audit" || url.startsWith("/api/v1/audit?");
 }
@@ -390,6 +419,18 @@ async function goToDatabases() {
   fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
 }
 
+function databasesHeader() {
+  return screen.getByRole("heading", { name: "Databases" }).closest("header") as HTMLElement;
+}
+
+async function openCreateDatabaseDialog() {
+  await goToDatabases();
+  const header = await screen.findByRole("heading", { name: "Databases" });
+  const headerEl = header.closest("header") as HTMLElement;
+  fireEvent.click(await within(headerEl).findByRole("button", { name: "Create database" }));
+  return screen.findByRole("dialog", { name: "Create database" });
+}
+
 function factValue(label: string) {
   return screen.getByText(label).closest("div")?.querySelector("dd");
 }
@@ -645,6 +686,7 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.every((call) => !isSearchUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isConnectionUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/connection/reveal"))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabasesCreate(String(call[0]), call[1]))).toBe(true);
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
   });
@@ -889,6 +931,7 @@ describe("App session and login", () => {
       }),
     ).toBe(true);
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/connection/reveal"))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabasesCreate(String(call[0]), call[1]))).toBe(true);
   });
 
   it("clears stale postgres hits as soon as the query changes", async () => {
@@ -1849,6 +1892,7 @@ describe("App session and login", () => {
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !isConnectionUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/connection/reveal"))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabasesCreate(String(call[0]), call[1]))).toBe(true);
   });
 
   it("hides Reveal while details are loading", async () => {
@@ -2332,6 +2376,357 @@ describe("App session and login", () => {
     expect(await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." })).toBeInTheDocument();
   });
 
+  it("shows Create database in the Databases header, not the topbar, including an empty list", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-empty".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    expect(await screen.findByText("No manageable project databases.")).toBeInTheDocument();
+    const header = databasesHeader();
+    expect(within(header).getByRole("button", { name: "Create database" })).toBeInTheDocument();
+    expect(document.querySelector(".topbar")).not.toBeNull();
+    expect(
+      within(document.querySelector(".topbar") as HTMLElement).queryByRole("button", { name: /create/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides Create database while the list is loading", async () => {
+    let releaseList: () => void = () => {};
+    const blockedList = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    stubFetch(async (url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-load".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        await blockedList;
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    expect(await screen.findByText("Loading databases.")).toBeInTheDocument();
+    expect(within(databasesHeader()).queryByRole("button", { name: "Create database" })).not.toBeInTheDocument();
+    releaseList();
+    expect(await within(databasesHeader()).findByRole("button", { name: "Create database" })).toBeInTheDocument();
+  });
+
+  it("does not offer Create on the inspector", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-insp".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, { database: { name: "project_a", owner: "project_a_role" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    expect(within(details).queryByRole("button", { name: "Create database" })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: "Create" })).not.toBeInTheDocument();
+  });
+
+  it("disables Create for invalid identifiers and suggests app_${database} until Project user is edited", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-valid".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const dialog = await openCreateDatabaseDialog();
+    expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Database name"), { target: { value: "1db" } });
+    expect(within(dialog).getByLabelText("Project user")).toHaveValue("");
+    expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Database name"), { target: { value: "bad-name" } });
+    expect(within(dialog).getByLabelText("Project user")).toHaveValue("");
+    expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Database name"), { target: { value: "a".repeat(64) } });
+    expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Database name"), { target: { value: "project_a" } });
+    expect(within(dialog).getByLabelText("Project user")).toHaveValue("app_project_a");
+    expect(within(dialog).getByRole("button", { name: "Create" })).toBeEnabled();
+    fireEvent.change(within(dialog).getByLabelText("Project user"), { target: { value: "custom_owner" } });
+    fireEvent.change(within(dialog).getByLabelText("Database name"), { target: { value: "project_b" } });
+    expect(within(dialog).getByLabelText("Project user")).toHaveValue("custom_owner");
+    fireEvent.change(within(dialog).getByLabelText("Project user"), { target: { value: "1owner" } });
+    expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
+    expect(within(dialog).queryByLabelText("Password")).not.toBeInTheDocument();
+    expect(dialog.querySelector("input[type=password]")).toBeNull();
+    expect(dialog).toHaveTextContent("Redgres generates the password and saves it in the encrypted vault.");
+    expect(dialog).toHaveTextContent(
+      "Direct 5432 vs pooled 6432; TLS required; PUBLIC CONNECT revoked; 20-connection role limit.",
+    );
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabasesCreate(String(call[0]), call[1]))).toBe(true);
+  });
+
+  it("POSTs CSRF JSON { database, owner } and opens the PostgreSQL vault ticket on 201", async () => {
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    let created = false;
+    const fetch = stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-201".padEnd(64, "0") });
+      }
+      if (isPostgresDatabasesCreate(url, init)) {
+        created = true;
+        return postgresCreate201({
+          credential: {
+            username: "app_project_a",
+            password: "canary-pg-create-password-32chars!!",
+            one_time: false,
+            extra_secret: "should-not-render",
+            urls: {
+              direct: createdDirectUrl,
+              pooled: createdPooledUrl,
+            },
+          },
+        });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, {
+          databases: created ? [{ name: "project_a", owner: "app_project_a" }] : [],
+          truncated: false,
+        });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "app_project_a", saved_credential: { status: "present", reason: "" } },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const dialog = await openCreateDatabaseDialog();
+    fireEvent.change(within(dialog).getByLabelText("Database name"), { target: { value: "project_a" } });
+    expect(within(dialog).getByLabelText("Project user")).toHaveValue("app_project_a");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isPostgresDatabasesCreate(String(call[0]), call[1]))).toBe(true);
+    });
+    const createCall = fetch.mock.calls.find((call) => isPostgresDatabasesCreate(String(call[0]), call[1]));
+    expect(createCall?.[0]).toBe("/api/v1/postgres/databases");
+    expect(new Headers(createCall?.[1]?.headers).get("X-CSRF-Token")).toBe("pg-create-201".padEnd(64, "0"));
+    const body = JSON.parse(String(createCall?.[1]?.body));
+    expect(body).toEqual({ database: "project_a", owner: "app_project_a" });
+    expect(body).not.toHaveProperty("password");
+    expect(body).not.toHaveProperty("role_password");
+    expect(body).not.toHaveProperty("create_role");
+    expect(screen.queryByRole("dialog", { name: "Create database" })).not.toBeInTheDocument();
+    const ticket = await screen.findByRole("alertdialog", { name: "This PostgreSQL password is still saved." });
+    expect(ticket).toHaveTextContent("Redgres can show this password again from the encrypted vault.");
+    expect(ticket).toHaveTextContent("It is not a one-time Redis credential.");
+    expect(ticket).not.toHaveTextContent(/shown now/i);
+    expect(ticket).toHaveTextContent("canary-pg-create-password-32chars!!");
+    expect(ticket).toHaveTextContent("app_project_a");
+    expect(within(ticket).getByRole("button", { name: "Copy Direct URL" })).toBeInTheDocument();
+    expect(within(ticket).getByRole("button", { name: "Copy Pooled URL" })).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render");
+    expect(localSet).not.toHaveBeenCalled();
+    expect(within(databasesHeader()).getByRole("button", { name: "Create database" })).toBeDisabled();
+    const listGets = fetch.mock.calls.filter(
+      (call) =>
+        String(call[0]).endsWith("/api/v1/postgres/databases") && !isPostgresDatabasesCreate(String(call[0]), call[1]),
+    );
+    expect(listGets.length).toBeGreaterThan(1);
+    fireEvent.click(within(ticket).getByRole("button", { name: "I have copied it — dismiss" }));
+    expect(screen.queryByText("canary-pg-create-password-32chars!!")).not.toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Database details" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "project_a" })).toBeInTheDocument();
+    expect(localSet).not.toHaveBeenCalled();
+    localSet.mockRestore();
+  });
+
+  it("shows session-expired on create 401 and clears secrets", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-401".padEnd(64, "0") });
+      }
+      if (isPostgresDatabasesCreate(url, init)) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const dialog = await openCreateDatabaseDialog();
+    fireEvent.change(within(dialog).getByLabelText("Database name"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("dialog", { name: "Create database" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("canary-pg-create-password-32chars!!")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [409, "A PostgreSQL database with this name already exists"],
+    [403, "This PostgreSQL name is protected"],
+    [400, "Invalid database name"],
+    [503, "PostgreSQL is unavailable"],
+  ] as const)("stays on the create dialog for HTTP %s", async (status, message) => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: `pg-create-${status}`.padEnd(64, "0") });
+      }
+      if (isPostgresDatabasesCreate(url, init)) {
+        return jsonResponse(status, { error: { message } });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const dialog = await openCreateDatabaseDialog();
+    fireEvent.change(within(dialog).getByLabelText("Database name"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("dialog", { name: "Create database" })).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("renders the create form from nav postgres-create instead of the adapter placeholder", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-nav".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Create database" }),
+    );
+    expect(screen.queryByText("This adapter is not available yet.")).not.toBeInTheDocument();
+    expect(screen.queryByText("This view is not available yet.")).not.toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Create database" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Databases" })).toBeInTheDocument();
+  });
+
+  it("never POSTs /api/v1/postgres/databases from the login route", async () => {
+    let authed = false;
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        if (!authed) {
+          return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+        }
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-login".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/login")) {
+        authed = true;
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-login".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "admin" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabasesCreate(String(call[0]), call[1]))).toBe(true);
+  });
+
+  it("never POSTs create from search results", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-search".padEnd(64, "0") });
+      }
+      if (isSearchUrl(url)) {
+        return disconnectedSearch();
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "create" } });
+    const search = await screen.findByRole("dialog", { name: "Search" });
+    fireEvent.click(within(search).getByRole("button", { name: /Create database/ }));
+    expect(await screen.findByRole("dialog", { name: "Create database" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabasesCreate(String(call[0]), call[1]))).toBe(true);
+  });
+
+  it("never POSTs create from Security overview", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-sec".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isPostgresSecurityUrl(url)) {
+        return postgresSecurityOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToSecurityOverview();
+    expect(await screen.findByRole("heading", { name: "Security overview" })).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isPostgresDatabasesCreate(String(call[0]), call[1]))).toBe(true);
+  });
+
+  it("keeps Redis create tickets as one-time shown now after the PostgreSQL create dialog exists", async () => {
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "pg-create-redis".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      if (isRedisUsersCreate(url, init)) {
+        return redisAclCreate201();
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    expect(await within(databasesHeader()).findByRole("button", { name: "Create database" })).toBeInTheDocument();
+    goToAclUsers();
+    fireEvent.click(await screen.findByRole("button", { name: "Create ACL user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create ACL user" });
+    fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "project_a" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    const ticket = await screen.findByRole("alertdialog", { name: /shown now/i });
+    expect(ticket).toHaveTextContent(/shown now/i);
+    expect(ticket).not.toHaveTextContent("This PostgreSQL password is still saved.");
+  });
+
   it("clears previous details and ignores a slower first selection", async () => {
     const longName = `project_${"x".repeat(55)}`;
     let releaseA: () => void = () => {};
@@ -2562,6 +2957,7 @@ describe("App session and login", () => {
     fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("PostgreSQL is unavailable");
     expect(screen.queryByText("No manageable project databases.")).not.toBeInTheDocument();
+    expect(within(databasesHeader()).queryByRole("button", { name: "Create database" })).not.toBeInTheDocument();
   });
 
   it("loads bounded rows after a table is activated", async () => {
