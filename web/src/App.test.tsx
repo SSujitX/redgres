@@ -29,7 +29,41 @@ function isRowsUrl(url: string, db: string, schema: string, table: string): bool
 
 function isDetailsUrl(url: string, name: string): boolean {
   const prefix = `/api/v1/postgres/databases/${encodeURIComponent(name)}`;
-  return url.includes(prefix) && !url.includes("/tables");
+  return url.includes(prefix) && !url.includes("/tables") && !url.includes("/connection");
+}
+
+function isConnectionUrl(url: string, name?: string): boolean {
+  if (name !== undefined) {
+    return url.includes(`/api/v1/postgres/databases/${encodeURIComponent(name)}/connection`);
+  }
+  return url.includes("/api/v1/postgres/databases/") && url.includes("/connection");
+}
+
+const maskedDirectUrl =
+  "postgresql://project_a_role:********@db.example.com:5432/project_a?sslmode=require";
+const maskedPooledUrl =
+  "postgresql://project_a_role:********@db.example.com:6432/project_a?sslmode=require";
+
+function postgresConnectionAbsent(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    database: "project_a",
+    owner: "project_a_role",
+    saved_credential: { status: "missing", reason: "" },
+    request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ...extra,
+  });
+}
+
+function postgresConnectionPresent(extra: Record<string, unknown> = {}) {
+  return jsonResponse(200, {
+    database: "project_a",
+    owner: "project_a_role",
+    saved_credential: { status: "present", reason: "" },
+    masked_direct_url: maskedDirectUrl,
+    masked_pooled_url: maskedPooledUrl,
+    request_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    ...extra,
+  });
 }
 
 function isAuditUrl(url: string): boolean {
@@ -305,6 +339,11 @@ function goToSecurityOverview() {
   );
 }
 
+async function goToDatabases() {
+  fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
+}
+
 function factValue(label: string) {
   return screen.getByText(label).closest("div")?.querySelector("dd");
 }
@@ -498,6 +537,9 @@ function redisHitSearch(extra: Record<string, unknown> = {}) {
 }
 
 function unknownApi(url: string) {
+  if (isConnectionUrl(url)) {
+    return postgresConnectionAbsent();
+  }
   if (isRedisStatusUrl(url)) {
     return disconnectedRedisStatus();
   }
@@ -555,6 +597,7 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.every((call) => !isStatusUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isRedisStatusUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isSearchUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isConnectionUrl(String(call[0])))).toBe(true);
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
   });
@@ -755,7 +798,7 @@ describe("App session and login", () => {
       if (isSearchUrl(url)) {
         return postgresHitSearch({ password: "canary-secret", url: "postgresql://canary-secret@10.0.0.1/db" });
       }
-      if (url.includes("/api/v1/postgres/databases") && !url.includes("/tables")) {
+      if (url.includes("/api/v1/postgres/databases") && !url.includes("/tables") && !url.includes("/connection")) {
         if (isDetailsUrl(url, "project_a")) {
           return jsonResponse(200, { database: { name: "project_a", owner: "project_a_role", size: "12 MB" } });
         }
@@ -827,7 +870,7 @@ describe("App session and login", () => {
       if (isSearchUrl(url)) {
         return postgresHitSearch();
       }
-      if (url.includes("/api/v1/postgres/databases") && !url.includes("/tables")) {
+      if (url.includes("/api/v1/postgres/databases") && !url.includes("/tables") && !url.includes("/connection")) {
         if (isDetailsUrl(url, "project_a")) {
           return jsonResponse(200, { database: { name: "project_a", owner: "owner_a" } });
         }
@@ -1031,7 +1074,7 @@ describe("App session and login", () => {
       if (isSearchUrl(url)) {
         return postgresHitSearch();
       }
-      if (url.includes("/api/v1/postgres/databases") && !url.includes("/tables")) {
+      if (url.includes("/api/v1/postgres/databases") && !url.includes("/tables") && !url.includes("/connection")) {
         if (isDetailsUrl(url, "project_a")) {
           return jsonResponse(200, { database: { name: "project_a", owner: "project_a_role" } });
         }
@@ -1309,6 +1352,9 @@ describe("App session and login", () => {
           truncated: false,
         });
       }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionAbsent();
+      }
       if (isDetailsUrl(url, "project_a")) {
         return jsonResponse(200, {
           database: {
@@ -1361,6 +1407,9 @@ describe("App session and login", () => {
       if (isTablesUrl(url, "project_a")) {
         return jsonResponse(200, { tables: [], truncated: false });
       }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionAbsent();
+      }
       if (isDetailsUrl(url, "project_a")) {
         return jsonResponse(200, {
           database: {
@@ -1397,6 +1446,9 @@ describe("App session and login", () => {
       if (isTablesUrl(url, "project_a")) {
         return jsonResponse(200, { tables: [], truncated: false });
       }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionAbsent();
+      }
       if (isDetailsUrl(url, "project_a")) {
         return jsonResponse(200, {
           database: {
@@ -1417,6 +1469,326 @@ describe("App session and login", () => {
     const details = screen.getByRole("region", { name: "Database details" });
     expect(within(details).queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
     expectNoVaultReasonCopy();
+  });
+
+  it("does not treat /connection as a details URL", () => {
+    expect(isDetailsUrl("/api/v1/postgres/databases/project_a", "project_a")).toBe(true);
+    expect(isDetailsUrl("/api/v1/postgres/databases/project_a/tables", "project_a")).toBe(false);
+    expect(isDetailsUrl("/api/v1/postgres/databases/project_a/connection", "project_a")).toBe(false);
+    expect(isConnectionUrl("/api/v1/postgres/databases/project_a/connection", "project_a")).toBe(true);
+  });
+
+  it("shows copy-safe Direct URL and Pooled URL from the connection GET", async () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-a".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: {
+            name: "project_a",
+            owner: "project_a_role",
+            saved_credential: { status: "present", reason: "" },
+          },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    expect(await within(details).findByText("Direct URL")).toBeInTheDocument();
+    expect(within(details).getByText("Pooled URL")).toBeInTheDocument();
+    expect(factValue("Direct URL")).toHaveTextContent(maskedDirectUrl);
+    expect(factValue("Pooled URL")).toHaveTextContent(maskedPooledUrl);
+    expect(factValue("Direct URL")).toHaveClass("bidi-isolate", "identifier");
+    expect(factValue("Pooled URL")).toHaveClass("bidi-isolate", "identifier");
+    expect(within(details).getByRole("button", { name: "Copy Direct URL" })).toHaveClass("text-button");
+    expect(within(details).getByRole("button", { name: "Copy Pooled URL" })).toHaveClass("text-button");
+    expect(writeText).not.toHaveBeenCalled();
+    fireEvent.click(within(details).getByRole("button", { name: "Copy Direct URL" }));
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith(maskedDirectUrl);
+    fireEvent.click(within(details).getByRole("button", { name: "Copy Pooled URL" }));
+    expect(writeText).toHaveBeenCalledWith(maskedPooledUrl);
+    expect(screen.queryByText("YOUR_PASSWORD")).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+    expect(factValue("Saved credential")).toHaveTextContent("Saved");
+    expect(screen.queryByText("present")).not.toBeInTheDocument();
+    expectNoVaultReasonCopy();
+    const connectionCalls = fetch.mock.calls.filter((call) => isConnectionUrl(String(call[0]), "project_a"));
+    expect(connectionCalls.length).toBeGreaterThan(0);
+    expect(connectionCalls.every((call) => String(call[0]) === "/api/v1/postgres/databases/project_a/connection")).toBe(
+      true,
+    );
+    const method = connectionCalls[0]?.[1]?.method;
+    expect(method === undefined || method === "GET").toBe(true);
+    expect(new Headers(connectionCalls[0]?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+    expect(localSet).not.toHaveBeenCalled();
+    localSet.mockRestore();
+  });
+
+  it("omits URL rows and reason strings when connection keys are absent", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-b".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionAbsent({
+          saved_credential: { status: "missing", reason: "" },
+        });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: {
+            name: "project_a",
+            owner: "project_a_role",
+            saved_credential: { status: "missing", reason: "" },
+          },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Saved credential")).toBeInTheDocument();
+    expect(factValue("Saved credential")).toHaveTextContent("Not saved");
+    const details = screen.getByRole("region", { name: "Database details" });
+    expect(within(details).queryByText("Direct URL")).not.toBeInTheDocument();
+    expect(within(details).queryByText("Pooled URL")).not.toBeInTheDocument();
+    expect(screen.queryByText("not configured")).not.toBeInTheDocument();
+    expect(screen.queryByText("YOUR_PASSWORD")).not.toBeInTheDocument();
+    expect(screen.queryByText("********")).not.toBeInTheDocument();
+    expect(screen.queryByText("missing")).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /rotate/i })).not.toBeInTheDocument();
+    expect(within(details).queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
+    expectNoVaultReasonCopy();
+  });
+
+  it("omits URL rows when connection vault status is not available", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-c".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionAbsent({
+          saved_credential: { status: "not_available", reason: "vault_unavailable" },
+        });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: {
+            name: "project_a",
+            owner: "project_a_role",
+            saved_credential: { status: "not_available", reason: "vault_unavailable" },
+          },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Saved credential")).toBeInTheDocument();
+    expect(factValue("Saved credential")).toHaveTextContent("Not available");
+    const details = screen.getByRole("region", { name: "Database details" });
+    expect(within(details).queryByText("Direct URL")).not.toBeInTheDocument();
+    expect(within(details).queryByText("Pooled URL")).not.toBeInTheDocument();
+    expect(screen.queryByText("not_available")).not.toBeInTheDocument();
+    expect(screen.queryByText("********")).not.toBeInTheDocument();
+    expectNoVaultReasonCopy();
+  });
+
+  it("shows session-expired copy on connection 401 and paints no URLs", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-d".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return jsonResponse(401, {
+          error: { code: "unauthorized", message: "Authentication required" },
+          masked_direct_url: maskedDirectUrl,
+          masked_pooled_url: maskedPooledUrl,
+        });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role" },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your session has expired. Sign in again to continue.",
+    );
+    expect(screen.queryByText("Direct URL")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pooled URL")).not.toBeInTheDocument();
+    expect(screen.queryByText(maskedDirectUrl)).not.toBeInTheDocument();
+    expect(screen.queryByText(maskedPooledUrl)).not.toBeInTheDocument();
+  });
+
+  it("shows PostgreSQL is unavailable for a connection 503", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-e".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return jsonResponse(503, {
+          error: { code: "dependency_unavailable", message: "PostgreSQL is unavailable" },
+        });
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role" },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("PostgreSQL is unavailable");
+    expect(screen.queryByText("Direct URL")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pooled URL")).not.toBeInTheDocument();
+  });
+
+  it("clears previous masked URLs when the selected database changes", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-f".padEnd(64, "0") });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, {
+          databases: [
+            { name: "project_a", owner: "owner_a" },
+            { name: "project_b", owner: "owner_b" },
+          ],
+          truncated: false,
+        });
+      }
+      if (isTablesUrl(url, "project_a") || isTablesUrl(url, "project_b")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isConnectionUrl(url, "project_b")) {
+        return postgresConnectionAbsent({
+          database: "project_b",
+          owner: "owner_b",
+          saved_credential: { status: "missing", reason: "" },
+        });
+      }
+      if (isDetailsUrl(url, "project_a") || isDetailsUrl(url, "project_b")) {
+        const name = url.includes("project_b") ? "project_b" : "project_a";
+        return jsonResponse(200, { database: { name, owner: name === "project_b" ? "owner_b" : "owner_a" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText("Direct URL")).toBeInTheDocument();
+    expect(screen.getByText(maskedDirectUrl)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /project_b/ }));
+    expect(await screen.findByText("owner_b")).toBeInTheDocument();
+    expect(screen.queryByText("Direct URL")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pooled URL")).not.toBeInTheDocument();
+    expect(screen.queryByText(maskedDirectUrl)).not.toBeInTheDocument();
+    expect(screen.queryByText(maskedPooledUrl)).not.toBeInTheDocument();
+  });
+
+  it("clears masked connection URLs on logout", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-g".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (url.endsWith("/api/v1/postgres/databases")) {
+        return jsonResponse(200, { databases: [{ name: "project_a", owner: "project_a_role" }], truncated: false });
+      }
+      if (isTablesUrl(url, "project_a")) {
+        return jsonResponse(200, { tables: [], truncated: false });
+      }
+      if (isConnectionUrl(url, "project_a")) {
+        return postgresConnectionPresent();
+      }
+      if (isDetailsUrl(url, "project_a")) {
+        return jsonResponse(200, {
+          database: { name: "project_a", owner: "project_a_role" },
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    expect(await screen.findByText(maskedDirectUrl)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Database details" })).not.toBeInTheDocument();
+    expect(screen.queryByText(maskedDirectUrl)).not.toBeInTheDocument();
+    expect(screen.queryByText(maskedPooledUrl)).not.toBeInTheDocument();
+    expect(screen.queryByText("Direct URL")).not.toBeInTheDocument();
+  });
+
+  it("does not fetch PostgreSQL connection on the login route", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isConnectionUrl(String(call[0])))).toBe(true);
   });
 
   it("clears previous details and ignores a slower first selection", async () => {
