@@ -30,6 +30,7 @@ type Catalog interface {
 	ListTables(ctx context.Context, database string) ([]TableItem, error)
 	ListRows(ctx context.Context, database, schema, table, q string, offset, limit int) (RowPage, error)
 	ListConnectionGroups(ctx context.Context) ([]ConnectionGroup, error)
+	SavedRoleNames(ctx context.Context, roles []string) (map[string]struct{}, error)
 	Ping(ctx context.Context) error
 	PingPooled(ctx context.Context) error
 }
@@ -115,15 +116,16 @@ type RowPage struct {
 	Limit   int              `json:"limit"`
 }
 
-func vaultNotAvailable() SavedCredential {
-	return SavedCredential{Status: "not_available", Reason: "vault_not_implemented"}
+func vaultUnavailable() SavedCredential {
+	return SavedCredential{Status: "not_available", Reason: "vault_unavailable"}
 }
 
 type SecuritySummary struct {
-	DatabaseCount         int `json:"database_count"`
-	PublicConnectCount    int `json:"public_connect_count"`
-	ActiveConnectionCount int `json:"active_connection_count"`
-	ConnectionGroupCount  int `json:"connection_group_count"`
+	DatabaseCount         int  `json:"database_count"`
+	PublicConnectCount    int  `json:"public_connect_count"`
+	ActiveConnectionCount int  `json:"active_connection_count"`
+	ConnectionGroupCount  int  `json:"connection_group_count"`
+	MissingPasswordCount  *int `json:"missing_password_count,omitempty"`
 }
 
 type SecurityDatabase struct {

@@ -99,15 +99,15 @@ func TestPostgresSecurityReturnsClusterOverview(t *testing.T) {
 		t.Fatalf("truncated = %#v", body["truncated"])
 	}
 	cred, _ := body["saved_credential"].(map[string]any)
-	if cred["status"] != "not_available" || cred["reason"] != "vault_not_implemented" {
+	if cred["status"] != "ok" || cred["reason"] != "" {
 		t.Fatalf("saved_credential = %#v", body["saved_credential"])
 	}
 	summary, _ := body["summary"].(map[string]any)
 	if summary["database_count"] != float64(3) || summary["public_connect_count"] != float64(1) || summary["active_connection_count"] != float64(3) || summary["connection_group_count"] != float64(2) {
 		t.Fatalf("summary = %#v", summary)
 	}
-	if _, ok := summary["missing_password_count"]; ok {
-		t.Fatal("missing_password_count must be absent")
+	if summary["missing_password_count"] != float64(3) {
+		t.Fatalf("missing_password_count = %#v", summary["missing_password_count"])
 	}
 	dbs, _ := body["databases"].([]any)
 	if dbs == nil || len(dbs) != 3 {
@@ -127,7 +127,7 @@ func TestPostgresSecurityReturnsClusterOverview(t *testing.T) {
 	if conns == nil || len(conns) != 2 {
 		t.Fatalf("connections = %#v", body["connections"])
 	}
-	for _, leak := range []string{"canary", "secret", "postgresql://", "query", "datacl"} {
+	for _, leak := range []string{"canary", "secret", "postgresql://", "query", "datacl", "vault_not_implemented"} {
 		if strings.Contains(rec.Body.String(), leak) {
 			t.Fatalf("leaked %q in %s", leak, rec.Body.String())
 		}
@@ -165,6 +165,9 @@ func TestPostgresSecurityCapsTruncatedFlag(t *testing.T) {
 	if summary["database_count"] != float64(501) {
 		t.Fatalf("summary = %#v", summary)
 	}
+	if summary["missing_password_count"] != float64(501) {
+		t.Fatalf("pre-cap missing_password_count = %#v", summary["missing_password_count"])
+	}
 }
 
 func TestPostgresSecurityCatalogErrorIs503WithoutCanary(t *testing.T) {
@@ -186,6 +189,50 @@ func TestPostgresSecurityCatalogErrorIs503WithoutCanary(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), `"summary"`) {
 		t.Fatal("503 must not include summary")
+	}
+}
+
+func TestPostgresSecurityVaultUnavailableIs200(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		Rows: []postgresadmin.CatalogRow{
+			{Name: "postgres", Owner: "postgres", AllowConn: true},
+			{Name: "project_a", Owner: "project_a_role", AllowConn: true, PublicCanConnect: true},
+		},
+		Connections: []postgresadmin.ConnectionGroup{
+			{Database: "project_a", User: "project_a_role", Client: "local", Application: "app", State: "idle", Count: 1},
+		},
+		VaultErr: errors.New("postgresql://canary:secret@127.0.0.1/db"),
+	}, postgresadmin.NewPolicy(config.Config{PostgresDatabase: "postgres"}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/security", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	cred, _ := body["saved_credential"].(map[string]any)
+	if cred["status"] != "not_available" || cred["reason"] != "vault_unavailable" {
+		t.Fatalf("saved_credential = %#v", body["saved_credential"])
+	}
+	summary, _ := body["summary"].(map[string]any)
+	if _, ok := summary["missing_password_count"]; ok {
+		t.Fatal("missing_password_count must be omitted when vault_unavailable")
+	}
+	dbs, _ := body["databases"].([]any)
+	conns, _ := body["connections"].([]any)
+	if len(dbs) != 2 || len(conns) != 1 {
+		t.Fatalf("must keep databases/connections: dbs=%#v conns=%#v", body["databases"], body["connections"])
+	}
+	for _, leak := range []string{"canary", "secret", "postgresql://", "vault_not_implemented", "encrypted_password"} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Fatalf("leaked %q in %s", leak, rec.Body.String())
+		}
 	}
 }
 

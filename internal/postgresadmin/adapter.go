@@ -10,6 +10,7 @@ import (
 
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -412,6 +413,74 @@ func (c PoolCatalog) ListConnectionGroups(ctx context.Context) ([]ConnectionGrou
 	}
 	if rows.Err() != nil {
 		return nil, ErrUnavailable
+	}
+	return out, nil
+}
+
+const vaultDatabase = "database_console_vault"
+
+// savedRoleNamesSQL is existence-only. $1 is a non-nil []string, encoded as
+// PostgreSQL text[] by pgx v5.10.0 TryWrapSliceEncodePlan (pgtype/pgtype.go).
+const savedRoleNamesSQL = `SELECT role_name FROM public.project_credentials WHERE role_name = ANY($1)`
+
+func uniqueRoleNames(roles []string, max int) []string {
+	seen := make(map[string]struct{}, len(roles))
+	out := make([]string, 0, len(roles))
+	for _, role := range roles {
+		if _, ok := seen[role]; ok {
+			continue
+		}
+		seen[role] = struct{}{}
+		out = append(out, role)
+		if max > 0 && len(out) >= max {
+			break
+		}
+	}
+	return out
+}
+
+func mapVaultError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "3D000", "42P01":
+			return ErrVaultUnavailable
+		}
+	}
+	return ErrVaultUnavailable
+}
+
+func (c PoolCatalog) SavedRoleNames(ctx context.Context, roles []string) (map[string]struct{}, error) {
+	if len(roles) == 0 {
+		return map[string]struct{}{}, nil
+	}
+	unique := uniqueRoleNames(roles, listCap)
+	if len(unique) == 0 {
+		return map[string]struct{}{}, nil
+	}
+	conn, connectCtx, closeConn, err := c.connectTarget(ctx, vaultDatabase)
+	if err != nil {
+		return nil, mapVaultError(err)
+	}
+	defer closeConn()
+	rows, err := conn.Query(connectCtx, savedRoleNamesSQL, unique)
+	if err != nil {
+		return nil, mapVaultError(err)
+	}
+	defer rows.Close()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, mapVaultError(err)
+		}
+		out[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapVaultError(err)
 	}
 	return out, nil
 }

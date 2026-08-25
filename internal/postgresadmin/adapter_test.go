@@ -2,12 +2,14 @@ package postgresadmin
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -92,5 +94,45 @@ func TestPoolCatalogPingPooledNilObserverIsNotConfigured(t *testing.T) {
 	var c PoolCatalog
 	if err := c.PingPooled(context.Background()); err != ErrNotConfigured {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestMapVaultErrorMapsMissingCatalogAndUndefinedTable(t *testing.T) {
+	for _, code := range []string{"3D000", "42P01"} {
+		err := mapVaultError(&pgconn.PgError{Code: code, Message: "canary postgresql://secret"})
+		if !errors.Is(err, ErrVaultUnavailable) {
+			t.Fatalf("%s: %v", code, err)
+		}
+		if errors.Is(err, ErrUnavailable) {
+			t.Fatalf("%s mapped to ErrUnavailable", code)
+		}
+		if strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "postgresql://") {
+			t.Fatalf("leaked %v", err)
+		}
+	}
+	if !errors.Is(mapVaultError(ErrUnavailable), ErrVaultUnavailable) {
+		t.Fatal("connectTarget ErrUnavailable must remap")
+	}
+}
+
+func TestPoolCatalogSavedRoleNamesEmptyDoesNotRequirePool(t *testing.T) {
+	var c PoolCatalog
+	got, err := c.SavedRoleNames(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got = %#v", got)
+	}
+}
+
+func TestPoolCatalogSavedRoleNamesNilPoolIsVaultUnavailable(t *testing.T) {
+	var c PoolCatalog
+	_, err := c.SavedRoleNames(context.Background(), []string{"project_a_role"})
+	if !errors.Is(err, ErrVaultUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+	if errors.Is(err, ErrUnavailable) {
+		t.Fatal("must not return ErrUnavailable")
 	}
 }

@@ -117,7 +117,7 @@ func (s *Service) Details(ctx context.Context, name string) (DatabaseDetails, er
 			OwnerCreaterole:  row.OwnerCreaterole,
 			OwnerReplication: row.OwnerReplication,
 		},
-		SavedCredential: vaultNotAvailable(),
+		SavedCredential: s.savedCredential(ctx, row.Owner),
 	}, nil
 }
 
@@ -262,11 +262,11 @@ func (s *Service) SecurityOverview(ctx context.Context) (SecurityOverview, error
 			ActiveConnectionCount: active,
 			ConnectionGroupCount:  len(connections),
 		},
-		SavedCredential: vaultNotAvailable(),
-		Databases:       databases,
-		Connections:     connections,
-		Truncated:       len(databases) > listCap || len(connections) > listCap,
+		Databases:   databases,
+		Connections: connections,
+		Truncated:   len(databases) > listCap || len(connections) > listCap,
 	}
+	s.applyVaultExistence(ctx, &out)
 	if len(out.Databases) > listCap {
 		out.Databases = out.Databases[:listCap]
 	}
@@ -274,6 +274,37 @@ func (s *Service) SecurityOverview(ctx context.Context) (SecurityOverview, error
 		out.Connections = out.Connections[:listCap]
 	}
 	return out, nil
+}
+
+func (s *Service) savedCredential(ctx context.Context, owner string) SavedCredential {
+	names, err := s.catalog.SavedRoleNames(ctx, []string{owner})
+	if err != nil {
+		return vaultUnavailable()
+	}
+	if _, ok := names[owner]; ok {
+		return SavedCredential{Status: "present", Reason: ""}
+	}
+	return SavedCredential{Status: "missing", Reason: ""}
+}
+
+func (s *Service) applyVaultExistence(ctx context.Context, out *SecurityOverview) {
+	owners := make([]string, 0, len(out.Databases))
+	for _, db := range out.Databases {
+		owners = append(owners, db.Owner)
+	}
+	names, err := s.catalog.SavedRoleNames(ctx, uniqueRoleNames(owners, listCap))
+	if err != nil {
+		out.SavedCredential = vaultUnavailable()
+		return
+	}
+	out.SavedCredential = SavedCredential{Status: "ok", Reason: ""}
+	missing := 0
+	for _, db := range out.Databases {
+		if _, ok := names[db.Owner]; !ok {
+			missing++
+		}
+	}
+	out.Summary.MissingPasswordCount = &missing
 }
 
 func displayConnectionGroup(group ConnectionGroup) ConnectionGroup {
@@ -310,7 +341,7 @@ func catalogSchemaDenied(schema string) bool {
 }
 
 func mapCatalogError(err error) error {
-	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidIdentifier) || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrNotConfigured) {
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidIdentifier) || errors.Is(err, ErrUnavailable) || errors.Is(err, ErrNotConfigured) || errors.Is(err, ErrVaultUnavailable) {
 		return err
 	}
 	return ErrUnavailable

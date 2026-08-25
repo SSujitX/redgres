@@ -19,6 +19,8 @@ type MemoryCatalog struct {
 	LastRowsKey      string
 	Connections      []ConnectionGroup
 	ConnectionsErr   error
+	SavedRoles       []string
+	VaultErr         error
 	PooledConfigured bool
 	PingPooledErr    error
 }
@@ -142,5 +144,25 @@ func (m *MemoryCatalog) ListConnectionGroups(context.Context) ([]ConnectionGroup
 	}
 	out := make([]ConnectionGroup, len(m.Connections))
 	copy(out, m.Connections)
+	return out, nil
+}
+
+func (m *MemoryCatalog) SavedRoleNames(_ context.Context, roles []string) (map[string]struct{}, error) {
+	if len(roles) == 0 {
+		return map[string]struct{}{}, nil
+	}
+	if m.VaultErr != nil {
+		return nil, m.VaultErr
+	}
+	want := make(map[string]struct{}, len(roles))
+	for _, role := range roles {
+		want[role] = struct{}{}
+	}
+	out := make(map[string]struct{})
+	for _, role := range m.SavedRoles {
+		if _, ok := want[role]; ok {
+			out[role] = struct{}{}
+		}
+	}
 	return out, nil
 }

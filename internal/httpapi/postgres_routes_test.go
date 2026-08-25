@@ -100,6 +100,91 @@ func TestPostgresDetailsProtectedIsNotFound(t *testing.T) {
 	}
 }
 
+func TestPostgresDetailsSavedCredentialPresent(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		Rows:       []postgresadmin.CatalogRow{{Name: "project_a", Owner: "project_a_role", AllowConn: true, SizePretty: "1 MB"}},
+		SavedRoles: []string{"project_a_role"},
+	}, postgresadmin.NewPolicy(config.Config{}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("cache = %q", rec.Header().Get("Cache-Control"))
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := body["database"].(map[string]any)
+	cred, _ := db["saved_credential"].(map[string]any)
+	if cred["status"] != "present" || cred["reason"] != "" {
+		t.Fatalf("saved_credential = %#v", db["saved_credential"])
+	}
+	if strings.Contains(rec.Body.String(), "vault_not_implemented") || strings.Contains(rec.Body.String(), "encrypted_password") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestPostgresDetailsSavedCredentialMissing(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		Rows: []postgresadmin.CatalogRow{{Name: "project_a", Owner: "project_a_role", AllowConn: true, SizePretty: "1 MB"}},
+	}, postgresadmin.NewPolicy(config.Config{}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := body["database"].(map[string]any)
+	cred, _ := db["saved_credential"].(map[string]any)
+	if cred["status"] != "missing" || cred["reason"] != "" {
+		t.Fatalf("saved_credential = %#v", db["saved_credential"])
+	}
+}
+
+func TestPostgresDetailsSavedCredentialVaultUnavailable(t *testing.T) {
+	svc := postgresadmin.NewService(&postgresadmin.MemoryCatalog{
+		Rows:     []postgresadmin.CatalogRow{{Name: "project_a", Owner: "project_a_role", AllowConn: true, SizePretty: "1 MB"}},
+		VaultErr: errors.New("postgresql://canary:secret@127.0.0.1/db"),
+	}, postgresadmin.NewPolicy(config.Config{}))
+	srv := testServerWithPostgres(t, svc)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodGet, "/api/v1/postgres/databases/project_a", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := body["database"].(map[string]any)
+	cred, _ := db["saved_credential"].(map[string]any)
+	if cred["status"] != "not_available" || cred["reason"] != "vault_unavailable" {
+		t.Fatalf("saved_credential = %#v", db["saved_credential"])
+	}
+	for _, leak := range []string{"canary", "secret", "postgresql://", "vault_not_implemented"} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Fatalf("leaked %q in %s", leak, rec.Body.String())
+		}
+	}
+}
+
 func TestPostgresDetailsRejectsInvalidName(t *testing.T) {
 	srv := testServerWithPostgres(t, postgresadmin.NewService(&postgresadmin.MemoryCatalog{}, postgresadmin.NewPolicy(config.Config{})))
 	seedOwner(t, srv)

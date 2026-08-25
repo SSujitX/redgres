@@ -51,7 +51,7 @@ func TestServiceDetailsCollapsesProtectedAndMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if details.SavedCredential.Status != "not_available" || details.SavedCredential.Reason != "vault_not_implemented" {
+	if details.SavedCredential.Status != "missing" || details.SavedCredential.Reason != "" {
 		t.Fatalf("credential = %#v", details.SavedCredential)
 	}
 }
@@ -408,7 +408,7 @@ func TestServiceSecurityOverviewOmitsTemplatesIncludesProtected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SavedCredential.Status != "not_available" || got.SavedCredential.Reason != "vault_not_implemented" {
+	if got.SavedCredential.Status != "ok" || got.SavedCredential.Reason != "" {
 		t.Fatalf("credential = %#v", got.SavedCredential)
 	}
 	if got.Databases == nil || got.Connections == nil {
@@ -417,8 +417,11 @@ func TestServiceSecurityOverviewOmitsTemplatesIncludesProtected(t *testing.T) {
 	if got.Truncated {
 		t.Fatal("truncated")
 	}
-	if got.Summary != (SecuritySummary{DatabaseCount: 6, PublicConnectCount: 2, ActiveConnectionCount: 3, ConnectionGroupCount: 2}) {
+	if got.Summary.DatabaseCount != 6 || got.Summary.PublicConnectCount != 2 || got.Summary.ActiveConnectionCount != 3 || got.Summary.ConnectionGroupCount != 2 {
 		t.Fatalf("summary = %#v", got.Summary)
+	}
+	if got.Summary.MissingPasswordCount == nil || *got.Summary.MissingPasswordCount != 6 {
+		t.Fatalf("missing_password_count = %#v", got.Summary.MissingPasswordCount)
 	}
 	names := make([]string, len(got.Databases))
 	protected := map[string]bool{}
@@ -471,8 +474,11 @@ func TestServiceSecurityOverviewEmptyArraysAreNonNil(t *testing.T) {
 	if got.Databases == nil || len(got.Databases) != 0 || got.Connections == nil || len(got.Connections) != 0 {
 		t.Fatalf("empty = %#v", got)
 	}
-	if got.SavedCredential.Reason != "vault_not_implemented" {
+	if got.SavedCredential.Status != "ok" || got.SavedCredential.Reason != "" {
 		t.Fatalf("credential = %#v", got.SavedCredential)
+	}
+	if got.Summary.MissingPasswordCount == nil || *got.Summary.MissingPasswordCount != 0 {
+		t.Fatalf("missing_password_count = %#v", got.Summary.MissingPasswordCount)
 	}
 }
 
@@ -518,6 +524,9 @@ func TestServiceSecurityOverviewCapsAndTruncates(t *testing.T) {
 	}
 	if got.Summary.DatabaseCount != 501 || got.Summary.PublicConnectCount != 0 || got.Summary.ActiveConnectionCount != 1002 || got.Summary.ConnectionGroupCount != 501 {
 		t.Fatalf("summary before cap = %#v", got.Summary)
+	}
+	if got.SavedCredential.Status != "ok" || got.Summary.MissingPasswordCount == nil || *got.Summary.MissingPasswordCount != 501 {
+		t.Fatalf("pre-cap missing = status=%s count=%#v", got.SavedCredential.Status, got.Summary.MissingPasswordCount)
 	}
 	if got.Databases[0].Name != "db000" || got.Databases[499].Name != "db499" {
 		t.Fatalf("db order = %s..%s", got.Databases[0].Name, got.Databases[499].Name)
@@ -568,6 +577,142 @@ func TestConnectionGroupsSQLDoesNotQueryVault(t *testing.T) {
 	}
 	if !strings.Contains(listConnectionGroupsSQL, "GROUP BY datname, usename, client_addr, application_name, state") {
 		t.Fatal("must group like database-app get_security_overview")
+	}
+}
+
+func TestSavedRoleNamesSQLIsExistenceOnly(t *testing.T) {
+	blob := strings.ToLower(savedRoleNamesSQL)
+	if blob != "select role_name from public.project_credentials where role_name = any($1)" {
+		t.Fatalf("sql = %s", savedRoleNamesSQL)
+	}
+	for _, needle := range []string{"encrypted_password", "updated_at"} {
+		if strings.Contains(blob, needle) {
+			t.Fatalf("forbidden %q in vault SQL", needle)
+		}
+	}
+	catalogBlob := strings.ToLower(listConnectionGroupsSQL + catalogSQL)
+	if strings.Contains(catalogBlob, "project_credentials") {
+		t.Fatal("catalog/list SQL must not query the vault")
+	}
+}
+
+func TestMemoryCatalogSavedRoleNamesEmptySkipsError(t *testing.T) {
+	cat := &MemoryCatalog{VaultErr: ErrVaultUnavailable, SavedRoles: []string{"keep"}}
+	got, err := cat.SavedRoleNames(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got = %#v", got)
+	}
+}
+
+func TestMemoryCatalogSavedRoleNamesFiltersToRequested(t *testing.T) {
+	cat := &MemoryCatalog{SavedRoles: []string{"keep", "other"}}
+	got, err := cat.SavedRoleNames(context.Background(), []string{"keep", "missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["keep"]; !ok {
+		t.Fatalf("got = %#v", got)
+	}
+	if _, ok := got["other"]; ok {
+		t.Fatalf("must not return unrequested: %#v", got)
+	}
+	if _, ok := got["missing"]; ok {
+		t.Fatalf("missing must stay missing: %#v", got)
+	}
+}
+
+func TestServiceDetailsSavedCredentialPresent(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows:       []CatalogRow{projectRow("project_a", "project_a_role")},
+		SavedRoles: []string{"project_a_role", "other_role"},
+	}, NewPolicy(config.Config{}))
+	details, err := svc.Details(context.Background(), "project_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.SavedCredential.Status != "present" || details.SavedCredential.Reason != "" {
+		t.Fatalf("credential = %#v", details.SavedCredential)
+	}
+}
+
+func TestServiceDetailsSavedCredentialVaultUnavailable(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows:     []CatalogRow{projectRow("project_a", "project_a_role")},
+		VaultErr: ErrVaultUnavailable,
+	}, NewPolicy(config.Config{}))
+	details, err := svc.Details(context.Background(), "project_a")
+	if err != nil {
+		t.Fatalf("must not fail details: %v", err)
+	}
+	if details.SavedCredential.Status != "not_available" || details.SavedCredential.Reason != "vault_unavailable" {
+		t.Fatalf("credential = %#v", details.SavedCredential)
+	}
+}
+
+func TestServiceDetailsVaultCanaryDoesNotLeak(t *testing.T) {
+	svc := NewService(&MemoryCatalog{
+		Rows:     []CatalogRow{projectRow("project_a", "project_a_role")},
+		VaultErr: errors.New("postgresql://canary:secret@127.0.0.1/db"),
+	}, NewPolicy(config.Config{}))
+	details, err := svc.Details(context.Background(), "project_a")
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if errors.Is(err, ErrUnavailable) {
+		t.Fatal("vault canary must not become catalog 503")
+	}
+	if details.SavedCredential.Status != "not_available" || details.SavedCredential.Reason != "vault_unavailable" {
+		t.Fatalf("credential = %#v", details.SavedCredential)
+	}
+}
+
+func TestServiceSecurityOverviewCountsPresentOwners(t *testing.T) {
+	cat := securityOverviewCatalog()
+	cat.SavedRoles = []string{"project_a_role", "postgres"}
+	svc := NewService(cat, NewPolicy(config.Config{
+		PostgresDatabase: "postgres",
+		PostgresUser:     "redgres_console",
+	}))
+	got, err := svc.SecurityOverview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SavedCredential.Status != "ok" || got.SavedCredential.Reason != "" {
+		t.Fatalf("credential = %#v", got.SavedCredential)
+	}
+	if got.Summary.MissingPasswordCount == nil || *got.Summary.MissingPasswordCount != 3 {
+		t.Fatalf("missing = %#v", got.Summary.MissingPasswordCount)
+	}
+}
+
+func TestServiceSecurityOverviewVaultUnavailableOmitsCount(t *testing.T) {
+	cat := securityOverviewCatalog()
+	cat.VaultErr = errors.New("postgresql://canary:secret@127.0.0.1/db")
+	svc := NewService(cat, NewPolicy(config.Config{}))
+	got, err := svc.SecurityOverview(context.Background())
+	if err != nil {
+		t.Fatalf("must remain success path: %v", err)
+	}
+	if got.SavedCredential.Status != "not_available" || got.SavedCredential.Reason != "vault_unavailable" {
+		t.Fatalf("credential = %#v", got.SavedCredential)
+	}
+	if got.Summary.MissingPasswordCount != nil {
+		t.Fatalf("count must be omitted: %#v", got.Summary.MissingPasswordCount)
+	}
+	if len(got.Databases) == 0 || len(got.Connections) == 0 {
+		t.Fatalf("must keep databases/connections: %#v", got)
+	}
+}
+
+func TestMapCatalogErrorDoesNotPromoteVaultToUnavailable(t *testing.T) {
+	if !errors.Is(mapCatalogError(ErrVaultUnavailable), ErrVaultUnavailable) {
+		t.Fatal("ErrVaultUnavailable must not become ErrUnavailable")
+	}
+	if errors.Is(mapCatalogError(ErrVaultUnavailable), ErrUnavailable) {
+		t.Fatal("must stay distinct from ErrUnavailable")
 	}
 }
 
