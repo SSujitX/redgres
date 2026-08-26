@@ -151,16 +151,17 @@ func connectPooledPool(ctx context.Context, cfg config.Config, password string) 
 }
 
 func adminPoolConfig(cfg config.Config, password string) (*pgxpool.Config, error) {
-	port, err := strconv.ParseUint(cfg.PostgresPort, 10, 16)
-	if err != nil {
+	if _, err := strconv.ParseUint(cfg.PostgresPort, 10, 16); err != nil {
 		return nil, errors.New("REDGRES_POSTGRES_PORT: invalid value")
 	}
-	poolCfg, err := pgxpool.ParseConfig(keywordConnInfo(cfg))
+	// The port must be part of the keyword DSN. pgx builds the sslmode=prefer
+	// plaintext fallback from the parsed DSN, so a post-parse ConnConfig.Port
+	// mutation is lost and the fallback dials the default port (5432).
+	poolCfg, err := pgxpool.ParseConfig(keywordConnInfo(cfg) + " port=" + cfg.PostgresPort)
 	if err != nil {
 		return nil, ErrUnavailable
 	}
 	poolCfg.ConnConfig.Password = password
-	poolCfg.ConnConfig.Port = uint16(port)
 	poolCfg.MaxConns = 4
 	poolCfg.MinConns = 0
 	poolCfg.MaxConnLifetime = time.Hour
@@ -168,16 +169,16 @@ func adminPoolConfig(cfg config.Config, password string) (*pgxpool.Config, error
 }
 
 func pooledPoolConfig(cfg config.Config, password string) (*pgxpool.Config, error) {
-	port, err := strconv.ParseUint(cfg.PostgresPooledPort, 10, 16)
-	if err != nil {
+	if _, err := strconv.ParseUint(cfg.PostgresPooledPort, 10, 16); err != nil {
 		return nil, errors.New("REDGRES_POSTGRES_POOLED_PORT: invalid value")
 	}
-	poolCfg, err := pgxpool.ParseConfig(keywordPooledConnInfo(cfg))
+	// Port must be in the keyword DSN (see adminPoolConfig for the fallback
+	// port-loss rationale).
+	poolCfg, err := pgxpool.ParseConfig(keywordPooledConnInfo(cfg) + " port=" + cfg.PostgresPooledPort)
 	if err != nil {
 		return nil, ErrUnavailable
 	}
 	poolCfg.ConnConfig.Password = password
-	poolCfg.ConnConfig.Port = uint16(port)
 	poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	poolCfg.ShouldPing = func(context.Context, pgxpool.ShouldPingParams) bool { return false }
 	poolCfg.MaxConns = 4

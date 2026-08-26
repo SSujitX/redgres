@@ -38,6 +38,11 @@ func TestPooledPoolConfigUsesSimpleProtocolAndPgbouncerDB(t *testing.T) {
 	if poolCfg.ConnConfig.Port != 6432 {
 		t.Fatalf("port = %d", poolCfg.ConnConfig.Port)
 	}
+	for _, fb := range poolCfg.ConnConfig.Fallbacks {
+		if fb.Port != 6432 {
+			t.Fatalf("sslmode=prefer fallback port = %d want 6432 (post-parse port loss)", fb.Port)
+		}
+	}
 	if poolCfg.ConnConfig.Host != "127.0.0.1" {
 		t.Fatalf("host = %q", poolCfg.ConnConfig.Host)
 	}
@@ -75,6 +80,49 @@ func TestAdminPoolConfigKeepsExtendedProtocolAndCatalogDB(t *testing.T) {
 	}
 	if poolCfg.ConnConfig.Port != 5432 {
 		t.Fatalf("port = %d", poolCfg.ConnConfig.Port)
+	}
+	for _, fb := range poolCfg.ConnConfig.Fallbacks {
+		if fb.Port != 5432 {
+			t.Fatalf("sslmode=prefer fallback port = %d want 5432 (post-parse port loss)", fb.Port)
+		}
+	}
+}
+
+func TestPoolConfigPreferFallbackCarriesCustomPort(t *testing.T) {
+	cfg := config.Config{
+		PostgresHost:       "127.0.0.1",
+		PostgresPort:       "55432",
+		PostgresDatabase:   "postgres",
+		PostgresUser:       "redgres_console",
+		PostgresSSLMode:    "prefer",
+		PostgresPooledPort: "56432",
+	}
+	admin, err := adminPoolConfig(cfg, "unused-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admin.ConnConfig.Port != 55432 {
+		t.Fatalf("admin port = %d want 55432", admin.ConnConfig.Port)
+	}
+	if len(admin.ConnConfig.Fallbacks) == 0 {
+		t.Fatal("sslmode=prefer must produce a plaintext fallback")
+	}
+	for _, fb := range admin.ConnConfig.Fallbacks {
+		if fb.Port != 55432 {
+			t.Fatalf("admin fallback port = %d want 55432 (post-parse port loss)", fb.Port)
+		}
+	}
+	pooled, err := pooledPoolConfig(cfg, "unused-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pooled.ConnConfig.Port != 56432 {
+		t.Fatalf("pooled port = %d want 56432", pooled.ConnConfig.Port)
+	}
+	for _, fb := range pooled.ConnConfig.Fallbacks {
+		if fb.Port != 56432 {
+			t.Fatalf("pooled fallback port = %d want 56432 (post-parse port loss)", fb.Port)
+		}
 	}
 }
 
