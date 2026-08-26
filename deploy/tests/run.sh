@@ -521,6 +521,43 @@ run_install \
   --extension-plan "${tmpdir}"
 expect_status 'main dry-run extension plan directory exits 1' 1
 
+# --- OPS-001 main dry-run validates optional --config as a regular file ---
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --config "${config_file}"
+expect_status_and_stages 'main dry-run valid --config exits 0' \
+  'postgres: skipped (fresh-postgres)' \
+  'redis: skipped (fresh)' \
+  'pgbouncer: skipped (disabled)'
+
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --config "${tmpdir}"
+expect_status 'main dry-run --config directory exits 1' 1
+
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --config "${tmpdir}/missing.env"
+expect_status 'main dry-run --config missing path exits 1' 1
+
 # --- fail-closed: unknown flag ---
 run_install --non-interactive --dry-run --mode existing-postgres --redis-mode existing --pgbouncer-mode existing --unknown-flag
 expect_status 'unknown flag exits 1' 1

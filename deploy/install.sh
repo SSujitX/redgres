@@ -566,6 +566,12 @@ if [[ -n "${extension_plan}" ]]; then
   redgres_plan_validate "${extension_plan}"
 fi
 
+# OPS-001: --config is optional on the main path, but when supplied it must be
+# an existing regular file (same rule as the subcommands); never source it.
+if [[ -n "${config_path}" && ! -f "${config_path}" ]]; then
+  redgres_die "--config must be an existing regular file"
+fi
+
 print_stages
 redgres_inventory_dry_run
 redgres_log "Selection (redacted): mode=${mode} redis-mode=${redis_mode} pgbouncer-mode=${pgbouncer_mode}"
