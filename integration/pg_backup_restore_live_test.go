@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,33 @@ func waitPGReady(t *testing.T, name string) {
 		time.Sleep(time.Second)
 	}
 	t.Fatalf("container %s not ready", name)
+}
+
+func restoreContainerArgs(image, dumpMount string) []string {
+	return []string{
+		"run", "--rm",
+		"--network", "container:" + bkTargetName,
+		"-e", "PGPASSWORD=redgres-ci",
+		"-v", dumpMount,
+		image,
+		"pg_restore", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres",
+		"-d", "postgres", "-C", "/dump/backup.dump",
+	}
+}
+
+func TestRestoreContainerArgsUsesIsolatedTargetNetwork(t *testing.T) {
+	want := []string{
+		"run", "--rm",
+		"--network", "container:" + bkTargetName,
+		"-e", "PGPASSWORD=redgres-ci",
+		"-v", "dump:/dump",
+		"postgres:test",
+		"pg_restore", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres",
+		"-d", "postgres", "-C", "/dump/backup.dump",
+	}
+	if got := restoreContainerArgs("postgres:test", "dump:/dump"); !slices.Equal(got, want) {
+		t.Fatalf("restore args = %q, want %q", got, want)
+	}
 }
 
 // TestLiveBackupRestoreDropGate performs a real PostgreSQL logical backup of
@@ -122,10 +150,10 @@ func TestLiveBackupRestoreDropGate(t *testing.T) {
 	// role must exist on the isolated host first (a real DR operator creates
 	// project roles before restore).
 	dockerRun(t, "exec", bkTargetName, "psql", "-U", "postgres", "-c", "CREATE ROLE "+bkOwner+" LOGIN")
-	dockerRun(t, "run", "--rm", "--add-host", "host.docker.internal:host-gateway",
-		"-e", "PGPASSWORD=redgres-ci", "-v", dumpMount, image,
-		"pg_restore", "-h", "host.docker.internal", "-p", bkTargetPort, "-U", "postgres",
-		"-d", "postgres", "-C", "/dump/backup.dump")
+	// Share only the isolated target's network namespace. This reaches its
+	// loopback PostgreSQL listener without exposing the target on a bridge
+	// address or relying on host-gateway routing.
+	dockerRun(t, restoreContainerArgs(image, dumpMount)...)
 	targetConn := livePGConn(t, "127.0.0.1", bkTargetPort, bkDB, "postgres", livePGPassword(t, pgPassFile))
 	var cnt int
 	if err := targetConn.QueryRow(ctx, "SELECT count(*)::int FROM public.items").Scan(&cnt); err != nil {
