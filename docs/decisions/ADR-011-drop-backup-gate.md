@@ -36,6 +36,6 @@ Redis/SQLite artifacts are optional on the manifest for this DROP predicate.
 
 ## Consequences
 
-- HTTP DROP remains BF-1 on the freeze SHA until a writer calls `EvaluateDropGate` before PostgreSQL access. Unset catalog is then `503`, not BF-1.
+- HTTP DROP on `260f1ad` calls `EvaluateDropGate` after AUTH-006 and before PostgreSQL access. Unset/unusable catalog is `503` **Backup catalog is not configured.** (not BF-1). Live dump/copy/restore remains installer-recovery; OPS-004 stays Partial.
 - OPS-004 Complete still requires live backup/restore evidence.
 - Transport credentials must never appear on the manifest.
