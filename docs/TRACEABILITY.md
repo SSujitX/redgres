@@ -172,6 +172,11 @@ Independent UI reviewer **Approve Partial / reject Complete** on `60d4953` (UI s
 
 Independent evidence reviewer **Approve Partial / reject Complete** on `60d4953`. Owned docs match the catalog plus client `filterDocs`. GET `/search` remains two server groups; no `/api/v1/docs`. TRACEABILITY/AGENTS stay Partial. Writer did not edit `package.json` / lockfile / `ci.yml`. No §6 / four-cell / OPS-006 / NFR-011 Complete over-claim. Tests not re-run (parent-claimed 397 passed). Residuals: deep links, command palette, Playwright viewports. Do not mark PLAT-004 or NFR-012 Complete.
 
+### PLAT-004 Documentation catalog verification (2026-08-26)
+
+Independent verifier **Approve Partial / reject Complete** on `7e7605f` (ancestor of `a9275ec` evidence pin; UI sources unchanged). Required `npm --prefix web run test:run` 397 passed; `npm --prefix web run build` succeeded. Catalog plus client `filterDocs` hits match the Partial slice. Residuals: no Playwright viewports, no deep links, no command palette, no docs HTTP API. Do not mark PLAT-004, NFR-012, or PLAT-001 Complete.
+
+
 
 
 
