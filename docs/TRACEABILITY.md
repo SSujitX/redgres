@@ -168,6 +168,11 @@ Independent security reviewer **Approve Partial / reject Complete** on `60d4953`
 
 Independent UI reviewer **Approve Partial / reject Complete** on `60d4953` (UI sources `2899760` / `7e7605f`). No Critical/High/Medium. Catalog landing, Back, `filterDocs` hits, Help/sidebar clear, login isolation, 44px ledger buttons, and a neutral header match the Partial slice. Required viewports **not inspected**. Residual Lows: dual `h1`; selected ledger uses PostgreSQL inset. Residuals: URL deep links, command palette, Playwright. Tests not re-run (parent-claimed 397 passed). Do not mark PLAT-004 or NFR-012 Complete.
 
+### PLAT-004 Documentation catalog evidence review (2026-08-26)
+
+Independent evidence reviewer **Approve Partial / reject Complete** on `60d4953`. Owned docs match the catalog plus client `filterDocs`. GET `/search` remains two server groups; no `/api/v1/docs`. TRACEABILITY/AGENTS stay Partial. Writer did not edit `package.json` / lockfile / `ci.yml`. No §6 / four-cell / OPS-006 / NFR-011 Complete over-claim. Tests not re-run (parent-claimed 397 passed). Residuals: deep links, command palette, Playwright viewports. Do not mark PLAT-004 or NFR-012 Complete.
+
+
 
 
 
