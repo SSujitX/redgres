@@ -5,6 +5,7 @@ import DatabasesPage from "../postgres/DatabasesPage";
 import SecurityOverview from "../postgres/SecurityOverview";
 import AclUsersPage from "../redis/AclUsersPage";
 import PresetsPage from "../redis/PresetsPage";
+import SystemPage from "../system/SystemPage";
 
 type PageProps = {
   section: SectionId;
@@ -51,6 +52,10 @@ export function SectionPage({
 
   if (section === "redis-presets") {
     return <PresetsPage />;
+  }
+
+  if (section === "system") {
+    return <SystemPage />;
   }
 
   const adapter =

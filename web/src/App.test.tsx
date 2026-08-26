@@ -721,6 +721,11 @@ async function goToDatabases() {
   fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Databases" }));
 }
 
+function goToSystem() {
+  fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "System" }));
+}
+
 function fillDeleteRowsDialog(dialog: HTMLElement, table = "items", password = "owner-secret-15") {
   fireEvent.change(within(dialog).getByLabelText("Confirm table name"), { target: { value: table } });
   fireEvent.change(within(dialog).getByLabelText("Owner password"), { target: { value: password } });
@@ -12044,3 +12049,462 @@ describe("App session and login", () => {
     setItem.mockRestore();
   });
 });
+
+describe("System status page", () => {
+  function statusCalls(fetch: ReturnType<typeof stubFetch>) {
+    return fetch.mock.calls.filter((call) => isStatusUrl(String(call[0])));
+  }
+
+  function redisStatusCalls(fetch: ReturnType<typeof stubFetch>) {
+    return fetch.mock.calls.filter((call) => isRedisStatusUrl(String(call[0])));
+  }
+
+  async function landOnOverview() {
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("Loading component status.")).not.toBeInTheDocument();
+    });
+  }
+
+  it("replaces the System placeholder with a real heading", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, {
+          owner: { username: "admin" },
+          csrf_token: "system-placeholder".padEnd(64, "0"),
+          tool_links: {
+            pgadmin: "https://pgadmin.example.com",
+            redisinsight: "https://redis-insight.example.com",
+          },
+        });
+      }
+      if (isStatusUrl(url)) {
+        return toolLinksOkStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    expect(await screen.findByRole("link", { name: "pgAdmin" })).toBeInTheDocument();
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(screen.queryByText("This view is not available yet.")).not.toBeInTheDocument();
+    expect(await screen.findByLabelText("Tool links: Reachable")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
+  });
+
+  it("GETs one additional /api/v1/status with no CSRF or query and no extra Redis metrics", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-status-get".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    expect(await screen.findByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    const statusBefore = statusCalls(fetch).length;
+    const redisBefore = redisStatusCalls(fetch).length;
+    expect(statusBefore).toBeGreaterThanOrEqual(1);
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(statusCalls(fetch).length).toBe(statusBefore + 1);
+    });
+    const added = statusCalls(fetch).slice(statusBefore);
+    expect(added).toHaveLength(1);
+    expect(added[0]?.[0]).toBe("/api/v1/status");
+    const method = added[0]?.[1]?.method;
+    expect(method === undefined || method === "GET").toBe(true);
+    expect(new Headers(added[0]?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+    expect(redisStatusCalls(fetch).length).toBe(redisBefore);
+  });
+
+  it("paints five System cards in order with PgBouncer Not configured by default", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-cards".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    expect(screen.queryByLabelText("PgBouncer: Not connected")).not.toBeInTheDocument();
+    const cards = [...document.querySelectorAll(".status-card")];
+    expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual([
+      "Redgres state: Not configured",
+      "PostgreSQL direct: Not configured",
+      "PgBouncer: Not configured",
+      "Redis: Not configured",
+      "Tool links: Not configured",
+    ]);
+    expect(cards[1]).toHaveClass("status-card-postgres");
+    expect(cards[3]).toHaveClass("status-card-redis");
+    expect(cards[0]).not.toHaveClass("status-card-postgres");
+    expect(cards[0]).not.toHaveClass("status-card-redis");
+    expect(cards[2]).not.toHaveClass("status-card-postgres");
+    expect(cards[2]).not.toHaveClass("status-card-redis");
+    expect(cards[4]).not.toHaveClass("status-card-postgres");
+    expect(cards[4]).not.toHaveClass("status-card-redis");
+    expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
+  });
+
+  it("keeps all five System cards when one component is Unavailable", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-mixed".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    expect(screen.getByLabelText("PostgreSQL direct: Unavailable")).toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    expect(screen.getByLabelText("Redis: Reachable")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tool links: Not configured")).toBeInTheDocument();
+    expect(document.querySelectorAll(".status-card")).toHaveLength(5);
+  });
+
+  it("shows a session-expired System alert without status cards", async () => {
+    let statusCount = 0;
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-401".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        statusCount += 1;
+        if (statusCount === 1) {
+          return disconnectedStatus();
+        }
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    expect(await screen.findByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    goToSystem();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.getByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("PgBouncer: Not configured")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
+  });
+
+  it("shows a generic System alert when status fetch throws", async () => {
+    let statusCount = 0;
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-throw".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        statusCount += 1;
+        if (statusCount === 1) {
+          return disconnectedStatus();
+        }
+        throw new TypeError("Failed to fetch");
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    goToSystem();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Component status is unavailable. Try again.");
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+  });
+
+  it("does not fetch /api/v1/status from login after leaving System", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-logout".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    const afterLogout = fetch.mock.calls.length;
+    expect(screen.queryByRole("heading", { name: "System" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("PgBouncer: Not configured")).not.toBeInTheDocument();
+    expect(fetch.mock.calls.slice(afterLogout).every((call) => !isStatusUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.slice(afterLogout).every((call) => !isRedisStatusUrl(String(call[0])))).toBe(true);
+  });
+
+  it("does not persist System status in localStorage, sessionStorage, or location.search", async () => {
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-storage".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    const searchBefore = window.location.search;
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Redgres state: Not configured")).toBeInTheDocument();
+    expect(localSet).not.toHaveBeenCalled();
+    expect(window.location.search).toBe(searchBefore);
+    expect(window.location.search).not.toContain("status");
+    localSet.mockRestore();
+  });
+
+  it("shows System loading status then replaces it with cards", async () => {
+    let statusCount = 0;
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-loading".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        statusCount += 1;
+        if (statusCount === 1) {
+          return disconnectedStatus();
+        }
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blocked.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return disconnectedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading component status.");
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+    release();
+    expect(await screen.findByLabelText("Redgres state: Not configured")).toBeInTheDocument();
+    expect(screen.queryByText("Loading component status.")).not.toBeInTheDocument();
+  });
+
+  it("aborts an in-flight System status fetch when leaving the page", async () => {
+    let statusCount = 0;
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const rejections: unknown[] = [];
+    const onRejection = (event: PromiseRejectionEvent) => {
+      rejections.push(event.reason);
+    };
+    window.addEventListener("unhandledrejection", onRejection);
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-abort".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        statusCount += 1;
+        if (statusCount === 1) {
+          return disconnectedStatus();
+        }
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blocked.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return disconnectedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading component status.");
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Documentation" }),
+    );
+    expect(await screen.findByRole("heading", { name: "Documentation" })).toBeInTheDocument();
+    expect(screen.getByText("This view is not available yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "System" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Redgres state: Not configured")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("PgBouncer: Not configured")).not.toBeInTheDocument();
+    release();
+    await waitFor(() => {
+      expect(rejections).toEqual([]);
+    });
+    window.removeEventListener("unhandledrejection", onRejection);
+  });
+
+  it("does not paint forbidden host, DSN, password, version, or URL fields from /status", async () => {
+    const canary = "canary-secret";
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-canary".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            {
+              id: "redgres_state",
+              state: "ok",
+              host: "status-canary-host.example",
+              port: 65531,
+              dsn: "postgres://canary-user:canary-secret@10.0.0.1:65531/canarydb",
+              password: canary,
+              token: "canary-token",
+              sql: "SELECT canary-secret",
+              driver: "pgx-canary-driver",
+              error: "pq: canary-secret dial tcp",
+            },
+            { id: "postgres_direct", state: "not_configured" },
+            { id: "pgbouncer", state: "not_configured" },
+            { id: "redis", state: "not_configured" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          host: "status-canary-host.example",
+          port: 65531,
+          dsn: "postgres://canary-user:canary-secret@10.0.0.1:65531/canarydb",
+          password: canary,
+          version: "canary-version-99.0.0",
+          uptime: "canary-uptime",
+          url: "https://canary-url.example/secret",
+          request_id: "systemcanaryrequestid000000000001",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    const body = document.body.textContent ?? "";
+    expect(body).not.toContain("status-canary-host.example");
+    expect(body).not.toContain("65531");
+    expect(body).not.toContain("postgres://");
+    expect(body).not.toContain(canary);
+    expect(body).not.toContain("canary-token");
+    expect(body).not.toContain("SELECT canary-secret");
+    expect(body).not.toContain("pgx-canary-driver");
+    expect(body).not.toContain("dial tcp");
+    expect(body).not.toContain("canary-version-99.0.0");
+    expect(body).not.toContain("canary-uptime");
+    expect(body).not.toContain("https://canary-url.example/secret");
+    expect(body).not.toContain("systemcanaryrequestid000000000001");
+  });
+
+  it("aborts and refetches /api/v1/status when System Refresh is used", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-refresh".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    const statusBeforeRefresh = statusCalls(fetch).length;
+    const redisBeforeRefresh = redisStatusCalls(fetch).length;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => {
+      expect(statusCalls(fetch).length).toBe(statusBeforeRefresh + 1);
+    });
+    expect(await screen.findByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    const refreshed = statusCalls(fetch).at(-1);
+    expect(refreshed?.[0]).toBe("/api/v1/status");
+    expect(new Headers(refreshed?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+    expect(redisStatusCalls(fetch).length).toBe(redisBeforeRefresh);
+  });
+
+  it("paints not_implemented as Not connected on System", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-nimpl".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "not_configured" },
+            { id: "pgbouncer", state: "not_implemented" },
+            { id: "redis", state: "not_implemented" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "systemnotimplemented00000000000001",
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
+    expect(screen.getByLabelText("Redis: Not connected")).toBeInTheDocument();
+    expect(screen.getByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    expect(screen.queryByLabelText("PgBouncer: Not configured")).not.toBeInTheDocument();
+  });
+
+  it("uses a neutral System header without PostgreSQL or Redis service rails", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-header".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    const header = screen.getByRole("heading", { name: "System" }).closest("header");
+    expect(header).not.toBeNull();
+    expect(header).toHaveClass("page-header");
+    expect(header).not.toHaveClass("page-header-redis");
+    expect(header?.querySelector(".service-rail-postgres")).toBeNull();
+    expect(header?.querySelector(".service-rail-redis")).toBeNull();
+    expect(await screen.findByLabelText("PostgreSQL direct: Not configured")).toHaveClass("status-card-postgres");
+    expect(screen.getByLabelText("Redis: Not configured")).toHaveClass("status-card-redis");
+  });
+});
+
