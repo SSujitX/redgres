@@ -164,5 +164,10 @@ Partial. Isolated `feat/plat-004-docs-catalog` from `bf717ac`. Curated in-app Do
 
 Independent security reviewer **Approve Partial / reject Complete** on `60d4953` (implementation `7e7605f` / `2899760`). No Critical/High/Medium. Corpus has no secrets; unknown ids fail closed; article state is in-memory only; login does not render the catalog; search drop/truncate does not mutate; GET `/search` unchanged. Residual Lows: SPA JS includes catalog copy; no UI test injecting an HTML unknown id into `selectArticle`; GET `/search?q=` still carries the typed query (pre-existing). Tests not re-run (parent-claimed 397 passed). Do not mark PLAT-004 Complete.
 
+### PLAT-004 Documentation catalog UI review (2026-08-26)
+
+Independent UI reviewer **Approve Partial / reject Complete** on `60d4953` (UI sources `2899760` / `7e7605f`). No Critical/High/Medium. Catalog landing, Back, `filterDocs` hits, Help/sidebar clear, login isolation, 44px ledger buttons, and a neutral header match the Partial slice. Required viewports **not inspected**. Residual Lows: dual `h1`; selected ledger uses PostgreSQL inset. Residuals: URL deep links, command palette, Playwright. Tests not re-run (parent-claimed 397 passed). Do not mark PLAT-004 or NFR-012 Complete.
+
+
 
 
