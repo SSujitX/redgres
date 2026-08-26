@@ -3824,7 +3824,10 @@ describe("App session and login", () => {
     expect(fetch.mock.calls.filter((call) => isPostgresDatabasesCreate(String(call[0]), call[1])).length).toBe(0);
     releasePoll();
     expect(await screen.findByRole("heading", { name: "project_a_copy" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Create database" })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Create database" })).not.toBeInTheDocument();
+    });
+    expect(fetch.mock.calls.filter((call) => isPostgresDatabasesCreate(String(call[0]), call[1])).length).toBe(0);
   });
 
   it("clears duplicate progress when operations GET throws", async () => {

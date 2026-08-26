@@ -280,7 +280,11 @@ export default function DatabasesPage({
     if (createOpened.current) {
       return;
     }
-    if (items !== null && listError === "" && ticket === null && !duplicating) {
+    if (duplicating) {
+      createOpened.current = true;
+      return;
+    }
+    if (items !== null && listError === "" && ticket === null) {
       setCreateOpen(true);
       createOpened.current = true;
     }
