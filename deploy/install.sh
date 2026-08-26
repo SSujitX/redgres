@@ -250,6 +250,10 @@ if [[ "${1:-}" == "backup" ]]; then
   backup_config_path=''
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
       --non-interactive)
         backup_non_interactive=1
         shift
@@ -296,6 +300,10 @@ if [[ "${1:-}" == "postgres-plan" ]]; then
   plan_extension_path=''
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
       --config)
         [[ $# -ge 2 ]] || redgres_die "missing value for --config"
         plan_config_path="$2"

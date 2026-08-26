@@ -53,12 +53,17 @@ redgres_plan_compact() {
 redgres_plan_validate() {
   local plan_path="$1"
   local raw='' compact='' policy='' sel_content='' rest='' obj='' cap='' dbs='' db='' sched='' expected=''
-  local -a selections=() dbs_list=() cap_ids sched_ids protected_ids
-  local sched_count=0 pg_cron_count=0
+  local -a selections=() dbs_list=() cap_ids sched_ids protected_ids sched_ids_used
+  local sched_ident='' pg_cron_count=0
   read -r -a cap_ids <<< "${REDGRES_PLAN_CAPABILITIES}"
   read -r -a sched_ids <<< "${REDGRES_PLAN_SCHEDULERS}"
   read -r -a protected_ids <<< "${REDGRES_PLAN_PROTECTED_DATABASES}"
 
+  # Re-validate as a regular file immediately before reading (fail closed on a
+  # path swapped to a FIFO/directory after the dispatcher check).
+  if [[ ! -f "${plan_path}" ]]; then
+    redgres_die "--extension-plan must be an existing regular file"
+  fi
   # NUL detection before bash variable read (variables cannot hold NUL).
   if [[ "$(wc -c <"${plan_path}")" -ne "$(tr -d '\000' <"${plan_path}" | wc -c)" ]]; then
     redgres_die "extension plan contains NUL"
@@ -113,7 +118,7 @@ redgres_plan_validate() {
     cap="${obj#*\"capability\":\"}"
     cap="${cap%%\"*}"
     if ! redgres_plan_has "${cap}" "${cap_ids[@]}"; then
-      redgres_die "unknown capability ${cap}"
+      redgres_die "unknown capability $(printf '%q' "${cap}")"
     fi
 
     dbs="${obj#*\"databases\":[}"
@@ -121,21 +126,32 @@ redgres_plan_validate() {
     if [[ -z "${dbs}" ]]; then
       redgres_die "databases must not be empty (never implies all databases)"
     fi
+    # Reject any empty-string element, including a trailing one that would
+    # otherwise collapse with the separator during splitting.
+    if [[ "${dbs}" == *'""'* ]]; then
+      redgres_die "invalid database name"
+    fi
 
     sched=''
     if [[ "${obj}" == *'"scheduler":"'* ]]; then
       sched="${obj#*\"scheduler\":\"}"
       sched="${sched%%\"*}"
       if ! redgres_plan_has "${sched}" "${sched_ids[@]}"; then
-        redgres_die "invalid scheduler ${sched}"
+        redgres_die "invalid scheduler $(printf '%q' "${sched}")"
       fi
       if [[ "${cap}" != "pg_partman" ]]; then
         redgres_die "scheduler is only valid for capability pg_partman"
       fi
-      sched_count=$((sched_count + 1))
+      if ! redgres_plan_has "${sched}" ${sched_ident}; then
+        sched_ident+=" ${sched}"
+      fi
     fi
     if [[ "${cap}" == "pg_cron" ]]; then
       pg_cron_count=$((pg_cron_count + 1))
+      # pg_cron is itself a scheduler identity (one control database per cluster).
+      if ! redgres_plan_has "pg_cron" ${sched_ident}; then
+        sched_ident+=" pg_cron"
+      fi
     fi
 
     # Exact reconstruction rejects unknown keys inside the selection.
@@ -167,12 +183,15 @@ redgres_plan_validate() {
     if [[ "${#dbs_list[@]}" -eq 0 ]]; then
       redgres_die "databases must not be empty (never implies all databases)"
     fi
+    if [[ "${cap}" == "pg_cron" && "${#dbs_list[@]}" -ne 1 ]]; then
+      redgres_die "pg_cron can select exactly one control database per cluster"
+    fi
     for db in "${dbs_list[@]}"; do
       if [[ ! "${db}" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]]; then
-        redgres_die "invalid database name ${db}"
+        redgres_die "invalid database name $(printf '%q' "${db}")"
       fi
       if redgres_plan_has "${db}" "${protected_ids[@]}"; then
-        redgres_die "protected database ${db} cannot be selected"
+        redgres_die "protected database $(printf '%q' "${db}") cannot be selected"
       fi
     done
 
@@ -183,8 +202,13 @@ redgres_plan_validate() {
     redgres_plan_preview+=$'\n'
   done
 
-  if [[ "${sched_count}" -gt 1 ]]; then
-    redgres_die "extension plan cannot declare two schedulers"
+  # Two distinct scheduler identities (pg_cron, pg_partman_bgw, or external)
+  # would schedule the same maintenance plan twice; pg_cron + pg_cron is one.
+  if [[ -n "${sched_ident}" ]]; then
+    read -r -a sched_ids_used <<< "${sched_ident}"
+    if [[ "${#sched_ids_used[@]}" -gt 1 ]]; then
+      redgres_die "extension plan cannot declare two schedulers"
+    fi
   fi
   if [[ "${pg_cron_count}" -gt 1 ]]; then
     redgres_die "pg_cron can select at most one control database per cluster"

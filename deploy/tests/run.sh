@@ -778,6 +778,45 @@ printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","da
 run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_empty_str_name}"
 expect_status 'postgres-plan empty-string database name exits 1' 1
 
+plan_trailing_empty="${tmpdir}/plan-trailing-empty.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":["a",""]}]}' >"${plan_trailing_empty}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_trailing_empty}"
+expect_status 'postgres-plan trailing empty database name exits 1' 1
+
+plan_trailing_empty2="${tmpdir}/plan-trailing-empty2.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":["a","b",""]}]}' >"${plan_trailing_empty2}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_trailing_empty2}"
+expect_status 'postgres-plan trailing empty database name (multi) exits 1' 1
+
+plan_leading_empty="${tmpdir}/plan-leading-empty.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":["","b"]}]}' >"${plan_leading_empty}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_leading_empty}"
+expect_status 'postgres-plan leading empty database name exits 1' 1
+
+plan_pg_cron_two_db="${tmpdir}/plan-pg-cron-two-db.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"pg_cron","databases":["a","b"]}]}' >"${plan_pg_cron_two_db}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_pg_cron_two_db}"
+expect_status 'postgres-plan pg_cron two databases exits 1' 1
+
+plan_pg_cron_bgw="${tmpdir}/plan-pg-cron-bgw.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"pg_cron","databases":["a"]},{"capability":"pg_partman","databases":["b"],"scheduler":"pg_partman_bgw"}]}' >"${plan_pg_cron_bgw}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_pg_cron_bgw}"
+expect_status 'postgres-plan pg_cron plus pg_partman_bgw exits 1' 1
+
+plan_pg_cron_ok="${tmpdir}/plan-pg-cron-ok.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"pg_cron","databases":["a"]},{"capability":"pg_partman","databases":["b"],"scheduler":"pg_cron"}]}' >"${plan_pg_cron_ok}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_pg_cron_ok}"
+expect_plan_partial 'postgres-plan pg_cron plus pg_cron scheduler exits 0' \
+  'policy: apply-selected' \
+  'selection: pg_cron databases=[a]' \
+  'selection: pg_partman databases=[b] scheduler=pg_cron'
+
+run_install postgres-plan --help
+expect_status 'postgres-plan --help exits 0' 0
+
+run_install backup --help
+expect_status 'backup --help exits 0' 0
+
 plan_empty_db="${tmpdir}/plan-empty-db.json"
 printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":[]}]}' >"${plan_empty_db}"
 run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_empty_db}"
