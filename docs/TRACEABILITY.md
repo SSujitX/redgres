@@ -299,6 +299,10 @@ Partial consistency fix. `deploy/install.sh verify --help`, `update --help`, and
 ### OPS-001 main install dry-run --config regular-file validation (2026-08-26)
 
 Partial. The main `deploy/install.sh --non-interactive --dry-run` path now validates an optional `--config` as an existing regular file when supplied (same rule as the subcommands; previously a directory or missing path was accepted and the dry-run exited 0). `--config` is still optional on the main path and never sourced. Files: `deploy/install.sh` (main dry-run `--config` check), `deploy/tests/run.sh` (3 new tests), docs INSTALLER_SPEC / deploy README. Commands actually run: `bash deploy/tests/run.sh` 128 passed / 128 (Git Bash), `go test -count=1 ./...` (ok), `go vet ./...` (ok). Not Complete: no live apply, no package resolution, no live inventory, no restart/PgBouncer orchestration, no live PG/Redis, no COMPATIBILITY.md §6. Do not mark OPS-001, OPS-007, OPS-001..006, PG-001..012, NFR-011, or COMPATIBILITY.md §6 Complete.
+### NFR-012 Playwright login viewport evidence (2026-08-26)
+
+Partial evidence, not NFR-012 Complete. The committed Playwright harness (`web/e2e/login.spec.ts`, `web/playwright.config.ts`, `@playwright/test` 1.62.1, Chromium in the local ms-playwright cache) now passes locally: `npm run test:e2e` 6 passed / 6 (360×800, 768×1024, 1280×800, 1600×1000, 1280×800 at 200% zoom, and login does not persist credentials — no localStorage/sessionStorage secret keys). Previously blocked by "Chromium install failed locally; CI job is the browser evidence path" (playwright-harness commit `adb7f0a`); the harness files were already on master (`f3377c3`). Commands actually run: `npm run test:e2e` (6 passed, exit 0), `npm run test:run` (413 passed), `npm run build` (tsc + vite, succeeded). Not Complete: login viewports only — authenticated shell viewports/focus/drawer are out of scope without TTY-safe owner bootstrap; no CI `playwright` job run locally (no push); no visual snapshot review; no redgres-ui-reviewer viewport evidence. Do not mark NFR-012, NFR-001..011, PLAT-001..004, or COMPATIBILITY.md §6 Complete.
+
 
 
 

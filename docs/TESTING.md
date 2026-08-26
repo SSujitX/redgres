@@ -92,7 +92,7 @@ Deferred from Wave 0, with reasons:
 - Pinned Go linter: choosing one is a durable decision; `gofmt` + `go vet` is the current static gate.
 - SBOM and license checks: tied to a release artifact that does not exist yet.
 - ShellCheck / Bats: still unpinned. Installer dispatcher tests are `bash deploy/tests/run.sh` (POSIX bash on ubuntu-latest).
-- Browser-level responsive automation: Playwright login harness exists (`web/e2e`, `@playwright/test` 1.62.1, Chromium). jsdom still covers session/search/drawer. Viewport/zoom login tests are Partial; authenticated shell is out of scope without TTY-safe owner bootstrap. Not NFR-012 Complete.
+- Browser-level responsive automation: Playwright login harness exists (`web/e2e`, `@playwright/test` 1.62.1, Chromium). jsdom still covers session/search/drawer. Viewport/zoom login tests now pass locally on Chromium (`npm run test:e2e`, 6 tests: 360×800, 768×1024, 1280×800, 1600×1000, 200% zoom, no-credential-persistence) — evidence recorded in TRACEABILITY; authenticated shell is out of scope without TTY-safe owner bootstrap. Not NFR-012 Complete.
 - `gitleaks-action` requires a `GITLEAKS_LICENSE` if the repository is transferred to a GitHub organization; fallback is the pinned gitleaks CLI with a recorded checksum.
 
 Dependency/toolchain update changes additionally record old/new exact versions, official release/security notes, compatibility or migration impact, lockfile/checksum diff, vulnerability/license result, and full affected test/build evidence. Automated update pull requests never merge solely because dependency resolution succeeds.
