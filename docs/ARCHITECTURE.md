@@ -115,7 +115,7 @@ SQLite contains:
 
 SQLite must not contain PostgreSQL project passwords, Redis project passwords, complete credential URLs, Cloudflare tokens, private keys, or Redis administrator URLs.
 
-Use WAL mode, foreign keys, busy timeout, bounded connection count, schema migrations, and the SQLite backup API for consistent backups.
+Use WAL mode, foreign keys, busy timeout, bounded connection count, schema migrations, and the SQLite backup API for consistent backups. `database.CaptureSQLiteSnapshot` is the narrow online-capture seam: it owns an identity-pinned operation directory and target under a verified private root, copies from an already-open `*sql.DB`, verifies the driver's reopened destination before the first step, and binds an independent integrity check to matching before/after size and SHA-256 passes. Publication, retention, off-host copy, and restore orchestration remain installer-recovery concerns and are not performed by this module.
 
 Failed login/reauth responses depend on durable attempt persistence and fail with control-state `503` when it is unavailable. A failure attempt is reserved in one SQLite transaction before Argon2id verify; success clears failures and records success in one transaction. Concurrent Argon2id hashing is serialized in-process to one. Effective client IP for lockout and audit is `RemoteAddr` host, or `CF-Connecting-IP` when that host is loopback and the header is exactly one valid IP; `X-Forwarded-For` is never trusted. Owner replacement updates the owner, revokes owner sessions, and writes `owner.replace` audit in one SQLite transaction.
 

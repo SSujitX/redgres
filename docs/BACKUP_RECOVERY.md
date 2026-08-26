@@ -58,6 +58,8 @@ The exact AOF procedure must be validated against the deployed Redis version bec
 - Copying only `redgres.db` while WAL mode is active is not a valid general backup procedure.
 - Confirm owner/session/audit/operation table counts within expected ranges after restore. Sessions may be intentionally invalidated during disaster recovery.
 
+`database.CaptureSQLiteSnapshot` is the bounded producer for the preferred online path. It accepts an already-open SQLite handle and an existing private staging root, creates an identity-pinned operation-private directory and exclusive target, verifies the pinned driver's pathname-reopened destination before its first copy step, and copies in cancellation-aware batches. It independently requires the standalone copy's `PRAGMA integrity_check` result to be exactly `ok` between two matching size/SHA-256 passes. The returned path is the retained file inside that generated operation directory. It does not publish `current.json`, apply retention, perform off-host transport, restore into a clean control-state database, or prove restore acceptance; the live installer backup command does not call it yet.
+
 ## 6. Storage and retention
 
 - Local staging: `/var/backups/redgres`, `root:root 0700`, separate capacity monitoring.
