@@ -159,8 +159,14 @@ redgres_plan_validate() {
         db="${dbs}"
         dbs=''
       fi
+      if [[ -z "${db}" ]]; then
+        redgres_die "invalid database name"
+      fi
       dbs_list+=("${db}")
     done
+    if [[ "${#dbs_list[@]}" -eq 0 ]]; then
+      redgres_die "databases must not be empty (never implies all databases)"
+    fi
     for db in "${dbs_list[@]}"; do
       if [[ ! "${db}" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]]; then
         redgres_die "invalid database name ${db}"

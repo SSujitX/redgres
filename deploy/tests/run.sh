@@ -1,5 +1,5 @@
-﻿#!/usr/bin/env bash
-# POSIX installer dispatcher tests (OPS-001 / OPS-002 / OPS-003 / OPS-005 / OPS-006 Partial).
+#!/usr/bin/env bash
+# POSIX installer dispatcher tests (OPS-001 / OPS-002 / OPS-003 / OPS-004 / OPS-005 / OPS-006 / OPS-007 Partial).
 # Prepends failing mutation stubs so a real host call fails the test.
 # Detection stubs print fixture --version stdout and must not append to stub_log.
 set -euo pipefail
@@ -566,6 +566,7 @@ expect_status 'postgres-extensions subcommand exits 2' 2
 # --- OPS-007 postgres-plan read-only plan validation ---
 expect_plan_partial() {
   local name="$1"
+  shift
   if ! assert_no_mutation "${name}"; then
     return
   fi
@@ -599,7 +600,7 @@ expect_plan_partial() {
     'restart_approval: skipped (--approve-postgres-restart is apply-time)' \
     'extension_ddl: skipped (CREATE EXTENSION not executed)' \
     'verification: skipped (capability smoke checks deferred)' \
-    'result=partial'; do
+    'result=partial' "$@"; do
     case "${output}" in
       *"${keyword}"*) ;;
       *) missing="${missing} |${keyword}|" ;;
@@ -692,6 +693,11 @@ plan_bad_name="${tmpdir}/plan-bad-name.json"
 printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":["bad name"]}]}' >"${plan_bad_name}"
 run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_bad_name}"
 expect_status 'postgres-plan invalid database name exits 1' 1
+
+plan_empty_str_name="${tmpdir}/plan-empty-str-name.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":[""]}]}' >"${plan_empty_str_name}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_empty_str_name}"
+expect_status 'postgres-plan empty-string database name exits 1' 1
 
 plan_empty_db="${tmpdir}/plan-empty-db.json"
 printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":[]}]}' >"${plan_empty_db}"
