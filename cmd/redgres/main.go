@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/SSujitX/redgres/internal/audit"
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/database"
 	"github.com/SSujitX/redgres/internal/httpapi"
@@ -57,9 +58,6 @@ func run(args []string) error {
 	if err := database.Migrate(db, migrations.FS); err != nil {
 		return err
 	}
-	if err := operations.NewStore(db).Reconcile(context.Background(), nil, nil, time.Now().UTC()); err != nil {
-		return err
-	}
 	assets, closeAssets, err := web.Open(cfg.DevAssetDir)
 	if err != nil {
 		return err
@@ -72,11 +70,20 @@ func run(args []string) error {
 	}
 	defer closePG()
 
+	ops := operations.NewStore(db)
+	if err := ops.Reconcile(context.Background(), postgresadmin.NewDuplicateProbe(pg), postgresadmin.NewDuplicateCompensator(pg), time.Now().UTC()); err != nil {
+		return err
+	}
+
 	rd, closeRD, err := redisadmin.Open(context.Background(), cfg)
 	if err != nil {
 		return err
 	}
 	defer closeRD()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go pollQueuedDuplicates(ctx, ops, pg, audit.Store{DB: db}, log)
 
 	srv := &http.Server{
 		Addr:              cfg.Address,
@@ -87,9 +94,6 @@ func run(args []string) error {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -111,6 +115,25 @@ func run(args []string) error {
 		}
 		log.Info("shutdown complete")
 		return nil
+	}
+}
+
+func pollQueuedDuplicates(ctx context.Context, store operations.Store, pg *postgresadmin.Service, auditor postgresadmin.DuplicateAuditor, log *slog.Logger) {
+	run := func() {
+		if err := postgresadmin.RunQueuedDuplicates(ctx, store, pg, auditor); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			log.Error("duplicate worker did not finish")
+		}
+	}
+	run()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
 	}
 }
 
