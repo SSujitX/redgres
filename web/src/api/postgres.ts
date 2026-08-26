@@ -126,7 +126,14 @@ export async function createPostgresDatabase(
   });
 }
 
-export type PostgresDuplicatePayload = PostgresRevealPayload;
+export type PostgresDuplicateOperation = {
+  id?: string;
+  status?: string;
+};
+
+export type PostgresDuplicatePayload = PostgresRevealPayload & {
+  operation?: PostgresDuplicateOperation;
+};
 
 export async function duplicatePostgresDatabase(
   source: string,
