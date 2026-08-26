@@ -326,7 +326,7 @@ if [[ "${1:-}" == "update" ]]; then
   if [[ "${update_dry_run}" -ne 1 ]]; then
     redgres_not_implemented "update without --dry-run is not implemented"
   fi
-  redgres_update_dry_run
+  redgres_update_dry_run "${update_release_path}"
   exit 0
 fi
 

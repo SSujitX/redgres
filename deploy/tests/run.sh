@@ -51,6 +51,8 @@ malformed_config_file="${tmpdir}/malformed-install.env"
 literal_config_file="${tmpdir}/literal-install.env"
 oversized_config_file="${tmpdir}/oversized-install.env"
 nul_config_file="${tmpdir}/nul-install.env"
+release_file="${tmpdir}/redgres_1.0.0_linux_amd64.tar.gz"
+checksum_file="${tmpdir}/SHA256SUMS"
 plan_file="${tmpdir}/postgres-extensions.json"
 sourced_marker="${tmpdir}/config-sourced"
 mkdir -p "${stub_dir}" "${detect_dir}" "${unsafe_dir}" "${bootstrap_helper_dir}"
@@ -90,6 +92,10 @@ printf '%s\n' 'export POSTGRES_MODE=fresh' >"${malformed_config_file}"
 printf '%s\n' "POSTGRES_EXTENSION_PLAN_FILE=\$(printf owned >'${sourced_marker}')" >"${literal_config_file}"
 /usr/bin/head -c 65537 /dev/zero | /usr/bin/tr '\000' 'A' >"${oversized_config_file}"
 printf 'POSTGRES_MODE=fresh\000' >"${nul_config_file}"
+printf '%s' 'redgres-release-fixture-v1' >"${release_file}"
+release_digest="$(/usr/bin/sha256sum "${release_file}")"
+release_digest="${release_digest%% *}"
+printf '%s  %s\n' "${release_digest}" "${release_file##*/}" >"${checksum_file}"
 
 printf '%s\n' '{"policy":"preserve","selections":[]}' >"${plan_file}"
 
@@ -398,8 +404,8 @@ expect_update_partial() {
   local keyword
   for keyword in \
     'Update (read-only --dry-run; not Complete):' \
-    'release: path-ok (unread, not extracted)' \
-    'checksum: skipped (no expected digest key; CONFIGURATION.md has none)' \
+    'release: checksum-verified (not extracted)' \
+    'checksum: verified (adjacent SHA256SUMS; signature/provenance not verified)' \
     'extract: skipped (/opt/redgres/releases not written)' \
     'symlink: skipped (current not switched)' \
     'sqlite_migrate: skipped' \
@@ -1282,13 +1288,27 @@ printf 'unused-plan-config\n' >"${plan_config}"
 run_install update --help
 expect_status 'update --help exits 0' 0
 
-run_install update --non-interactive --dry-run --release "${config_file}"
+run_install update --non-interactive --dry-run --release "${release_file}"
 expect_update_partial 'update dry-run skip matrix exits 0'
+
+printf '%064d  %s\n' 0 "${release_file##*/}" >"${checksum_file}"
+run_install update --non-interactive --dry-run --release "${release_file}"
+expect_status 'update dry-run rejects checksum mismatch' 1
+
+rm -f "${checksum_file}"
+run_install update --non-interactive --dry-run --release "${release_file}"
+expect_status 'update dry-run requires adjacent SHA256SUMS' 1
+
+printf '%s  %s\n%s  %s\n' "${release_digest}" "${release_file##*/}" "${release_digest}" "${release_file##*/}" >"${checksum_file}"
+run_install update --non-interactive --dry-run --release "${release_file}"
+expect_status 'update dry-run rejects duplicate checksum entry' 1
+
+printf '%s  %s\n' "${release_digest}" "${release_file##*/}" >"${checksum_file}"
 
 run_install update
 expect_status 'update without flags exits 1' 1
 
-run_install update --non-interactive --release "${config_file}"
+run_install update --non-interactive --release "${release_file}"
 expect_status 'update without --dry-run exits 2' 2
 case "${output}" in
   *'Inventory (read-only'*)
@@ -1308,10 +1328,10 @@ expect_status 'update --release missing path exits 1' 1
 run_install update --non-interactive --dry-run --release "${tmpdir}"
 expect_status 'update --release directory exits 1' 1
 
-run_install update --non-interactive --dry-run --release "${config_file}" --config "${config_file}"
+run_install update --non-interactive --dry-run --release "${release_file}" --config "${config_file}"
 expect_status 'update unknown --config flag exits 1' 1
 
-run_install update --non-interactive --dry-run --release "${config_file}" --mode existing-postgres
+run_install update --non-interactive --dry-run --release "${release_file}" --mode existing-postgres
 expect_status 'update unknown --mode flag exits 1' 1
 
 # --- OPS-005 rollback --dry-run skip matrix ---
