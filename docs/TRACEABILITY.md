@@ -158,7 +158,11 @@ Independent verifier **Approve Partial / reject Complete** on `7ff1243` (ancesto
 
 ### PLAT-004 Documentation catalog (2026-08-26)
 
-Partial. Isolated `feat/plat-004-docs-catalog` from `bf717ac`. Curated in-app Documentation catalog (four articles: Using search, PostgreSQL databases, Redis ACL users, Passwords and tickets) replaces the placeholder. Search Documentation group is landing `filterNav` ∪ client `filterDocs` article hits (not under Navigation). `go("docs")` always clears article focus; `selectArticle` does not call `go`. Article state is in-memory only (no `location.hash` / `location.search` / `localStorage` / `sessionStorage`). GET `/api/v1/search` unchanged (two server groups). Login never renders the catalog. Commits `2899760` / `7e7605f`. Writer `npm --prefix web run test:run` 397 passed; `npm --prefix web run build` succeeded. No Playwright, no docs HTTP API, no command palette, no deep links. Do not mark PLAT-004, NFR-012, or PLAT-001 Complete.
+Partial. Isolated `feat/plat-004-docs-catalog` from `bf717ac`. Curated in-app Documentation catalog (four articles: Using search, PostgreSQL databases, Redis ACL users, Passwords and tickets) replaces the placeholder. Search Documentation group is landing `filterNav` ∪ client `filterDocs` article hits (not under Navigation). `go("docs")` always clears article focus; `selectArticle` does not call `go`. Article state is in-memory only (no `location.hash` / `location.search` / `localStorage` / `sessionStorage`). GET `/api/v1/search` unchanged (two server groups). Login never renders the catalog. Commits `2899760` / `7e7605f`. Parent `npm --prefix web run test:run` 397 passed on `60d4953`. Writer-claimed `npm --prefix web run build` succeeded. No Playwright, no docs HTTP API, no command palette, no deep links. Do not mark PLAT-004, NFR-012, or PLAT-001 Complete.
+
+### PLAT-004 Documentation catalog security review (2026-08-26)
+
+Independent security reviewer **Approve Partial / reject Complete** on `60d4953` (implementation `7e7605f` / `2899760`). No Critical/High/Medium. Corpus has no secrets; unknown ids fail closed; article state is in-memory only; login does not render the catalog; search drop/truncate does not mutate; GET `/search` unchanged. Residual Lows: SPA JS includes catalog copy; no UI test injecting an HTML unknown id into `selectArticle`; GET `/search?q=` still carries the typed query (pre-existing). Tests not re-run (parent-claimed 397 passed). Do not mark PLAT-004 Complete.
 
 
 
