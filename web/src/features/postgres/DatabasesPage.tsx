@@ -280,11 +280,11 @@ export default function DatabasesPage({
     if (createOpened.current) {
       return;
     }
-    if (items !== null && listError === "" && ticket === null) {
+    if (items !== null && listError === "" && ticket === null && !duplicating) {
       setCreateOpen(true);
       createOpened.current = true;
     }
-  }, [openCreate, items, listError, ticket]);
+  }, [openCreate, items, listError, ticket, duplicating]);
 
   useEffect(() => {
     if (!selectedTable) {
@@ -657,7 +657,17 @@ export default function DatabasesPage({
         await delay(1000, controller.signal);
       }
       waitBeforePoll = true;
-      const result = await fetchOperation(operationId, { signal: controller.signal });
+      let result: Awaited<ReturnType<typeof fetchOperation>>;
+      try {
+        result = await fetchOperation(operationId, { signal: controller.signal });
+      } catch (err) {
+        if (controller.signal.aborted || isAbortError(err)) {
+          return null;
+        }
+        setDuplicateProgress(null);
+        setDuplicateError(postgresUnavailable);
+        return null;
+      }
       if (controller.signal.aborted) {
         return null;
       }
@@ -786,6 +796,7 @@ export default function DatabasesPage({
       if (controller.signal.aborted || isAbortError(err)) {
         return;
       }
+      setDuplicateProgress(null);
       setDuplicateError(postgresUnavailable);
     } finally {
       if (!controller.signal.aborted) {

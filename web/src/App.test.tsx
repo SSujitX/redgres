@@ -3795,6 +3795,56 @@ describe("App session and login", () => {
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
+  it("does not open Create from nav while duplicate 202 poll is in flight", async () => {
+    let releasePoll: () => void = () => {};
+    const blockedPoll = new Promise<void>((resolve) => {
+      releasePoll = resolve;
+    });
+    const fetch = stubFetch(
+      postgresDuplicateInspectorFetch("pg-dup-202-nav-create".padEnd(64, "0"), {
+        duplicate: () => postgresDuplicate202(),
+        operation: async () => {
+          await blockedPoll;
+          return postgresOperationGet("succeeded");
+        },
+        listAfterDuplicate: postgresDuplicateCopyList,
+      }),
+    );
+    render(<App />);
+    const dialog = await openDuplicateDatabaseDialog();
+    fillDuplicateForm(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+    expect(await screen.findByText(/Duplicating database/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Create database" }),
+    );
+    expect(screen.queryByRole("dialog", { name: "Create database" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Duplicating database/)).toBeInTheDocument();
+    expect(fetch.mock.calls.filter((call) => isPostgresDatabasesCreate(String(call[0]), call[1])).length).toBe(0);
+    releasePoll();
+    expect(await screen.findByRole("heading", { name: "project_a_copy" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Create database" })).not.toBeInTheDocument();
+  });
+
+  it("clears duplicate progress when operations GET throws", async () => {
+    stubFetch(
+      postgresDuplicateInspectorFetch("pg-dup-202-throw".padEnd(64, "0"), {
+        duplicate: () => postgresDuplicate202(),
+        operation: () => {
+          throw new TypeError("Failed to fetch");
+        },
+      }),
+    );
+    render(<App />);
+    const dialog = await openDuplicateDatabaseDialog();
+    fillDuplicateForm(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("PostgreSQL is unavailable");
+    expect(screen.queryByText(/Duplicating database/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
   it("aborts duplicate 202 poll on selection change", async () => {
     let polls = 0;
     const fetch = stubFetch((url, init) => {
