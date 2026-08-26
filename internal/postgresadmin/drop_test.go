@@ -107,6 +107,70 @@ func TestServiceDropMissingNoSQL(t *testing.T) {
 	}
 }
 
+func TestServiceDropAfterValidationSkipsPreconditionForProtectedTarget(t *testing.T) {
+	cat := dropCatalog()
+	svc := NewService(cat, NewPolicy(config.Config{PostgresDatabase: "postgres"}))
+	called := false
+	_, err := svc.DropAfterValidation(context.Background(), "postgres", func(context.Context) error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("protected: %v", err)
+	}
+	if called {
+		t.Fatal("precondition ran for protected target")
+	}
+	if cat.TerminateCalls != 0 || cat.DropCalls != 0 {
+		t.Fatalf("SQL on protected target: terminate=%d drop=%d", cat.TerminateCalls, cat.DropCalls)
+	}
+}
+
+func TestServiceDropAfterValidationRechecksTargetBeforeSQL(t *testing.T) {
+	cat := dropCatalog()
+	svc := NewService(cat, NewPolicy(config.Config{}))
+	_, err := svc.DropAfterValidation(context.Background(), "project_a", func(context.Context) error {
+		cat.Rows = nil
+		return nil
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("final target re-read: %v", err)
+	}
+	if cat.TerminateCalls != 0 || cat.DropCalls != 0 {
+		t.Fatalf("SQL after target changed: terminate=%d drop=%d", cat.TerminateCalls, cat.DropCalls)
+	}
+}
+
+func TestServiceDropAfterValidationHoldsDropLock(t *testing.T) {
+	cat := dropCatalog()
+	svc := NewService(cat, NewPolicy(config.Config{}))
+	started := make(chan struct{})
+	release := make(chan struct{})
+	callbackErr := errors.New("precondition stopped")
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.DropAfterValidation(context.Background(), "project_a", func(context.Context) error {
+			close(started)
+			<-release
+			return callbackErr
+		})
+		done <- err
+	}()
+	<-started
+	var inProgress DropInProgress
+	if _, err := svc.Drop(context.Background(), "project_a"); !errors.As(err, &inProgress) {
+		close(release)
+		t.Fatalf("concurrent drop: %v", err)
+	}
+	close(release)
+	if err := <-done; !errors.Is(err, callbackErr) {
+		t.Fatalf("callback error = %v", err)
+	}
+	if cat.TerminateCalls != 0 || cat.DropCalls != 0 {
+		t.Fatalf("SQL after callback failure: terminate=%d drop=%d", cat.TerminateCalls, cat.DropCalls)
+	}
+}
+
 func TestServiceDropOwnedCountNonZeroSkipsRoleAndVault(t *testing.T) {
 	cat := dropCatalog()
 	cat.OwnedCount = 2

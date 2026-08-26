@@ -21,6 +21,14 @@ func formatOperatorDropDatabase(database string) (string, error) {
 }
 
 func (s *Service) Drop(ctx context.Context, database string) (DropResult, error) {
+	return s.DropAfterValidation(ctx, database, nil)
+}
+
+// DropAfterValidation holds the per-database drop lock, validates the current
+// target, runs beforeDrop, and then re-reads policy immediately before SQL.
+// The callback is the seam for potentially expensive external preconditions
+// such as backup artifact verification.
+func (s *Service) DropAfterValidation(ctx context.Context, database string, beforeDrop func(context.Context) error) (DropResult, error) {
 	if err := ValidateIdentifier(database); err != nil {
 		return DropResult{}, err
 	}
@@ -31,15 +39,20 @@ func (s *Service) Drop(ctx context.Context, database string) (DropResult, error)
 		return DropResult{}, err
 	}
 	defer s.unlockDrop(database)
-	if s.policy.DatabaseDenied(database) {
-		return DropResult{}, ErrNotFound
-	}
-	row, err := s.catalog.Lookup(ctx, database)
+	row, err := s.lookupDropTarget(ctx, database)
 	if err != nil {
-		return DropResult{}, mapCatalogError(err)
+		return DropResult{}, err
 	}
-	if !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate) {
-		return DropResult{}, ErrNotFound
+	if beforeDrop != nil {
+		if err := beforeDrop(ctx); err != nil {
+			return DropResult{}, err
+		}
+		// External state can change while a backup is hashed. Re-read the target
+		// under the held lock immediately before terminating sessions.
+		row, err = s.lookupDropTarget(ctx, database)
+		if err != nil {
+			return DropResult{}, err
+		}
 	}
 	if err := s.catalog.TerminateSessions(ctx, row.Name); err != nil {
 		return DropResult{}, dropExecError(err)
@@ -54,6 +67,20 @@ func (s *Service) Drop(ctx context.Context, database string) (DropResult, error)
 	}
 	result.DroppedRole = droppedRole
 	return result, nil
+}
+
+func (s *Service) lookupDropTarget(ctx context.Context, database string) (CatalogRow, error) {
+	if s.policy.DatabaseDenied(database) {
+		return CatalogRow{}, ErrNotFound
+	}
+	row, err := s.catalog.Lookup(ctx, database)
+	if err != nil {
+		return CatalogRow{}, mapCatalogError(err)
+	}
+	if !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate) {
+		return CatalogRow{}, ErrNotFound
+	}
+	return row, nil
 }
 
 func dropExecError(err error) error {

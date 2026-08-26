@@ -287,6 +287,7 @@ func TestPostgresDropReauthRequiredMetadataDatabaseOnly(t *testing.T) {
 func TestPostgresDropProtected404NoSQL(t *testing.T) {
 	cat := dropCatalog()
 	srv := dropServer(t, cat, true)
+	srv.cfg.BackupCatalogDir = ""
 	seedOwner(t, srv)
 	h := srv.Handler()
 	cookie, csrf := login(t, h)
@@ -306,6 +307,7 @@ func TestPostgresDropProtected404NoSQL(t *testing.T) {
 func TestPostgresDropMissing404(t *testing.T) {
 	cat := dropCatalog()
 	srv := dropServer(t, cat, true)
+	srv.cfg.BackupCatalogDir = ""
 	seedOwner(t, srv)
 	h := srv.Handler()
 	cookie, csrf := login(t, h)

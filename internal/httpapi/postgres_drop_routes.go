@@ -9,6 +9,7 @@ import (
 
 	"github.com/SSujitX/redgres/internal/auth"
 	"github.com/SSujitX/redgres/internal/backup"
+	"github.com/SSujitX/redgres/internal/postgresadmin"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -28,6 +29,19 @@ type postgresDropResponse struct {
 type postgresClusterIdentity interface {
 	SystemIdentifier(ctx context.Context) (string, error)
 }
+
+type postgresValidatedDrop interface {
+	postgresClusterIdentity
+	DropAfterValidation(ctx context.Context, database string, beforeDrop func(context.Context) error) (postgresadmin.DropResult, error)
+}
+
+type postgresDropGateError struct {
+	status  int
+	code    string
+	message string
+}
+
+func (e postgresDropGateError) Error() string { return "PostgreSQL drop backup gate failed" }
 
 func dropGateDenied(reason string) bool {
 	switch reason {
@@ -81,59 +95,55 @@ func (s *Server) handlePostgresDatabaseDrop(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	if s.cfg.BackupCatalogDir == "" {
-		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), clientIP, meta)
-		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, postgresDropCatalogMessage)
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), postgresDropTimeout)
 	defer cancel()
-	manifest, err := backup.LoadCurrent(s.cfg.BackupCatalogDir)
-	if err != nil {
-		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), clientIP, meta)
-		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, postgresDropCatalogMessage)
-		return
-	}
 	if s.postgres == nil {
 		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
-	ident, ok := s.postgres.(postgresClusterIdentity)
+	dropper, ok := s.postgres.(postgresValidatedDrop)
 	if !ok {
 		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), requestClientIP(r), meta)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
-	sysID, err := ident.SystemIdentifier(ctx)
+	result, err := dropper.DropAfterValidation(ctx, database, func(ctx context.Context) error {
+		if s.cfg.BackupCatalogDir == "" {
+			return postgresDropGateError{status: http.StatusServiceUnavailable, code: CodeDependencyUnavailable, message: postgresDropCatalogMessage}
+		}
+		manifest, err := backup.LoadCurrent(s.cfg.BackupCatalogDir)
+		if err != nil {
+			return postgresDropGateError{status: http.StatusServiceUnavailable, code: CodeDependencyUnavailable, message: postgresDropCatalogMessage}
+		}
+		sysID, err := dropper.SystemIdentifier(ctx)
+		if err != nil {
+			return err
+		}
+		gate := backup.EvaluateDropGate(backup.DropGateInput{
+			Database:         database,
+			SystemIdentifier: sysID,
+			Now:              time.Now().UTC(),
+			Manifest:         manifest,
+		})
+		if !gate.Allowed {
+			if dropGateDenied(gate.Reason) {
+				return postgresDropGateError{status: http.StatusForbidden, code: CodeForbidden, message: gate.Reason}
+			}
+			return postgresDropGateError{status: http.StatusServiceUnavailable, code: CodeDependencyUnavailable, message: postgresDropCatalogMessage}
+		}
+		if err := backup.VerifyPostgresDatabaseArtifact(ctx, s.cfg.BackupCatalogDir, manifest, database); err != nil {
+			return postgresDropGateError{status: http.StatusServiceUnavailable, code: CodeDependencyUnavailable, message: postgresDropCatalogMessage}
+		}
+		return nil
+	})
 	if err != nil {
 		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), requestClientIP(r), meta)
-		s.writePostgresError(w, r, err)
-		return
-	}
-	gate := backup.EvaluateDropGate(backup.DropGateInput{
-		Database:         database,
-		SystemIdentifier: sysID,
-		Now:              time.Now().UTC(),
-		Manifest:         manifest,
-	})
-	if !gate.Allowed {
-		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), requestClientIP(r), meta)
-		if dropGateDenied(gate.Reason) {
-			s.writeError(w, r, http.StatusForbidden, CodeForbidden, gate.Reason)
+		var gateErr postgresDropGateError
+		if errors.As(err, &gateErr) {
+			s.writeError(w, r, gateErr.status, gateErr.code, gateErr.message)
 			return
 		}
-		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, postgresDropCatalogMessage)
-		return
-	}
-	if err := backup.VerifyPostgresDatabaseArtifact(ctx, s.cfg.BackupCatalogDir, manifest, database); err != nil {
-		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), clientIP, meta)
-		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, postgresDropCatalogMessage)
-		return
-	}
-	result, err := s.postgres.Drop(ctx, database)
-	if err != nil {
-		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), requestClientIP(r), meta)
 		s.writePostgresError(w, r, err)
 		return
 	}
