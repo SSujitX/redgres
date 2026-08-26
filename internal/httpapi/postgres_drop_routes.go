@@ -126,6 +126,11 @@ func (s *Server) handlePostgresDatabaseDrop(w http.ResponseWriter, r *http.Reque
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, postgresDropCatalogMessage)
 		return
 	}
+	if err := backup.VerifyPostgresDatabaseArtifact(ctx, s.cfg.BackupCatalogDir, manifest, database); err != nil {
+		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), clientIP, meta)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, postgresDropCatalogMessage)
+		return
+	}
 	result, err := s.postgres.Drop(ctx, database)
 	if err != nil {
 		_ = s.audit.Record(sess.Username, "postgres.database.drop", database, "failure", requestID(r), requestClientIP(r), meta)

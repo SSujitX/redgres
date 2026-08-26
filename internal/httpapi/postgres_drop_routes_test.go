@@ -84,6 +84,15 @@ func allowDropManifest(sysID string, databases ...string) backup.Manifest {
 func writeDropCurrentJSON(t *testing.T, manifest backup.Manifest) string {
 	t.Helper()
 	dir := t.TempDir()
+	for _, artifact := range manifest.Artifacts {
+		artifactPath := filepath.Join(dir, filepath.FromSlash(artifact.Path))
+		if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(artifactPath, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	raw, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -840,6 +849,99 @@ func TestPostgresDropEvaluateDeny403NoDrop(t *testing.T) {
 			}
 			if cat.DropCalls != 0 || cat.TerminateCalls != 0 || cat.DropDatabaseCalls != 0 {
 				t.Fatalf("DROP SQL on deny: drop=%d terminate=%d compensate=%d", cat.DropCalls, cat.TerminateCalls, cat.DropDatabaseCalls)
+			}
+		})
+	}
+}
+
+func TestPostgresDropArtifactVerificationFailure503NoDrop(t *testing.T) {
+	const verifierCanary = "artifact-verifier-canary"
+	wrongHash := strings.Repeat("0", 64)
+	cases := []struct {
+		name     string
+		manifest func() backup.Manifest
+		remove   bool
+	}{
+		{
+			name: "missing artifact",
+			manifest: func() backup.Manifest {
+				manifest := allowDropManifest(dropGateSystemID, "project_a")
+				manifest.Artifacts[0].Path = "artifacts/" + verifierCanary + ".dump"
+				return manifest
+			},
+			remove: true,
+		},
+		{
+			name: "wrong artifact size",
+			manifest: func() backup.Manifest {
+				manifest := allowDropManifest(dropGateSystemID, "project_a")
+				manifest.Artifacts[0].Path = "artifacts/" + verifierCanary + ".dump"
+				manifest.Artifacts[0].SizeBytes = 1
+				return manifest
+			},
+		},
+		{
+			name: "wrong artifact hash",
+			manifest: func() backup.Manifest {
+				manifest := allowDropManifest(dropGateSystemID, "project_a")
+				manifest.Artifacts[0].Path = "artifacts/" + verifierCanary + ".dump"
+				manifest.Artifacts[0].SHA256 = wrongHash
+				return manifest
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cat := dropCatalog()
+			srv := dropServer(t, cat, true)
+			manifest := tc.manifest()
+			srv.cfg.BackupCatalogDir = writeDropCurrentJSON(t, manifest)
+			if tc.remove {
+				artifactPath := filepath.Join(srv.cfg.BackupCatalogDir, filepath.FromSlash(manifest.Artifacts[0].Path))
+				if err := os.Remove(artifactPath); err != nil {
+					t.Fatal(err)
+				}
+			}
+			seedOwner(t, srv)
+			h := srv.Handler()
+			cookie, csrf := login(t, h)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, authed(http.MethodDelete, postgresDropPath, cookie, csrf, dropJSON("project_a", ownerPassword)))
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+			}
+			var body errorBody
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Error.Code != CodeDependencyUnavailable || body.Error.Message != postgresDropCatalogMessage {
+				t.Fatalf("error = %#v", body.Error)
+			}
+			raw := rec.Body.String()
+			for _, detail := range []string{srv.cfg.BackupCatalogDir, manifest.Artifacts[0].Path, verifierCanary, dropGateArtifactHash, wrongHash} {
+				if strings.Contains(raw, detail) {
+					t.Fatalf("503 leaked verifier detail %q: %s", detail, raw)
+				}
+			}
+			if cat.DropCalls != 0 || cat.TerminateCalls != 0 || cat.DropDatabaseCalls != 0 {
+				t.Fatalf("destructive SQL on verification failure: drop=%d terminate=%d compensate=%d", cat.DropCalls, cat.TerminateCalls, cat.DropDatabaseCalls)
+			}
+			var action, target, outcome, metadata string
+			if err := srv.db.QueryRow(`SELECT action, target, outcome, metadata FROM audit_events WHERE action = 'postgres.database.drop' ORDER BY id DESC LIMIT 1`).Scan(&action, &target, &outcome, &metadata); err != nil {
+				t.Fatal(err)
+			}
+			if action != "postgres.database.drop" || target != "project_a" || outcome != "failure" {
+				t.Fatalf("audit = %s/%s/%s", action, target, outcome)
+			}
+			var meta map[string]any
+			if err := json.Unmarshal([]byte(metadata), &meta); err != nil {
+				t.Fatal(err)
+			}
+			if meta["database"] != "project_a" || len(meta) != 1 {
+				t.Fatalf("failure metadata = %s", metadata)
+			}
+			if strings.Contains(metadata, verifierCanary) || strings.Contains(metadata, wrongHash) {
+				t.Fatalf("audit leaked verifier detail: %s", metadata)
 			}
 		})
 	}
