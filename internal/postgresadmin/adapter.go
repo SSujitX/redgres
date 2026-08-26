@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/SSujitX/redgres/internal/config"
+	"github.com/SSujitX/redgres/internal/release"
 	"github.com/SSujitX/redgres/internal/secrets"
 	"github.com/SSujitX/redgres/internal/securefile"
 	"github.com/jackc/pgx/v5"
@@ -279,15 +280,19 @@ func checkServerMajor(ctx context.Context, pool *pgxpool.Pool, expected int) err
 	if err := pool.QueryRow(ctx, "SELECT current_setting('server_version_num')").Scan(&raw); err != nil {
 		return ErrUnavailable
 	}
+	return checkServerVersionNum(raw, expected)
+}
+
+func checkServerVersionNum(raw string, expected int) error {
 	num, err := strconv.Atoi(raw)
 	if err != nil {
 		return ErrUnavailable
 	}
-	major := num / 10000
-	if major != 17 && major != 18 {
+	major, ok := release.PostgreSQLMajorFromVersionNum(num)
+	if !ok || !release.SupportedPostgreSQLMajor(major) {
 		return ErrUnavailable
 	}
-	if expected != 0 && expected != major {
+	if expected != 0 && (expected != major || !release.SupportedPostgreSQLMajor(expected)) {
 		return ErrUnavailable
 	}
 	return nil

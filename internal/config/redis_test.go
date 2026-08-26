@@ -37,7 +37,7 @@ func TestLoadNoRedisKeysDevelopment(t *testing.T) {
 	if cfg.RedisConfigured() {
 		t.Fatal("RedisConfigured should be false when Redis keys are empty")
 	}
-	if cfg.RedisAdminURLFile != "" || cfg.RedisAllowPlaintext {
+	if cfg.RedisAdminURLFile != "" || cfg.RedisAllowPlaintext || cfg.RedisExpectedSeries != "" {
 		t.Fatalf("redis fields = %#v", cfg)
 	}
 	if cfg.RedisPublicHost != "" || cfg.RedisPublicPort != "" {
@@ -268,6 +268,74 @@ func TestLoadProductionDoesNotRequireRedisPublicHostPort(t *testing.T) {
 	if cfg.RedisPublicHost != "" || cfg.RedisPublicPort != "" {
 		t.Fatalf("public = %q %q", cfg.RedisPublicHost, cfg.RedisPublicPort)
 	}
+}
+
+func TestLoadAcceptsEmptyRedisExpectedSeries(t *testing.T) {
+	isolateConfig(t)
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RedisExpectedSeries != "" {
+		t.Fatalf("RedisExpectedSeries = %q", cfg.RedisExpectedSeries)
+	}
+}
+
+func TestLoadAcceptsRedisExpectedSeriesWithURL(t *testing.T) {
+	for _, series := range []string{"8.2", "8.8"} {
+		t.Run(series, func(t *testing.T) {
+			isolateConfig(t)
+			path := writeRedisURLFile(t, "redis://127.0.0.1:6379/0\n", 0o600)
+			t.Setenv("REDGRES_REDIS_ADMIN_URL_FILE", path)
+			t.Setenv("REDGRES_REDIS_EXPECTED_SERIES", series)
+
+			cfg, err := Load(nil)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.RedisExpectedSeries != series {
+				t.Fatalf("RedisExpectedSeries = %q", cfg.RedisExpectedSeries)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidRedisExpectedSeries(t *testing.T) {
+	denied := []string{"latest", "latest-tested", "8.8.2", "8.2.9", "8.10", "8.10.1", "8.0", "7.2"}
+	for _, series := range denied {
+		t.Run(series, func(t *testing.T) {
+			isolateConfig(t)
+			path := writeRedisURLFile(t, "redis://127.0.0.1:6379/0\n", 0o600)
+			t.Setenv("REDGRES_REDIS_ADMIN_URL_FILE", path)
+			t.Setenv("REDGRES_REDIS_EXPECTED_SERIES", series)
+
+			_, err := Load(nil)
+			if err == nil {
+				t.Fatal("expected invalid series to fail")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "REDGRES_REDIS_EXPECTED_SERIES") {
+				t.Fatalf("error %q does not name REDGRES_REDIS_EXPECTED_SERIES", msg)
+			}
+			assertNoRedisCanary(t, msg)
+		})
+	}
+}
+
+func TestLoadRedisExpectedSeriesWithoutURLFailsClosed(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_REDIS_EXPECTED_SERIES", "8.8")
+
+	_, err := Load(nil)
+	if err == nil {
+		t.Fatal("expected series without URL file to fail")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "REDGRES_REDIS_ADMIN_URL_FILE") {
+		t.Fatalf("error %q does not name REDGRES_REDIS_ADMIN_URL_FILE", msg)
+	}
+	assertNoRedisCanary(t, msg)
 }
 
 func TestLoadRejectsInvalidRedisPublicPort(t *testing.T) {

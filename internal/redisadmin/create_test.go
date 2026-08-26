@@ -257,7 +257,7 @@ func assertCreateRules(t *testing.T, rules []string, password, pattern string, w
 		}
 	}
 	upperJoined := strings.ToUpper(joined)
-	for _, bad := range []string{"+@ALL", "+ACL", "+CONFIG", "+FLUSHALL", "+FLUSHDB", "+SCRIPT", "+EVAL"} {
+	for _, bad := range []string{"+@ALL", "+@READ", "+ACL", "+CONFIG", "+FLUSHALL", "+FLUSHDB", "+SCRIPT", "+EVAL"} {
 		if strings.Contains(upperJoined, bad) {
 			t.Fatalf("dangerous %s in %s", bad, joined)
 		}
@@ -293,4 +293,21 @@ func grantedCommands(rules []string) []string {
 		out = append(out, cmd)
 	}
 	return uniqueSorted(out)
+}
+
+func TestCreateUserRejectsCategoryTokensBeforeRedis(t *testing.T) {
+	tokens := [][]string{{"@read"}, {"+@read"}, {"@all"}, {"+@all"}}
+	for _, commands := range tokens {
+		t.Run(strings.Join(commands, ","), func(t *testing.T) {
+			mem := &MemoryClient{ACLListErr: errors.New("acl list should not run")}
+			svc := NewService(mem)
+			_, err := svc.CreateUser(context.Background(), "project_a", "project_a", PresetCustom, "", commands)
+			if !errors.Is(err, ErrInvalidCommands) {
+				t.Fatalf("err = %v", err)
+			}
+			if len(mem.ACLSetUserCalls) != 0 {
+				t.Fatalf("SETUSER on category token: %#v", mem.ACLSetUserCalls)
+			}
+		})
+	}
 }

@@ -136,3 +136,39 @@ func TestPoolCatalogSavedRoleNamesNilPoolIsVaultUnavailable(t *testing.T) {
 		t.Fatal("must not return ErrUnavailable")
 	}
 }
+
+func TestCheckServerVersionNumConsumesRelease(t *testing.T) {
+	ok := []struct {
+		raw      string
+		expected int
+	}{
+		{raw: "170011", expected: 0},
+		{raw: "180006", expected: 0},
+		{raw: "170011", expected: 17},
+		{raw: "180006", expected: 18},
+	}
+	for _, tc := range ok {
+		if err := checkServerVersionNum(tc.raw, tc.expected); err != nil {
+			t.Fatalf("raw=%s expected=%d: %v", tc.raw, tc.expected, err)
+		}
+	}
+
+	denied := []struct {
+		raw      string
+		expected int
+	}{
+		{raw: "garbage", expected: 0},
+		{raw: "160000", expected: 0},
+		{raw: "190000", expected: 0},
+		{raw: "180006", expected: 17},
+		{raw: "170011", expected: 18},
+		{raw: "180006", expected: 19},
+		{raw: "", expected: 0},
+	}
+	for _, tc := range denied {
+		err := checkServerVersionNum(tc.raw, tc.expected)
+		if !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("raw=%s expected=%d: err=%v", tc.raw, tc.expected, err)
+		}
+	}
+}

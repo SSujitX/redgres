@@ -268,7 +268,7 @@ func assertUpdateRules(t *testing.T, rules []string, pattern string, wantCmds []
 		}
 	}
 	upperJoined := strings.ToUpper(joined)
-	for _, bad := range []string{"+@ALL", "+ACL", "+CONFIG", "+FLUSHALL", "+FLUSHDB", "+SCRIPT", "+EVAL"} {
+	for _, bad := range []string{"+@ALL", "+@READ", "+ACL", "+CONFIG", "+FLUSHALL", "+FLUSHDB", "+SCRIPT", "+EVAL"} {
 		if strings.Contains(upperJoined, bad) {
 			t.Fatalf("dangerous %s in %s", bad, joined)
 		}
@@ -310,5 +310,25 @@ func assertUpdateLinePreserved(t *testing.T, lines []string, username, flag, pat
 	}
 	if strings.Contains(line, ">") {
 		t.Fatalf("persisted password token: %q", line)
+	}
+}
+
+func TestUpdatePermissionsRejectsCategoryTokensBeforeRedis(t *testing.T) {
+	tokens := [][]string{{"@read"}, {"+@read"}, {"@all"}, {"+@all"}}
+	for _, commands := range tokens {
+		t.Run(strings.Join(commands, ","), func(t *testing.T) {
+			mem := &MemoryClient{
+				ACLLines:   []string{updateACLLine},
+				ACLListErr: errors.New("acl list should not run"),
+			}
+			svc := NewService(mem)
+			_, err := svc.UpdatePermissions(context.Background(), "project_a", "project_a", PresetCustom, "", commands)
+			if !errors.Is(err, ErrInvalidCommands) {
+				t.Fatalf("err = %v", err)
+			}
+			if len(mem.ACLSetUserCalls) != 0 {
+				t.Fatalf("SETUSER on category token: %#v", mem.ACLSetUserCalls)
+			}
+		})
 	}
 }

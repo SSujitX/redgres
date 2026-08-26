@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/SSujitX/redgres/internal/release"
 	"github.com/SSujitX/redgres/internal/securefile"
 )
 
@@ -20,6 +21,9 @@ func (c *Config) loadRedis() error {
 	} else if v != nil {
 		c.RedisAllowPlaintext = *v
 	}
+	if err := parseExpectedSeries(os.Getenv("REDGRES_REDIS_EXPECTED_SERIES"), &c.RedisExpectedSeries); err != nil {
+		return err
+	}
 	return c.validateRedis()
 }
 
@@ -28,7 +32,7 @@ func (c Config) RedisConfigured() bool {
 }
 
 func (c Config) redisAnySet() bool {
-	return c.RedisAdminURLFile != "" || c.RedisAllowPlaintext
+	return c.RedisAdminURLFile != "" || c.RedisAllowPlaintext || c.RedisExpectedSeries != ""
 }
 
 func (c *Config) validateRedis() error {
@@ -52,6 +56,20 @@ func validateRedisPublicHost(host string) error {
 	if strings.ContainsAny(host, " \t\r\n@/") || strings.Contains(host, "://") {
 		return errors.New("REDGRES_REDIS_PUBLIC_HOST: invalid value")
 	}
+	return nil
+}
+
+func parseExpectedSeries(raw string, dest *string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		*dest = ""
+		return nil
+	}
+	series, err := release.ParseExpectedRedisSeries(raw)
+	if err != nil {
+		return errors.New("REDGRES_REDIS_EXPECTED_SERIES: must be 8.2 or 8.8")
+	}
+	*dest = series
 	return nil
 }
 

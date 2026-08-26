@@ -60,47 +60,55 @@ func TestOpenProductionWithoutURLFileFailClosed(t *testing.T) {
 	}
 }
 
-func TestOpenValidURLUnusedHighPortSucceedsWithoutPing(t *testing.T) {
+func TestOpenValidURLUnusedHighPortFailsClosedOnINFO(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "redis-admin-url")
 	if err := os.WriteFile(path, []byte("redis://127.0.0.1:61999/0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	svc, closeFn, err := Open(context.Background(), config.Config{RedisAdminURLFile: path})
-	if err != nil {
-		t.Fatalf("Open: %v", err)
+	_, _, err := Open(context.Background(), config.Config{RedisAdminURLFile: path})
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Open err = %v", err)
 	}
-	defer closeFn()
-	if svc == nil {
-		t.Fatal("expected Service")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
-	defer cancel()
-	pingErr := svc.Ping(ctx)
-	if !errors.Is(pingErr, ErrUnavailable) {
-		t.Fatalf("Ping err = %v", pingErr)
-	}
-	if strings.Contains(pingErr.Error(), "61999") || strings.Contains(pingErr.Error(), "127.0.0.1") {
-		t.Fatalf("leaked address: %v", pingErr)
+	assertNoRedisCanary(t, err.Error())
+	if strings.Contains(err.Error(), "61999") || strings.Contains(err.Error(), "127.0.0.1") {
+		t.Fatalf("leaked address: %v", err)
 	}
 }
 
-func TestOpenCapturesAdminUsernameWithoutStoringURL(t *testing.T) {
+func TestOpenUnreachableURLDoesNotEchoAdminUsername(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "redis-admin-url")
 	if err := os.WriteFile(path, []byte("redis://ops_admin@127.0.0.1:61999/0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	svc, closeFn, err := Open(context.Background(), config.Config{RedisAdminURLFile: path})
-	if err != nil {
-		t.Fatalf("Open: %v", err)
+	svc, _, err := Open(context.Background(), config.Config{RedisAdminURLFile: path})
+	if svc != nil {
+		t.Fatal("expected nil Service on unreachable Redis")
 	}
-	defer closeFn()
-	if svc == nil {
-		t.Fatal("expected Service")
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Open err = %v", err)
 	}
-	if svc.adminUser != "ops_admin" {
-		t.Fatalf("adminUser = %q", svc.adminUser)
+	assertNoRedisCanary(t, err.Error())
+	if strings.Contains(err.Error(), "ops_admin") || strings.Contains(err.Error(), "61999") || strings.Contains(err.Error(), "127.0.0.1") {
+		t.Fatalf("leaked identity: %v", err)
 	}
+}
+
+func TestOpenCanceledContextFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redis-admin-url")
+	if err := os.WriteFile(path, []byte("redis://127.0.0.1:61999/0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	_, _, err := Open(ctx, config.Config{RedisAdminURLFile: path})
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Open err = %v", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("Open did not honor canceled caller context")
+	}
+	assertNoRedisCanary(t, err.Error())
 }
 
 func TestOpenCanaryURLAbsentFromErrors(t *testing.T) {

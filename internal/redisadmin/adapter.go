@@ -3,8 +3,11 @@ package redisadmin
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/SSujitX/redgres/internal/config"
+	"github.com/SSujitX/redgres/internal/release"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -17,6 +20,8 @@ func init() {
 	// leftover pool dials from a previous client (go-redis logger is process-wide).
 	redis.SetLogger(discardLog{})
 }
+
+const redisInfoTimeout = 2 * time.Second
 
 type goRedisClient struct {
 	inner *redis.Client
@@ -64,7 +69,7 @@ func (c goRedisClient) ACLDelUser(ctx context.Context, username string) (int64, 
 	return c.inner.ACLDelUser(ctx, username).Result()
 }
 
-func Open(_ context.Context, cfg config.Config) (*Service, func(), error) {
+func Open(ctx context.Context, cfg config.Config) (*Service, func(), error) {
 	noop := func() {}
 	if !cfg.RedisConfigured() {
 		if cfg.Production() {
@@ -87,5 +92,29 @@ func Open(_ context.Context, cfg config.Config) (*Service, func(), error) {
 	adminUser := opts.Username
 	opts.MaxRetries = 1
 	client := redis.NewClient(opts)
-	return &Service{client: goRedisClient{inner: client}, adminUser: adminUser}, func() { _ = client.Close() }, nil
+	closer := func() { _ = client.Close() }
+	probeCtx, cancel := context.WithTimeout(ctx, redisInfoTimeout)
+	defer cancel()
+	info, err := client.Info(probeCtx, "server").Result()
+	if err != nil {
+		closer()
+		return nil, noop, ErrUnavailable
+	}
+	if err := checkServerSeries(info, cfg.RedisExpectedSeries); err != nil {
+		closer()
+		return nil, noop, err
+	}
+	return &Service{client: goRedisClient{inner: client}, adminUser: adminUser}, closer, nil
+}
+
+func checkServerSeries(info, expected string) error {
+	version := parseInfo(info)["redis_version"]
+	series, err := release.RedisSeriesFromVersion(version)
+	if err != nil || !release.SupportedRedisSeries(series) {
+		return ErrUnavailable
+	}
+	if expected != "" && (expected != series || !release.SupportedRedisSeries(expected)) {
+		return fmt.Errorf("%w: REDGRES_REDIS_EXPECTED_SERIES", ErrUnavailable)
+	}
+	return nil
 }

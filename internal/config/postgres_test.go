@@ -208,3 +208,56 @@ func TestLoadProductionDoesNotRequireLegacyVaultSecretFile(t *testing.T) {
 		t.Fatal("expected PostgreSQL configured without vault secret file")
 	}
 }
+
+func TestLoadAcceptsPostgresExpectedMajor(t *testing.T) {
+	for _, major := range []string{"17", "18"} {
+		t.Run(major, func(t *testing.T) {
+			isolateConfig(t)
+			setCompletePostgres(t)
+			t.Setenv("REDGRES_POSTGRES_EXPECTED_MAJOR", major)
+
+			cfg, err := Load(nil)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if major == "17" && cfg.PostgresExpectedMajor != 17 {
+				t.Fatalf("PostgresExpectedMajor = %d", cfg.PostgresExpectedMajor)
+			}
+			if major == "18" && cfg.PostgresExpectedMajor != 18 {
+				t.Fatalf("PostgresExpectedMajor = %d", cfg.PostgresExpectedMajor)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidPostgresExpectedMajor(t *testing.T) {
+	denied := []string{"latest", "latest-tested", "18.6", "17.11", "16", "19"}
+	for _, major := range denied {
+		t.Run(major, func(t *testing.T) {
+			isolateConfig(t)
+			setCompletePostgres(t)
+			t.Setenv("REDGRES_POSTGRES_EXPECTED_MAJOR", major)
+
+			_, err := Load(nil)
+			if err == nil {
+				t.Fatal("expected invalid major to fail")
+			}
+			if err.Error() != "REDGRES_POSTGRES_EXPECTED_MAJOR: must be 17 or 18" {
+				t.Fatalf("error = %q", err.Error())
+			}
+		})
+	}
+}
+
+func TestLoadPostgresExpectedMajorWithoutConnectionFailsClosed(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_POSTGRES_EXPECTED_MAJOR", "18")
+
+	_, err := Load(nil)
+	if err == nil {
+		t.Fatal("expected major without PostgreSQL connection to fail")
+	}
+	if !strings.Contains(err.Error(), "REDGRES_POSTGRES_") {
+		t.Fatalf("err = %v", err)
+	}
+}

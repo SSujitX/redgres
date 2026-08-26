@@ -61,6 +61,7 @@ type Config struct {
 	RedisAllowPlaintext bool
 	RedisPublicHost     string
 	RedisPublicPort     string
+	RedisExpectedSeries string
 
 	PgAdminURL      string
 	RedisInsightURL string

@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/SSujitX/redgres/internal/release"
 )
 
 func (c *Config) loadPostgres() error {
@@ -147,8 +149,8 @@ func parseExpectedMajor(raw string, dest *int) error {
 		*dest = 0
 		return nil
 	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || (n != 17 && n != 18) {
+	n, err := release.ParseExpectedPostgreSQLMajor(raw)
+	if err != nil {
 		return errors.New("REDGRES_POSTGRES_EXPECTED_MAJOR: must be 17 or 18")
 	}
 	*dest = n

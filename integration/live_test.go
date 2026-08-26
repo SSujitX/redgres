@@ -10,11 +10,12 @@ import (
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
 	"github.com/SSujitX/redgres/internal/redisadmin"
+	"github.com/SSujitX/redgres/internal/release"
 )
 
 const skipLiveEnv = "live integration env not set"
 
-func TestLivePostgres18Catalog(t *testing.T) {
+func TestLivePostgresCatalog(t *testing.T) {
 	clearInheritedRedgresEnv(t)
 	host, port, passwordFile, ok := livePostgresEnv(t)
 	if !ok {
@@ -28,7 +29,7 @@ func TestLivePostgres18Catalog(t *testing.T) {
 		PostgresUser:          "postgres",
 		PostgresPasswordFile:  passwordFile,
 		PostgresSSLMode:       "prefer",
-		PostgresExpectedMajor: 18,
+		PostgresExpectedMajor: livePostgresExpectedMajor(t),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -47,15 +48,17 @@ func TestLivePostgres18Catalog(t *testing.T) {
 	t.Logf("postgres catalog items=%d (empty manageable list is success on a stock image)", len(listed.Databases))
 }
 
-func TestLiveRedis88PingStatusACL(t *testing.T) {
+func TestLiveRedisPingStatusACL(t *testing.T) {
 	clearInheritedRedgresEnv(t)
 	urlFile, ok := liveRedisEnv(t)
 	if !ok {
 		t.Skip(skipLiveEnv)
 	}
+	expected := liveRedisExpectedSeries(t)
 	cfg := config.Config{
-		Environment:       config.EnvironmentDevelopment,
-		RedisAdminURLFile: urlFile,
+		Environment:         config.EnvironmentDevelopment,
+		RedisAdminURLFile:   urlFile,
+		RedisExpectedSeries: expected,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -79,10 +82,14 @@ func TestLiveRedis88PingStatusACL(t *testing.T) {
 	if metrics.Version == "" {
 		t.Fatal("Status version is empty")
 	}
-	if !strings.HasPrefix(metrics.Version, "8.8.") {
-		t.Fatalf("redis_version %q is not 8.8.x", metrics.Version)
+	series, err := release.RedisSeriesFromVersion(metrics.Version)
+	if err != nil || !release.SupportedRedisSeries(series) {
+		t.Fatalf("redis_version %q is not a supported series", metrics.Version)
 	}
-	t.Logf("redis_version=%s", metrics.Version)
+	if expected != "" && series != expected {
+		t.Fatalf("redis_version %q series %q want %q", metrics.Version, series, expected)
+	}
+	t.Logf("redis_version=%s series=%s", metrics.Version, series)
 	if _, err := svc.ListUsers(ctx); err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -102,6 +109,19 @@ func livePostgresEnv(t *testing.T) (host, port, passwordFile string, ok bool) {
 	return host, port, passwordFile, true
 }
 
+func livePostgresExpectedMajor(t *testing.T) int {
+	t.Helper()
+	raw := strings.TrimSpace(os.Getenv("REDGRES_TEST_POSTGRES_EXPECTED_MAJOR"))
+	if raw == "" {
+		return 0
+	}
+	major, err := release.ParseExpectedPostgreSQLMajor(raw)
+	if err != nil {
+		t.Fatalf("REDGRES_TEST_POSTGRES_EXPECTED_MAJOR %q is not 17 or 18", raw)
+	}
+	return major
+}
+
 func liveRedisEnv(t *testing.T) (urlFile string, ok bool) {
 	t.Helper()
 	urlFile = strings.TrimSpace(os.Getenv("REDGRES_TEST_REDIS_URL_FILE"))
@@ -118,6 +138,19 @@ func liveRedisEnv(t *testing.T) (urlFile string, ok bool) {
 		t.Fatalf("redis URL host %q is not loopback", host)
 	}
 	return urlFile, true
+}
+
+func liveRedisExpectedSeries(t *testing.T) string {
+	t.Helper()
+	raw := strings.TrimSpace(os.Getenv("REDGRES_TEST_REDIS_EXPECTED_SERIES"))
+	if raw == "" {
+		return ""
+	}
+	series, err := release.ParseExpectedRedisSeries(raw)
+	if err != nil {
+		t.Fatalf("REDGRES_TEST_REDIS_EXPECTED_SERIES %q is not 8.2 or 8.8", raw)
+	}
+	return series
 }
 
 func redisURLHost(t *testing.T, raw string) string {
