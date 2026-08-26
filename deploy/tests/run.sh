@@ -558,8 +558,107 @@ run_install verify --non-interactive --dry-run --config "${config_file}" --mode 
 expect_status 'verify unknown --mode flag exits 1' 1
 
 # --- subcommands: not implemented, exit 2, no mutation ---
+run_install postgres-extensions
+expect_status 'postgres-extensions without apply subcommand exits 1' 1
+
 run_install postgres-extensions apply
-expect_status 'postgres-extensions subcommand exits 2' 2
+expect_status 'postgres-extensions apply without flags exits 1' 1
+
+# --- OPS-007 postgres-extensions apply --dry-run skip matrix ---
+expect_extensions_partial() {
+  local name="$1"
+  shift
+  if ! assert_no_mutation "${name}"; then
+    return
+  fi
+  if ! assert_no_canary "${name}"; then
+    return
+  fi
+  if [[ "${status}" -ne 0 ]]; then
+    fail "${name}: expected exit 0, got ${status}: ${output}"
+    return
+  fi
+  case "${output}" in
+    *'Inventory (read-only'*)
+      fail "${name}: must not call inventory"
+      return
+      ;;
+    *'result=ok'*)
+      fail "${name}: skips must not be result=ok"
+      return
+      ;;
+  esac
+  local missing=''
+  local keyword
+  for keyword in \
+    'postgres-extensions apply (read-only --dry-run; not Complete):' \
+    'config: path-ok (unread, not sourced)' \
+    'plan: path-ok (validated, not applied)' \
+    'package_resolution: skipped (no release manifest in this Partial)' \
+    'inventory: skipped (live cluster state not probed)' \
+    'backup_verification: skipped (backup evidence not checked)' \
+    'preload_merge: skipped (shared_preload_libraries not read)' \
+    'restart_approval: skipped (--approve-postgres-restart is apply-time)' \
+    'extension_ddl: skipped (CREATE EXTENSION not executed)' \
+    'verification: skipped (capability smoke checks deferred)' \
+    'result=partial' "$@"; do
+    case "${output}" in
+      *"${keyword}"*) ;;
+      *) missing="${missing} |${keyword}|" ;;
+    esac
+  done
+  if [[ -n "${missing}" ]]; then
+    fail "${name}: missing:${missing}: ${output}"
+    return
+  fi
+  pass "${name}"
+}
+
+# Fixtures for the OPS-007 postgres-extensions apply dry-run tests.
+plan_config="${tmpdir}/plan-config.env"
+printf 'unused-plan-config\n' >"${plan_config}"
+
+plan_apply_file="${tmpdir}/plan-apply.json"
+cat >"${plan_apply_file}" <<'PLAN'
+{
+  "policy": "apply-selected",
+  "selections": [
+    { "capability": "pg_stat_statements", "databases": ["app_production"] },
+    { "capability": "vector", "databases": ["search_production"] },
+    { "capability": "pg_partman", "databases": ["events_production"], "scheduler": "pg_cron" }
+  ]
+}
+PLAN
+
+plan_bad_cap="${tmpdir}/plan-bad-cap.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"nope","databases":["x"]}]}' >"${plan_bad_cap}"
+
+run_install postgres-extensions apply --non-interactive --dry-run --config "${plan_config}" --extension-plan "${plan_apply_file}"
+expect_extensions_partial 'postgres-extensions apply dry-run exits 0' 'policy: apply-selected'
+
+run_install postgres-extensions apply --non-interactive --dry-run --config "${plan_config}" --extension-plan "${plan_apply_file}" --approve-postgres-restart
+expect_extensions_partial 'postgres-extensions apply dry-run with restart approval exits 0'
+
+run_install postgres-extensions apply --non-interactive --dry-run --config "${plan_config}" --extension-plan "${plan_bad_cap}"
+expect_status 'postgres-extensions apply invalid plan exits 1' 1
+
+run_install postgres-extensions apply --non-interactive --dry-run --config "${plan_config}"
+expect_status 'postgres-extensions apply missing --extension-plan exits 1' 1
+
+run_install postgres-extensions apply --non-interactive --config "${plan_config}" --extension-plan "${plan_apply_file}"
+expect_status 'postgres-extensions apply without --dry-run exits 2' 2
+
+run_install postgres-extensions apply --non-interactive --dry-run --config "${tmpdir}/missing.env" --extension-plan "${plan_apply_file}"
+expect_status 'postgres-extensions apply --config missing path exits 1' 1
+
+run_install postgres-extensions apply --non-interactive --dry-run --config "${plan_config}" --extension-plan "${tmpdir}"
+expect_status 'postgres-extensions apply --extension-plan directory exits 1' 1
+
+run_install postgres-extensions apply --non-interactive --dry-run --config "${plan_config}" --extension-plan "${plan_apply_file}" --mode existing-postgres
+expect_status 'postgres-extensions apply unknown --mode flag exits 1' 1
+
+run_install postgres-extensions apply --help
+expect_status 'postgres-extensions apply --help exits 0' 0
 
 # --- OPS-004 backup --dry-run skip matrix ---
 expect_backup_partial() {

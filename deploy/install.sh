@@ -15,6 +15,8 @@ source "${script_dir}/lib/release.sh"
 source "${script_dir}/lib/postgres_plan.sh"
 # shellcheck disable=SC1091
 source "${script_dir}/lib/backup.sh"
+# shellcheck disable=SC1091
+source "${script_dir}/lib/postgres_extensions.sh"
 
 usage() {
   cat <<'EOF'
@@ -30,6 +32,7 @@ Usage:
   deploy/install.sh rollback --non-interactive --dry-run --to VERSION
   deploy/install.sh backup --non-interactive --dry-run --config PATH
   deploy/install.sh postgres-plan --config PATH --extension-plan PATH
+  deploy/install.sh postgres-extensions apply --non-interactive --dry-run --config PATH --extension-plan PATH [--approve-postgres-restart]
 
 This Partial prints the planned stage list on --dry-run and inventories PATH
 host --version for existing PostgreSQL/Redis/PgBouncer. verify --dry-run prints
@@ -44,11 +47,14 @@ backup --non-interactive --dry-run --config PATH prints a skip matrix
 (result=partial); it does not invoke pg_dump/pg_restore, Redis BGSAVE/LASTSAVE,
 SQLite backup, checksums, pruning, or off-host copy. Live backup/restore is
 installer-recovery.
+postgres-extensions apply --non-interactive --dry-run validates the extension
+plan and prints a skip matrix (result=partial); it never resolves packages,
+reads live cluster state, merges preload, restarts PostgreSQL, or runs DDL.
 It does not install packages, pull images, write systemd, open a firewall, or
 change DNS/Cloudflare. It does not start servers, source --config, call curl,
 or run SQL SHOW / Redis INFO.
 
-Exit 0: --help, valid --non-interactive --dry-run plan, skip matrix, valid postgres-plan, or backup skip matrix
+Exit 0: --help, valid --non-interactive --dry-run plan, skip matrix, valid postgres-plan, backup or postgres-extensions apply skip matrix
 Exit 1: unsupported, incomplete, missing, unparseable, mismatched selection, or invalid extension plan
 Exit 2: mutation install, live verify/update/rollback, or other subcommand not implemented
 
@@ -237,8 +243,78 @@ if [[ "${1:-}" == "rollback" ]]; then
   exit 0
 fi
 
+# OPS-007 postgres-extensions apply: fail-closed dry-run skip matrix. Never
+# sources --config, never resolves packages/preload/restart, never runs DDL.
+# Live apply without --dry-run is not implemented (exit 2).
 if [[ "${1:-}" == "postgres-extensions" ]]; then
-  redgres_not_implemented "subcommand ${1} is not implemented"
+  shift
+  if [[ "${1:-}" == "apply" ]]; then
+    shift
+  else
+    redgres_die "postgres-extensions requires the apply subcommand"
+  fi
+  ext_dry_run=0
+  ext_non_interactive=0
+  ext_config_path=''
+  ext_extension_path=''
+  ext_approve_restart=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --non-interactive)
+        ext_non_interactive=1
+        shift
+        ;;
+      --dry-run)
+        ext_dry_run=1
+        shift
+        ;;
+      --config)
+        [[ $# -ge 2 ]] || redgres_die "missing value for --config"
+        ext_config_path="$2"
+        shift 2
+        ;;
+      --extension-plan)
+        [[ $# -ge 2 ]] || redgres_die "missing value for --extension-plan"
+        ext_extension_path="$2"
+        shift 2
+        ;;
+      --approve-postgres-restart)
+        ext_approve_restart=1
+        shift
+        ;;
+      --help)
+        usage
+        exit 0
+        ;;
+      -*)
+        redgres_die "unknown flag: $1"
+        ;;
+      *)
+        redgres_die "unknown argument: $1"
+        ;;
+    esac
+  done
+  if [[ "${ext_non_interactive}" -ne 1 ]]; then
+    redgres_die "--non-interactive is required"
+  fi
+  if [[ -z "${ext_config_path}" ]]; then
+    redgres_die "--config is required"
+  fi
+  if [[ -z "${ext_extension_path}" ]]; then
+    redgres_die "--extension-plan is required"
+  fi
+  # Existence only. Never source, eval, or cat the file; never print contents.
+  if [[ ! -f "${ext_config_path}" ]]; then
+    redgres_die "--config must be an existing regular file"
+  fi
+  if [[ ! -f "${ext_extension_path}" ]]; then
+    redgres_die "--extension-plan must be an existing regular file"
+  fi
+  if [[ "${ext_dry_run}" -ne 1 ]]; then
+    redgres_not_implemented "postgres-extensions apply without --dry-run is not implemented"
+  fi
+  redgres_extensions_apply_dry_run "${ext_config_path}" "${ext_extension_path}"
+  exit 0
 fi
 
 # OPS-004 backup: fail-closed dry-run skip matrix. Never sources --config,

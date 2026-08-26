@@ -123,11 +123,11 @@ Redgres/
 │   │   ├── release.sh
 │   │   ├── backup.sh          # OPS-004 backup dry-run skip matrix (Partial)
 │   │   ├── postgres_plan.sh   # OPS-007 read-only extension-plan validator (Partial)
+│   │   ├── postgres_extensions.sh # OPS-007 apply dry-run skip matrix (Partial)
 │   │   ├── checks.sh
 │   │   ├── logging.sh
 │   │   ├── secrets.sh
 │   │   ├── postgres.sh
-│   │   ├── postgres_extensions.sh
 │   │   └── pgbouncer.sh
 │   ├── manifests/
 │   │   └── postgres-capabilities.json  # release-owned exact package/extension mapping
