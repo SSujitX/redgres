@@ -10,6 +10,7 @@ import (
 
 func TestEvaluateDropGateAllowsFreshMatchedSet(t *testing.T) {
 	manifest := mustParse(t, "valid-fresh.json")
+	manifest.Restore.CompletedAt = manifest.CompletedAt.Add(time.Minute)
 	result := EvaluateDropGate(DropGateInput{
 		Database:         "appdb",
 		SystemIdentifier: "7439123456789012345",
@@ -21,6 +22,93 @@ func TestEvaluateDropGateAllowsFreshMatchedSet(t *testing.T) {
 	}
 	if result.Reason != "" {
 		t.Fatalf("Reason = %q, want empty", result.Reason)
+	}
+}
+
+func TestEvaluateDropGateRejectsImpossibleEvidenceChronology(t *testing.T) {
+	base := mustParse(t, "valid-fresh.json")
+	base.Restore.CompletedAt = base.CompletedAt.Add(time.Minute)
+	cases := []struct {
+		name   string
+		mutate func(*Manifest)
+		reason string
+	}{
+		{
+			name: "future completed_at",
+			mutate: func(manifest *Manifest) {
+				manifest.CompletedAt = evalNow.Add(time.Nanosecond)
+				manifest.OffHost.CopiedAt = manifest.CompletedAt
+				manifest.Restore.CompletedAt = manifest.CompletedAt
+			},
+			reason: reasonInvalidManifest,
+		},
+		{
+			name: "future copied_at",
+			mutate: func(manifest *Manifest) {
+				manifest.OffHost.CopiedAt = evalNow.Add(time.Nanosecond)
+			},
+			reason: reasonOffHost,
+		},
+		{
+			name: "restore before completed_at",
+			mutate: func(manifest *Manifest) {
+				manifest.Restore.CompletedAt = manifest.CompletedAt.Add(-time.Nanosecond)
+			},
+			reason: reasonRestore,
+		},
+		{
+			name: "future restore completed_at",
+			mutate: func(manifest *Manifest) {
+				manifest.Restore.CompletedAt = evalNow.Add(time.Nanosecond)
+			},
+			reason: reasonRestore,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := base
+			tc.mutate(&manifest)
+			result := EvaluateDropGate(DropGateInput{
+				Database:         "appdb",
+				SystemIdentifier: "7439123456789012345",
+				Now:              evalNow,
+				Manifest:         manifest,
+			})
+			if result.Allowed {
+				t.Fatal("Allowed = true, want fail closed")
+			}
+			if result.Reason != tc.reason {
+				t.Fatalf("Reason = %q, want %q", result.Reason, tc.reason)
+			}
+		})
+	}
+}
+
+func TestEvaluateDropGateAllowsEvidenceChronologyBoundaries(t *testing.T) {
+	base := mustParse(t, "valid-fresh.json")
+	cases := []struct {
+		name     string
+		copiedAt time.Time
+		restored time.Time
+	}{
+		{name: "evidence at completed_at", copiedAt: base.CompletedAt, restored: base.CompletedAt},
+		{name: "evidence at Now", copiedAt: evalNow, restored: evalNow},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := base
+			manifest.OffHost.CopiedAt = tc.copiedAt
+			manifest.Restore.CompletedAt = tc.restored
+			result := EvaluateDropGate(DropGateInput{
+				Database:         "appdb",
+				SystemIdentifier: "7439123456789012345",
+				Now:              evalNow,
+				Manifest:         manifest,
+			})
+			if !result.Allowed {
+				t.Fatalf("Allowed = false, reason %q", result.Reason)
+			}
+		})
 	}
 }
 
@@ -63,6 +151,7 @@ func TestEvaluateDropGateFailsClosed(t *testing.T) {
 
 func TestEvaluateDropGateAgeBoundaries(t *testing.T) {
 	base := mustParse(t, "valid-fresh.json")
+	base.Restore.CompletedAt = base.CompletedAt.Add(time.Minute)
 	input := DropGateInput{
 		Database:         "appdb",
 		SystemIdentifier: "7439123456789012345",
@@ -84,32 +173,6 @@ func TestEvaluateDropGateAgeBoundaries(t *testing.T) {
 		}
 	})
 
-	restoreDeadline := base.Restore.CompletedAt.Add(RestoreMaxAge)
-	fresh := base
-	fresh.CompletedAt = restoreDeadline.Add(-time.Hour)
-	fresh.OffHost.CopiedAt = fresh.CompletedAt.Add(time.Minute)
-	t.Run("restore age equal 30d allowed", func(t *testing.T) {
-		result := EvaluateDropGate(DropGateInput{
-			Database:         "appdb",
-			SystemIdentifier: "7439123456789012345",
-			Now:              restoreDeadline,
-			Manifest:         fresh,
-		})
-		if !result.Allowed {
-			t.Fatalf("Allowed = false at 30d restore, reason %q", result.Reason)
-		}
-	})
-	t.Run("restore age over 30d denied", func(t *testing.T) {
-		result := EvaluateDropGate(DropGateInput{
-			Database:         "appdb",
-			SystemIdentifier: "7439123456789012345",
-			Now:              restoreDeadline.Add(time.Nanosecond),
-			Manifest:         fresh,
-		})
-		if result.Allowed {
-			t.Fatal("Allowed = true just over 30d restore")
-		}
-	})
 }
 
 func TestEvaluateDropGateFailsClosedOnZeroTimes(t *testing.T) {
@@ -172,6 +235,7 @@ func TestEvaluateDropGateAllowsWhenArtifactBytesMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseManifest: %v", err)
 	}
+	manifest.Restore.CompletedAt = manifest.CompletedAt.Add(time.Minute)
 	result := EvaluateDropGate(DropGateInput{
 		Database:         "appdb",
 		SystemIdentifier: "7439123456789012345",

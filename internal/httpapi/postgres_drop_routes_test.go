@@ -76,7 +76,7 @@ func allowDropManifest(sysID string, databases ...string) backup.Manifest {
 			Isolated:    true,
 			Outcome:     backup.RestoreOutcomeSucceeded,
 			BackupSetID: dropGateBackupSetID,
-			CompletedAt: now.Add(-24 * time.Hour),
+			CompletedAt: completed.Add(30 * time.Minute),
 		},
 	}
 }

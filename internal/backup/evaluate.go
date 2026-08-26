@@ -13,6 +13,9 @@ func EvaluateDropGate(input DropGateInput) DropGateResult {
 	if input.Now.IsZero() || validateManifestStructure(input.Manifest) != nil {
 		return denied(reasonInvalidManifest)
 	}
+	if input.Manifest.CompletedAt.After(input.Now) {
+		return denied(reasonInvalidManifest)
+	}
 	if input.Now.Sub(input.Manifest.CompletedAt) > BackupMaxAge {
 		return denied(reasonBackupTooOld)
 	}
@@ -22,7 +25,9 @@ func EvaluateDropGate(input DropGateInput) DropGateResult {
 	if !hasPostgresArtifact(input.Manifest, input.Database) {
 		return denied(reasonNoArtifact)
 	}
-	if !input.Manifest.OffHost.Completed || input.Manifest.OffHost.CopiedAt.Before(input.Manifest.CompletedAt) {
+	if !input.Manifest.OffHost.Completed ||
+		input.Manifest.OffHost.CopiedAt.Before(input.Manifest.CompletedAt) ||
+		input.Manifest.OffHost.CopiedAt.After(input.Now) {
 		return denied(reasonOffHost)
 	}
 	restore := input.Manifest.Restore
@@ -30,6 +35,8 @@ func EvaluateDropGate(input DropGateInput) DropGateResult {
 		restore.Outcome != RestoreOutcomeSucceeded ||
 		restore.BackupSetID != input.Manifest.BackupSetID ||
 		restore.CompletedAt.IsZero() ||
+		restore.CompletedAt.Before(input.Manifest.CompletedAt) ||
+		restore.CompletedAt.After(input.Now) ||
 		input.Now.Sub(restore.CompletedAt) > RestoreMaxAge {
 		return denied(reasonRestore)
 	}
