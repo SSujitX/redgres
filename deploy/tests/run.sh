@@ -558,11 +558,90 @@ run_install verify --non-interactive --dry-run --config "${config_file}" --mode 
 expect_status 'verify unknown --mode flag exits 1' 1
 
 # --- subcommands: not implemented, exit 2, no mutation ---
-run_install backup
-expect_status 'backup subcommand exits 2' 2
-
 run_install postgres-extensions apply
 expect_status 'postgres-extensions subcommand exits 2' 2
+
+# --- OPS-004 backup --dry-run skip matrix ---
+expect_backup_partial() {
+  local name="$1"
+  if ! assert_no_mutation "${name}"; then
+    return
+  fi
+  if ! assert_no_canary "${name}"; then
+    return
+  fi
+  if [[ "${status}" -ne 0 ]]; then
+    fail "${name}: expected exit 0, got ${status}: ${output}"
+    return
+  fi
+  case "${output}" in
+    *'Inventory (read-only'*)
+      fail "${name}: must not call inventory"
+      return
+      ;;
+    *'result=ok'*)
+      fail "${name}: skips must not be result=ok"
+      return
+      ;;
+  esac
+  local missing=''
+  local keyword
+  for keyword in \
+    'Backup (read-only --dry-run; not Complete):' \
+    'config: path-ok (unread, not sourced)' \
+    'postgres_dump: skipped (pg_dump/pg_dumpall not invoked; installer-recovery)' \
+    'redis_snapshot: skipped (BGSAVE/LASTSAVE not invoked; installer-recovery)' \
+    'sqlite_backup: skipped (SQLite online backup not invoked; installer-recovery)' \
+    'manifest: skipped (no backup manifest written)' \
+    'checksums: skipped (no artifact SHA-256 computed)' \
+    'retention: skipped (no pruning of manifest-owned paths)' \
+    'off_host: skipped (no encrypted off-host copy)' \
+    'restore_evidence: skipped (no isolated restore test)' \
+    'result=partial'; do
+    case "${output}" in
+      *"${keyword}"*) ;;
+      *) missing="${missing} |${keyword}|" ;;
+    esac
+  done
+  if [[ -n "${missing}" ]]; then
+    fail "${name}: missing:${missing}: ${output}"
+    return
+  fi
+  pass "${name}"
+}
+
+run_install backup --non-interactive --dry-run --config "${config_file}"
+expect_backup_partial 'backup dry-run skip matrix exits 0'
+
+run_install backup
+expect_status 'backup without flags exits 1' 1
+
+run_install backup --dry-run --config "${config_file}"
+expect_status 'backup missing --non-interactive exits 1' 1
+
+run_install backup --non-interactive --config "${config_file}"
+expect_status 'backup without --dry-run exits 2' 2
+case "${output}" in
+  *'Inventory (read-only'*)
+    fail 'backup without --dry-run must not inventory'
+    ;;
+  *)
+    pass 'backup without --dry-run skips inventory'
+    ;;
+esac
+
+run_install backup --non-interactive --dry-run
+expect_status 'backup missing --config exits 1' 1
+
+run_install backup --non-interactive --dry-run --config "${tmpdir}/missing.env"
+expect_status 'backup --config missing path exits 1' 1
+
+run_install backup --non-interactive --dry-run --config "${tmpdir}"
+expect_status 'backup --config directory exits 1' 1
+
+run_install backup --non-interactive --dry-run --config "${config_file}" --mode existing-postgres
+expect_status 'backup unknown --mode flag exits 1' 1
+
 # --- OPS-007 postgres-plan read-only plan validation ---
 expect_plan_partial() {
   local name="$1"
