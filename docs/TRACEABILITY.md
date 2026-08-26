@@ -147,3 +147,8 @@ Partial. Isolated `feat/plat-001-system-status-page` from `c8dcc63`. System page
 ### PLAT-001 System status page security review (2026-08-26)
 
 Independent security reviewer **Approve Partial / reject Complete** on `eaec7ce` (implementation `7ff1243` / `b7ac8a0`). No Critical/High/Medium. GET `/api/v1/status` is session-only with no CSRF or query; cards paint `id`/`state` only; Redis metrics and tool-link hrefs stay Overview-only; login does not probe `/status` or `/healthz`; extra JSON keys are not operator copy. Residual Lows: extra keys remain in React memory until unmount; `errorMessage` trusts `error.message` on non-401 envelopes; canary uses `state: "ok"` so would not catch a future `reason` paint. Tests not re-run (parent-claimed 388 passed). Do not mark PLAT-001 or NFR-012 Complete.
+
+### PLAT-001 System status page UI review (2026-08-26)
+
+Independent UI reviewer **Approve Partial / reject Complete** on `eaec7ce` (UI sources `b7ac8a0` / `7ff1243`). No Critical/High/Medium. System replaces the placeholder with five GET `/status` cards, Overview chrome, secret-safe copy, no Redis metrics, no tool-link hrefs. Required viewports 360×800 / 768×1024 / 1280×800 / 1600×1000 / 200% zoom **not inspected** (no local browser session; Playwright out of scope). Residuals: footer aggregate health, release line, Documentation placeholder. Tests not re-run (parent-claimed 388 passed). Do not mark PLAT-001 or NFR-012 Complete.
+
