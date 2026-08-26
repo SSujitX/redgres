@@ -188,6 +188,11 @@ Independent UI reviewer **Approve Partial / reject Complete** on `b7f9e74` (UI s
 
 Independent evidence reviewer **Approve Partial / reject Complete** on `b7f9e74`. UX and UI_DESIGN_SYSTEM match one Queue/worker `h2` plus kind `h3`s. `docs/API.md` untouched. TRACEABILITY stays Partial. Writer did not edit `package.json` / lockfile / `ci.yml`. No §6 / four-cell / OPS-006 / NFR-011 / PLAT Complete over-claim. Tests not re-run (parent-claimed 398 passed). Residuals: unlabeled queue kinds untested; no Playwright; no live Redis. Do not mark REDIS-004 or NFR-012 Complete.
 
+### REDIS-004 Permission presets heading hierarchy verification (2026-08-26)
+
+Independent verifier **Approve Partial / reject Complete** on `63df159` (ancestor of `427de54` evidence pin; UI sources unchanged). Required `npm --prefix web run test:run` 398 passed; `npm --prefix web run build` succeeded. One Queue/worker `h2` with kind `h3`s; abort-on-leave; GET `/presets` unchanged. Residuals: no Playwright, no live Redis, unlabeled queue kinds untested. Do not mark REDIS-004 or NFR-012 Complete.
+
+
 
 
 
