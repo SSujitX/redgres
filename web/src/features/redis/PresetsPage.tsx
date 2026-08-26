@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { fetchRedisPresets, type RedisAclPreset, type RedisAclQueueKind } from "../../api/redis";
 import { displayText } from "../../text/displayText";
 
@@ -112,6 +112,33 @@ function CommandList({ values }: { values: string[] }) {
   );
 }
 
+function CatalogSections({ rows }: { rows: CatalogRow[] }) {
+  const named = rows.filter((row) => row.preset !== "queue-worker");
+  const queue = rows.filter((row) => row.preset === "queue-worker");
+  const queueHeading = queue[0];
+  return (
+    <>
+      {named.map((row, index) => (
+        <section key={`${row.preset}-${index}`}>
+          <h2>{row.label}</h2>
+          <CommandList values={row.commands} />
+        </section>
+      ))}
+      {queueHeading ? (
+        <section className="preset-queue">
+          <h2>{queueHeading.label}</h2>
+          {queue.map((row, index) => (
+            <Fragment key={`${row.preset}-${row.queueKind ?? ""}-${index}`}>
+              {row.queueLabel ? <h3>{row.queueLabel}</h3> : null}
+              <CommandList values={row.commands} />
+            </Fragment>
+          ))}
+        </section>
+      ) : null}
+    </>
+  );
+}
+
 export default function PresetsPage() {
   const [view, setView] = useState<View>({ kind: "loading" });
 
@@ -165,15 +192,7 @@ export default function PresetsPage() {
           Loading presets.
         </p>
       ) : null}
-      {view.kind === "ok"
-        ? view.rows.map((row, index) => (
-            <section key={`${row.preset}-${row.queueKind ?? ""}-${index}`}>
-              <h2>{row.label}</h2>
-              {row.queueLabel ? <p>{row.queueLabel}</p> : null}
-              <CommandList values={row.commands} />
-            </section>
-          ))
-        : null}
+      {view.kind === "ok" ? <CatalogSections rows={view.rows} /> : null}
     </article>
   );
 }

@@ -339,6 +339,14 @@ input:focus-visible {
   min-width: 0;
 }
 
+.preset-queue > h3 {
+  margin-top: var(--space-4);
+}
+
+.preset-queue > h2 + h3 {
+  margin-top: var(--space-3);
+}
+
 .detail-panel {
   margin-top: var(--space-5);
 }

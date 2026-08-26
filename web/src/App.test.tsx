@@ -11902,22 +11902,32 @@ describe("App session and login", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
     goToPermissionPresets();
-    const cache = await screen.findByRole("heading", { name: "Cache read/write" });
-    expect(within(cache.closest("section") as HTMLElement).getByText("get")).toBeInTheDocument();
-    expect(within(cache.closest("section") as HTMLElement).getByText("set")).toBeInTheDocument();
-    const readOnly = screen.getByRole("heading", { name: "Read only" });
+    expect(await screen.findByRole("heading", { name: "Permission presets", level: 1 })).toBeInTheDocument();
+    const cache = await screen.findByRole("heading", { name: "Cache read/write", level: 2 });
+    const cacheSection = cache.closest("section") as HTMLElement;
+    expect(within(cacheSection).getByText("get")).toBeInTheDocument();
+    expect(within(cacheSection).getByText("set")).toBeInTheDocument();
+    const getCommand = within(cacheSection).getByText("get");
+    expect(getCommand).toHaveClass("bidi-isolate", "identifier");
+    expect(getCommand.closest(".rule-list")).not.toBeNull();
+    const readOnly = screen.getByRole("heading", { name: "Read only", level: 2 });
     expect(within(readOnly.closest("section") as HTMLElement).getByText("ping")).toBeInTheDocument();
     const queueHeadings = screen.getAllByRole("heading", { name: "Queue/worker" });
-    expect(queueHeadings).toHaveLength(3);
-    expect(within(queueHeadings[0]?.closest("section") as HTMLElement).getByText("Lists")).toBeInTheDocument();
-    expect(within(queueHeadings[0]?.closest("section") as HTMLElement).getByText("lpush")).toBeInTheDocument();
-    expect(within(queueHeadings[1]?.closest("section") as HTMLElement).getByText("Streams")).toBeInTheDocument();
-    expect(within(queueHeadings[1]?.closest("section") as HTMLElement).getByText("xadd")).toBeInTheDocument();
-    expect(within(queueHeadings[2]?.closest("section") as HTMLElement).getByText("Sorted sets")).toBeInTheDocument();
-    expect(within(queueHeadings[2]?.closest("section") as HTMLElement).getByText("zadd")).toBeInTheDocument();
+    expect(queueHeadings).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Queue/worker", level: 2 })).toBe(queueHeadings[0]);
+    const queueSection = queueHeadings[0]?.closest("section") as HTMLElement;
+    expect(within(queueSection).getByRole("heading", { name: "Lists", level: 3 })).toBeInTheDocument();
+    expect(within(queueSection).getByText("lpush")).toBeInTheDocument();
+    expect(within(queueSection).getByRole("heading", { name: "Streams", level: 3 })).toBeInTheDocument();
+    expect(within(queueSection).getByText("xadd")).toBeInTheDocument();
+    expect(within(queueSection).getByRole("heading", { name: "Sorted sets", level: 3 })).toBeInTheDocument();
+    expect(within(queueSection).getByText("zadd")).toBeInTheDocument();
+    expect(cache.closest("section")).not.toBe(queueSection);
+    expect(readOnly.closest("section")).not.toBe(queueSection);
     expect(screen.queryByText("Custom")).not.toBeInTheDocument();
     expect(screen.queryByText("eval")).not.toBeInTheDocument();
     expect(document.querySelector(".command-checklist")).toBeNull();
+    expect(document.querySelector(".rule-list")).not.toBeNull();
   });
 
   it("shows session-expired copy without catalog rows when GET /presets is 401", async () => {
@@ -12047,6 +12057,72 @@ describe("App session and login", () => {
     expect(screen.queryByText("get")).not.toBeInTheDocument();
     expect(setItem).not.toHaveBeenCalled();
     setItem.mockRestore();
+  });
+
+  it("aborts an in-flight Permission presets fetch when leaving the page", async () => {
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const rejections: unknown[] = [];
+    const onRejection = (event: PromiseRejectionEvent) => {
+      rejections.push(event.reason);
+    };
+    window.addEventListener("unhandledrejection", onRejection);
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "presets-abort".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisPresetsUrl(url)) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blocked.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return redisPresetsOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    goToPermissionPresets();
+    expect(await screen.findByRole("heading", { name: "Permission presets" })).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading presets.");
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Documentation" }),
+    );
+    expect(await screen.findByRole("heading", { name: "Documentation" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Permission presets" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Cache read/write" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Read only" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Queue/worker" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Lists" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Streams" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Sorted sets" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading presets.")).not.toBeInTheDocument();
+    expect(screen.queryByText("get")).not.toBeInTheDocument();
+    expect(screen.queryByText("lpush")).not.toBeInTheDocument();
+    expect(screen.queryByText("xadd")).not.toBeInTheDocument();
+    expect(screen.queryByText("zadd")).not.toBeInTheDocument();
+    release();
+    await waitFor(() => {
+      expect(rejections).toEqual([]);
+    });
+    window.removeEventListener("unhandledrejection", onRejection);
   });
 });
 
