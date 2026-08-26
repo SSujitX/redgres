@@ -26,11 +26,11 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 
 - Opens from the topbar, `/`, or `Ctrl/Cmd+K`, with a full-screen mobile treatment.
 - Groups results by PostgreSQL databases, Redis ACL users, navigation, and documentation; every result has explicit service/type context.
-- PostgreSQL hits come from authenticated `GET /api/v1/search` (manageable database names only). Redis ACL user hits come from the same endpoint (non-protected usernames). Navigation and documentation stay on the client `filterNav`. Degraded redis or postgres groups use `not_configured` / `unavailable` like each other — never “not available yet” for implemented statuses, and never a fake empty match list.
-- Selecting a PostgreSQL hit opens Databases and selects that name in memory. Selecting a Redis ACL user hit opens ACL users and inspects that username in memory. Neither writes `location.search` or browser storage.
+- PostgreSQL hits come from authenticated `GET /api/v1/search` (manageable database names only). Redis ACL user hits come from the same endpoint (non-protected usernames). Navigation stays on the client `filterNav`. Documentation landing stays on `filterNav`; article hits use client `filterDocs` (title and keywords) and do not appear under Navigation. Degraded redis or postgres groups use `not_configured` / `unavailable` like each other — never “not available yet” for implemented statuses, and never a fake empty match list.
+- Selecting a PostgreSQL hit opens Databases and selects that name in memory. Selecting a Redis ACL user hit opens ACL users and inspects that username in memory. Selecting a Documentation landing hit opens the catalog. Selecting an article hit opens that article in memory. None of these write `location.hash`, `location.search`, or browser storage.
 - Is read-only discovery/navigation. It never directly executes destructive actions or exposes credentials, protected resources, secret values, or raw audit metadata.
 - Supports keyboard traversal, screen-reader result counts, loading/degraded/no-results states, bounded results, cancellation, and safe focus restoration.
-- Residual: URL deep links, a documentation corpus, and command-palette actions.
+- Residual: URL deep links and command-palette actions.
 
 ## Login and session entry
 
@@ -84,7 +84,15 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 - Does not paint host, port, DSN, password, token, SQL, driver text, raw errors, version, uptime, URLs, or `request_id` as operator copy. There is no release/version line: GET `/status` and GET `/session` have no such field.
 - Login never fetches `/status`. HTTP 401 uses “Your session has expired. Sign in again to continue.” Envelope or network failure uses “Component status is unavailable. Try again.” Loading copy is “Loading component status.”
 - State stays in memory only (no `localStorage` / `sessionStorage` / `location.search`). Refresh aborts an in-flight request and refetches. The System header is neutral (no PostgreSQL/Redis page-header rail); PostgreSQL and Redis service rails stay on the matching status cards only.
-- Residual: footer aggregate health, release line, Documentation corpus.
+- Residual: footer aggregate health, release line.
+
+## Documentation
+
+- Authenticated Documentation replaces the placeholder with a curated in-app catalog of four articles: Using search, PostgreSQL databases, Redis ACL users, and Passwords and tickets. Copy describes implemented Redgres behavior only.
+- The header is neutral (no PostgreSQL/Redis page-header rail). Landing lists those titles as 44px ledger buttons. Opening an article shows an `h1` title, operator copy, and **Back to documentation**, which returns to the catalog. Below 1024px the article replaces the landing list the same way Databases inspection hides sibling rows.
+- Sidebar Documentation and Help always open the landing and clear any open article. Article state is in-memory (`focusArticle`); it is not written to `location.hash`, `location.search`, `localStorage`, or `sessionStorage`, and it clears on leave or logout.
+- Search **Documentation** groups the Documentation nav landing hit with `filterDocs` article hits. Empty Documentation stays an empty region. GET `/api/v1/search` is unchanged (PostgreSQL and Redis only). Login never renders the catalog.
+- Residual: URL deep links and command palette.
 
 ## Credential ticket
 
