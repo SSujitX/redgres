@@ -152,3 +152,8 @@ Independent security reviewer **Approve Partial / reject Complete** on `eaec7ce`
 
 Independent UI reviewer **Approve Partial / reject Complete** on `eaec7ce` (UI sources `b7ac8a0` / `7ff1243`). No Critical/High/Medium. System replaces the placeholder with five GET `/status` cards, Overview chrome, secret-safe copy, no Redis metrics, no tool-link hrefs. Required viewports 360×800 / 768×1024 / 1280×800 / 1600×1000 / 200% zoom **not inspected** (no local browser session; Playwright out of scope). Residuals: footer aggregate health, release line, Documentation placeholder. Tests not re-run (parent-claimed 388 passed). Do not mark PLAT-001 or NFR-012 Complete.
 
+### PLAT-001 System status page verification (2026-08-26)
+
+Independent verifier **Approve Partial / reject Complete** on `7ff1243` (ancestor of `963f980` UI pin; UI sources unchanged). Required `npm --prefix web run test:run` 388 passed; `npm --prefix web run build` succeeded. System paints five GET `/status` cards; Documentation still placeholder; no `ci.yml` / Go / Playwright in the slice. Residuals: no Playwright viewports, no footer aggregate health, no release field, Documentation placeholder. Do not mark PLAT-001 or NFR-012 Complete.
+
+
