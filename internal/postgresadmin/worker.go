@@ -32,16 +32,6 @@ func (c duplicateCompensator) CompensateDuplicate(ctx context.Context, op operat
 	cctx, cancel := compensateContext(ctx)
 	defer cancel()
 
-	saved, err := c.svc.catalog.SavedRoleNames(cctx, []string{owner})
-	if err != nil {
-		return ErrUnavailable
-	}
-	if _, present := saved[owner]; present {
-		if err := c.svc.catalog.DeleteCredential(cctx, owner); err != nil {
-			return ErrUnavailable
-		}
-	}
-
 	if database != source && !c.svc.policy.DatabaseDenied(database) {
 		exists, err := c.svc.catalog.DatabaseExists(cctx, database)
 		if err != nil {
@@ -54,22 +44,35 @@ func (c duplicateCompensator) CompensateDuplicate(ctx context.Context, op operat
 		}
 	}
 
-	if !c.svc.policy.OwnerDenied(owner) {
-		exists, err := c.svc.catalog.RoleExists(cctx, owner)
-		if err != nil {
+	roleExists, err := c.svc.catalog.RoleExists(cctx, owner)
+	if err != nil {
+		return ErrUnavailable
+	}
+	if !roleExists {
+		return nil
+	}
+	n, err := c.svc.catalog.OwnedDatabaseCount(cctx, owner)
+	if err != nil {
+		return ErrUnavailable
+	}
+	if n > 0 {
+		return nil
+	}
+
+	saved, err := c.svc.catalog.SavedRoleNames(cctx, []string{owner})
+	if err != nil {
+		return ErrUnavailable
+	}
+	if _, present := saved[owner]; present {
+		if err := c.svc.catalog.DeleteCredential(cctx, owner); err != nil {
 			return ErrUnavailable
 		}
-		if exists {
-			n, err := c.svc.catalog.OwnedDatabaseCount(cctx, owner)
-			if err != nil {
-				return ErrUnavailable
-			}
-			if n == 0 {
-				if err := c.svc.catalog.DropRole(cctx, owner); err != nil {
-					return ErrUnavailable
-				}
-			}
-		}
+	}
+	if c.svc.policy.OwnerDenied(owner) {
+		return nil
+	}
+	if err := c.svc.catalog.DropRole(cctx, owner); err != nil {
+		return ErrUnavailable
 	}
 	return nil
 }
@@ -113,15 +116,12 @@ func runQueuedDuplicate(ctx context.Context, store operations.Store, svc *Servic
 
 	database, owner, source, ok := duplicateTargetNames(op)
 	if !ok {
-		return failQueuedDuplicate(ctx, store, compensator, op, &operations.OperationError{
-			Code:    "dependency_unavailable",
-			Message: "PostgreSQL is unavailable",
-		})
+		return failQueuedDuplicate(ctx, store, compensator, op, ErrUnavailable)
 	}
 
 	created, err := svc.Duplicate(workCtx, source, database, owner)
 	if err != nil {
-		return failQueuedDuplicate(ctx, store, compensator, op, duplicateOperationError(err))
+		return failQueuedDuplicate(ctx, store, compensator, op, err)
 	}
 
 	result := operations.DuplicateResult{Database: created.Database, Owner: created.Owner, Source: source}
@@ -145,7 +145,8 @@ func runQueuedDuplicate(ctx context.Context, store operations.Store, svc *Servic
 	return nil
 }
 
-func failQueuedDuplicate(ctx context.Context, store operations.Store, compensator operations.Compensator, op operations.Operation, fail *operations.OperationError) error {
+func failQueuedDuplicate(ctx context.Context, store operations.Store, compensator operations.Compensator, op operations.Operation, cause error) error {
+	fail := duplicateOperationError(cause)
 	if err := store.Transition(ctx, op.ID, operations.Transition{
 		From:  operations.StatusRunning,
 		To:    operations.StatusCompensating,
@@ -153,7 +154,7 @@ func failQueuedDuplicate(ctx context.Context, store operations.Store, compensato
 	}); err != nil {
 		return err
 	}
-	if compensator != nil {
+	if compensator != nil && !skipDuplicateCompensation(cause) {
 		if err := compensator.CompensateDuplicate(ctx, op); err != nil {
 			return store.Transition(ctx, op.ID, operations.Transition{
 				From:      operations.StatusCompensating,
@@ -173,6 +174,16 @@ func failQueuedDuplicate(ctx context.Context, store operations.Store, compensato
 		Phase: operations.PhaseCompensating,
 		Error: fail,
 	})
+}
+
+func skipDuplicateCompensation(err error) bool {
+	var conflict Conflict
+	var field FieldError
+	var inProgress DuplicateInProgress
+	if errors.As(err, &conflict) || errors.As(err, &field) || errors.As(err, &inProgress) {
+		return true
+	}
+	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrProtected)
 }
 
 func duplicateOperationError(err error) *operations.OperationError {

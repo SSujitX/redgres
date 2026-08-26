@@ -216,6 +216,14 @@ func (s store) resolveInterrupted(ctx context.Context, id string, probe Probe, c
 			Error:      &OperationError{Code: "probe_indeterminate", Message: "Probe could not determine duplicate state."},
 		}, now)
 	}
+	if outcome.VaultRowExists && !outcome.CloneExists && !outcome.RoleExists {
+		return s.transition(ctx, id, Transition{
+			From:       StatusInterrupted,
+			To:         StatusFailed,
+			FinishedAt: &now,
+			Error:      &OperationError{Code: "duplicate_incomplete", Message: "Duplicate did not create a database."},
+		}, now)
+	}
 	created := 0
 	if outcome.CloneExists {
 		created++

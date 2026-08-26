@@ -97,6 +97,7 @@ func TestReconcileProbeOutcomes(t *testing.T) {
 	}{
 		{name: "nothing_created", outcome: ProbeOutcome{}, want: StatusFailed},
 		{name: "complete", outcome: ProbeOutcome{CloneExists: true, RoleExists: true, VaultRowExists: true}, want: StatusSucceeded},
+		{name: "vault_only", outcome: ProbeOutcome{VaultRowExists: true}, want: StatusFailed},
 		{name: "partial", outcome: ProbeOutcome{CloneExists: true}, want: StatusFailed},
 		{name: "indeterminate_flag", outcome: ProbeOutcome{Indeterminate: true}, want: StatusIndeterminate},
 		{name: "probe_error", err: errors.New("probe unavailable"), want: StatusIndeterminate},
@@ -159,6 +160,35 @@ func TestReconcileResumesCompensatingToFailed(t *testing.T) {
 	}
 	if probe.calls != 0 {
 		t.Fatalf("compensating must not probe CREATE DATABASE: calls=%d", probe.calls)
+	}
+}
+
+func TestReconcileVaultOnlyDoesNotCompensate(t *testing.T) {
+	store := newTestStore(t)
+	op, locks := queuedDuplicate(t, "project_a", "project_a_copy", "app_project_a_copy")
+	if err := store.InsertQueued(context.Background(), op, locks); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Transition(context.Background(), op.ID, Transition{From: StatusQueued, To: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Transition(context.Background(), op.ID, Transition{From: StatusRunning, To: StatusInterrupted}); err != nil {
+		t.Fatal(err)
+	}
+	compensator := &fakeCompensator{}
+	probe := &fakeProbe{outcome: ProbeOutcome{VaultRowExists: true}}
+	if err := store.Reconcile(context.Background(), probe, compensator, time.Date(2026, 8, 26, 6, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusFailed {
+		t.Fatalf("status = %q", got.Status)
+	}
+	if compensator.calls != 0 {
+		t.Fatalf("vault-only must not compensate: calls=%d", compensator.calls)
 	}
 }
 

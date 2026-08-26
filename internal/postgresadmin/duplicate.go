@@ -419,8 +419,12 @@ func (s *Service) PrepareDuplicate(ctx context.Context, source, database, owner 
 	if existsRole {
 		return Conflict{Field: conflictFieldOwner}
 	}
-	if _, err := s.catalog.SavedRoleNames(ctx, []string{owner}); err != nil {
+	saved, err := s.catalog.SavedRoleNames(ctx, []string{owner})
+	if err != nil {
 		return ErrUnavailable
+	}
+	if _, present := saved[owner]; present {
+		return Conflict{Field: conflictFieldOwner}
 	}
 	return nil
 }

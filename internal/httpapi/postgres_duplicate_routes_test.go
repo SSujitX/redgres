@@ -297,6 +297,44 @@ func TestPostgresDuplicate202NoStoreNoCredential(t *testing.T) {
 	}
 }
 
+func TestPostgresDuplicateConflictExistingVaultDoesNotEnqueue(t *testing.T) {
+	fx := loadPython49(t)
+	cat := duplicateMemory(t)
+	cat.SavedRoles = []string{"app_project_a_copy"}
+	srv := duplicateServer(t, cat, secrets.DeriveVaultKey(fx.SessionSecret))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, postgresDuplicatePath, cookie, csrf, postgresDuplicateBody))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeConflict || body.Error.Message != "A PostgreSQL role with this name already exists" {
+		t.Fatalf("error = %#v", body.Error)
+	}
+	if body.Error.Fields["owner"] != "exists" {
+		t.Fatalf("fields = %#v", body.Error.Fields)
+	}
+	if strings.Contains(rec.Body.String(), `"credential"`) || strings.Contains(rec.Body.String(), `"password"`) {
+		t.Fatalf("409 leaked credential: %s", rec.Body.String())
+	}
+	if cat.CreateRoleCalls != 0 || cat.CreateDatabaseTemplateCalls != 0 || cat.DeleteCredentialCalls != 0 {
+		t.Fatal("existing vault name must not DDL or delete")
+	}
+	var n int
+	if err := srv.db.QueryRow(`SELECT count(*) FROM operations`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("409 must not enqueue: %d", n)
+	}
+}
+
 func TestPostgresDuplicateIsolationMismatchDoesNotRunOnPOST(t *testing.T) {
 	fx := loadPython49(t)
 	cat := &postgresadmin.MemoryCatalog{
