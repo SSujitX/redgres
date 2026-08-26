@@ -151,6 +151,19 @@ function isPostgresDatabaseDuplicate(url: string, name?: string, init?: RequestI
   return url.includes("/api/v1/postgres/databases/") && url.includes("/duplicate") && isPost;
 }
 
+const frozenDuplicateOperationId = "0123456789abcdef0123456789abcdef";
+
+function isOperationsGet(url: string, id?: string, init?: RequestInit): boolean {
+  const method = String(init?.method ?? "GET").toUpperCase();
+  if (method !== "GET") {
+    return false;
+  }
+  if (id !== undefined) {
+    return url === `/api/v1/operations/${encodeURIComponent(id)}`;
+  }
+  return url.includes("/api/v1/operations/");
+}
+
 function isPostgresDatabaseTruncate(url: string, name?: string, init?: RequestInit): boolean {
   const isPost = String(init?.method ?? "").toUpperCase() === "POST";
   if (name !== undefined) {
@@ -280,12 +293,58 @@ function postgresDuplicate201(extra: Record<string, unknown> = {}) {
   });
 }
 
+function postgresDuplicate202(extra: Record<string, unknown> = {}) {
+  return jsonResponse(202, {
+    operation: { id: frozenDuplicateOperationId, status: "queued" },
+    request_id: "fedcba9876543210fedcba9876543210",
+    ...extra,
+  });
+}
+
+function postgresOperationGet(status: string, extra: Record<string, unknown> = {}) {
+  const operation: Record<string, unknown> = {
+    id: frozenDuplicateOperationId,
+    action: "postgres.database.duplicate",
+    status,
+    actor: "admin",
+    target: "project_a_copy",
+    accepted_request_id: "fedcba9876543210fedcba9876543210",
+    created_at: "2026-08-26T00:00:00.000000000Z",
+    updated_at: "2026-08-26T00:00:00.000000000Z",
+    started_at: null,
+    finished_at: null,
+  };
+  if (status === "succeeded") {
+    operation.result = { database: "project_a_copy", owner: "app_project_a_copy", source: "project_a" };
+  }
+  if (status === "failed" || status === "indeterminate") {
+    operation.error = { code: "dependency_unavailable", message: "Safe operator-facing message", fields: {} };
+  }
+  return jsonResponse(200, {
+    operation: { ...operation, ...extra },
+    request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  });
+}
+
+function postgresDuplicateCopyList() {
+  return jsonResponse(200, {
+    databases: [
+      { name: "project_a", owner: "project_a_role" },
+      { name: "project_a_copy", owner: "app_project_a_copy" },
+    ],
+    truncated: false,
+  });
+}
+
 function postgresDuplicateInspectorFetch(
   csrf: string,
   extras: {
     details?: Record<string, unknown>;
     connection?: ReturnType<typeof postgresConnectionPresent>;
     duplicate?: (
+      init?: RequestInit,
+    ) => ReturnType<typeof jsonResponse> | Promise<ReturnType<typeof jsonResponse>>;
+    operation?: (
       init?: RequestInit,
     ) => ReturnType<typeof jsonResponse> | Promise<ReturnType<typeof jsonResponse>>;
     listAfterDuplicate?: () => ReturnType<typeof jsonResponse>;
@@ -299,6 +358,9 @@ function postgresDuplicateInspectorFetch(
     if (isPostgresDatabaseDuplicate(url, "project_a", init) && extras.duplicate) {
       duplicated = true;
       return extras.duplicate(init);
+    }
+    if (isOperationsGet(url, frozenDuplicateOperationId, init) && extras.operation) {
+      return extras.operation(init);
     }
     if (url.endsWith("/api/v1/postgres/databases")) {
       if (duplicated && extras.listAfterDuplicate) {
@@ -3505,6 +3567,282 @@ describe("App session and login", () => {
     expect(await screen.findByRole("heading", { name: "project_a_copy" })).toBeInTheDocument();
     expect(localSet).not.toHaveBeenCalled();
     localSet.mockRestore();
+  });
+
+  it("does not open a credential ticket on duplicate 202 and ignores extra credential fields", async () => {
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    const fetch = stubFetch(
+      postgresDuplicateInspectorFetch("pg-dup-202-ticket".padEnd(64, "0"), {
+        duplicate: () =>
+          postgresDuplicate202({
+            credential: {
+              username: "app_project_a_copy",
+              password: "canary-pg-duplicate-password-32chars!!",
+              one_time: false,
+              extra_secret: "should-not-render-duplicate-202",
+              urls: {
+                direct: duplicatedDirectUrl,
+                pooled: duplicatedPooledUrl,
+              },
+            },
+            password: "should-not-render-duplicate-202-password",
+          }),
+        operation: () => postgresOperationGet("succeeded"),
+        listAfterDuplicate: postgresDuplicateCopyList,
+      }),
+    );
+    render(<App />);
+    const dialog = await openDuplicateDatabaseDialog();
+    fillDuplicateForm(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+    expect(await screen.findByRole("heading", { name: "project_a_copy" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Duplicate database" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Duplicating database/)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("canary-pg-duplicate-password-32chars!!");
+    expect(document.body.textContent).not.toContain("should-not-render-duplicate-202");
+    expect(document.body.textContent).not.toContain("should-not-render-duplicate-202-password");
+    expect(document.body.textContent).not.toContain(duplicatedDirectUrl);
+    expect(fetch.mock.calls.every((call) => !isConnectionRevealUrl(String(call[0]), undefined, call[1]))).toBe(true);
+    expect(localSet).not.toHaveBeenCalled();
+    localSet.mockRestore();
+  });
+
+  it("polls GET operations every 1s without CSRF after duplicate 202", async () => {
+    const pollTimes: number[] = [];
+    let polls = 0;
+    const fetch = stubFetch(
+      postgresDuplicateInspectorFetch("pg-dup-202-poll".padEnd(64, "0"), {
+        duplicate: () => postgresDuplicate202(),
+        operation: () => {
+          pollTimes.push(Date.now());
+          polls += 1;
+          if (polls < 2) {
+            return postgresOperationGet("queued");
+          }
+          return postgresOperationGet("succeeded");
+        },
+        listAfterDuplicate: postgresDuplicateCopyList,
+      }),
+    );
+    render(<App />);
+    const dialog = await openDuplicateDatabaseDialog();
+    fillDuplicateForm(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+    await waitFor(() => expect(pollTimes.length).toBeGreaterThanOrEqual(2), { timeout: 3500 });
+    expect(pollTimes[1]! - pollTimes[0]!).toBeGreaterThanOrEqual(900);
+    const opGets = fetch.mock.calls.filter((call) =>
+      isOperationsGet(String(call[0]), frozenDuplicateOperationId, call[1]),
+    );
+    expect(opGets.length).toBeGreaterThanOrEqual(2);
+    expect(opGets[0]?.[0]).toBe(`/api/v1/operations/${frozenDuplicateOperationId}`);
+    expect(new Headers(opGets[0]?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+    expect(new Headers(opGets[1]?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+    expect(String(opGets[0]?.[1]?.method ?? "GET").toUpperCase()).toBe("GET");
+    const duplicateCall = fetch.mock.calls.find((call) =>
+      isPostgresDatabaseDuplicate(String(call[0]), "project_a", call[1]),
+    );
+    expect(new Headers(duplicateCall?.[1]?.headers).get("X-CSRF-Token")).toBe("pg-dup-202-poll".padEnd(64, "0"));
+    expect(await screen.findByRole("heading", { name: "project_a_copy" })).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("selects the new database from operation result on duplicate 202 succeeded without Reveal", async () => {
+    const fetch = stubFetch(
+      postgresDuplicateInspectorFetch("pg-dup-202-ok".padEnd(64, "0"), {
+        duplicate: () => postgresDuplicate202(),
+        operation: () =>
+          postgresOperationGet("succeeded", {
+            result: { database: "project_a_copy", owner: "app_project_a_copy", source: "project_a" },
+          }),
+        listAfterDuplicate: postgresDuplicateCopyList,
+      }),
+    );
+    render(<App />);
+    const dialog = await openDuplicateDatabaseDialog();
+    fillDuplicateForm(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+    expect(await screen.findByRole("heading", { name: "project_a_copy" })).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(fetch.mock.calls.every((call) => !isConnectionRevealUrl(String(call[0]), undefined, call[1]))).toBe(true);
+    expect(await within(screen.getByRole("region", { name: "Database details" })).findByRole("button", { name: "Reveal" })).toBeEnabled();
+  });
+
+  it("selects the submitted name when duplicate 202 succeeded omits result.database", async () => {
+    stubFetch(
+      postgresDuplicateInspectorFetch("pg-dup-202-omit".padEnd(64, "0"), {
+        duplicate: () => postgresDuplicate202(),
+        operation: () => postgresOperationGet("succeeded", { result: undefined }),
+        listAfterDuplicate: postgresDuplicateCopyList,
+      }),
+    );
+    render(<App />);
+    const dialog = await openDuplicateDatabaseDialog();
+    fillDuplicateForm(dialog, "project_a_copy");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+    expect(await screen.findByRole("heading", { name: "project_a_copy" })).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("announces failed and indeterminate duplicate operation errors without a ticket", async () => {
+    stubFetch(
+      postgresDuplicateInspectorFetch("pg-dup-202-fail".padEnd(64, "0"), {
+        duplicate: () => postgresDuplicate202(),
+        operation: () => postgresOperationGet("failed"),
+      }),
+    );
+    render(<App />);
+    const dialog = await openDuplicateDatabaseDialog();
+    fillDuplicateForm(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Safe operator-facing message");
+    expect(screen.queryByRole("dialog", { name: "Duplicate database" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Duplicating database/)).not.toBeInTheDocument();
+  });
+
+  it("announces indeterminate duplicate operation errors without a ticket", async () => {
+    stubFetch(
+      postgresDuplicateInspectorFetch("pg-dup-202-indet".padEnd(64, "0"), {
+        duplicate: () => postgresDuplicate202(),
+        operation: () =>
+          postgresOperationGet("indeterminate", {
+            error: { code: "dependency_unavailable", message: "The duplicate outcome could not be determined." },
+          }),
+      }),
+    );
+    render(<App />);
+    const dialog = await openDuplicateDatabaseDialog();
+    fillDuplicateForm(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The duplicate outcome could not be determined.");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("clears secrets and stops polling on operations GET 401", async () => {
+    const fetch = stubFetch(
+      postgresDuplicateInspectorFetch("pg-dup-202-401".padEnd(64, "0"), {
+        duplicate: () =>
+          postgresDuplicate202({
+            credential: { username: "app_project_a_copy", password: "should-not-render-duplicate-202-401" },
+          }),
+        operation: () =>
+          jsonResponse(401, {
+            error: { code: "unauthorized", message: "Authentication required" },
+            credential: { password: "should-not-render-operations-401" },
+          }),
+      }),
+    );
+    render(<App />);
+    const dialog = await openDuplicateDatabaseDialog();
+    fillDuplicateForm(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your session has expired. Sign in again to continue.",
+    );
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("should-not-render-duplicate-202-401");
+    expect(document.body.textContent).not.toContain("should-not-render-operations-401");
+    await waitFor(() => {
+      const opGets = fetch.mock.calls.filter((call) =>
+        isOperationsGet(String(call[0]), frozenDuplicateOperationId, call[1]),
+      );
+      expect(opGets.length).toBe(1);
+    });
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 1100);
+    });
+    const opGets = fetch.mock.calls.filter((call) =>
+      isOperationsGet(String(call[0]), frozenDuplicateOperationId, call[1]),
+    );
+    expect(opGets.length).toBe(1);
+  });
+
+  it("disables Duplicate, Create, Rotate, and Reveal while duplicate 202 poll is in flight", async () => {
+    let releasePoll: () => void = () => {};
+    const blockedPoll = new Promise<void>((resolve) => {
+      releasePoll = resolve;
+    });
+    stubFetch(
+      postgresDuplicateInspectorFetch("pg-dup-202-flight".padEnd(64, "0"), {
+        duplicate: () => postgresDuplicate202(),
+        operation: async () => {
+          await blockedPoll;
+          return postgresOperationGet("succeeded");
+        },
+        listAfterDuplicate: postgresDuplicateCopyList,
+      }),
+    );
+    render(<App />);
+    await goToDatabases();
+    fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
+    const details = await screen.findByRole("region", { name: "Database details" });
+    fireEvent.click(await within(details).findByRole("button", { name: "Duplicate" }));
+    const dialog = await screen.findByRole("dialog", { name: "Duplicate database" });
+    fillDuplicateForm(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Duplicate database" })).not.toBeInTheDocument();
+      expect(screen.getByText(/Duplicating database/)).toBeInTheDocument();
+      expect(within(details).getByRole("button", { name: "Duplicate" })).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Rotate" })).toBeDisabled();
+      expect(within(details).getByRole("button", { name: "Reveal" })).toBeDisabled();
+      expect(within(databasesHeader()).getByRole("button", { name: "Create database" })).toBeDisabled();
+    });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    releasePoll();
+    expect(await screen.findByRole("heading", { name: "project_a_copy" })).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("aborts duplicate 202 poll on selection change", async () => {
+    let polls = 0;
+    const fetch = stubFetch((url, init) => {
+      const base = postgresDuplicateInspectorFetch("pg-dup-202-abort".padEnd(64, "0"), {
+        duplicate: () => postgresDuplicate202(),
+        operation: () => {
+          polls += 1;
+          return postgresOperationGet("queued");
+        },
+      });
+      if (url.endsWith("/api/v1/postgres/databases") && String(init?.method ?? "GET").toUpperCase() === "GET") {
+        return jsonResponse(200, {
+          databases: [
+            { name: "project_a", owner: "project_a_role" },
+            { name: "project_b", owner: "project_b_role" },
+          ],
+          truncated: false,
+        });
+      }
+      if (isDetailsUrl(url, "project_b") || isTablesUrl(url, "project_b") || isConnectionUrl(url, "project_b")) {
+        if (isTablesUrl(url, "project_b")) {
+          return jsonResponse(200, { tables: [], truncated: false });
+        }
+        if (isConnectionUrl(url, "project_b")) {
+          return postgresConnectionPresent();
+        }
+        return jsonResponse(200, {
+          database: postgresDuplicateEligibleDatabase({ name: "project_b", owner: "project_b_role" }),
+        });
+      }
+      return base(url, init);
+    });
+    render(<App />);
+    const dialog = await openDuplicateDatabaseDialog();
+    fillDuplicateForm(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Duplicate" }));
+    await waitFor(() => expect(polls).toBeGreaterThanOrEqual(1));
+    fireEvent.click(await screen.findByRole("button", { name: /project_b/ }));
+    expect(await screen.findByRole("heading", { name: "project_b" })).toBeInTheDocument();
+    expect(screen.queryByText(/Duplicating database/)).not.toBeInTheDocument();
+    const pollsAtSelect = polls;
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 1100);
+    });
+    expect(polls).toBe(pollsAtSelect);
+    expect(
+      fetch.mock.calls.every((call) => !isConnectionRevealUrl(String(call[0]), undefined, call[1])),
+    ).toBe(true);
   });
 
   it("clears secrets on duplicate 401 and does not leave a leftover password", async () => {

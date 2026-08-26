@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { fetchOperation } from "../../api/operations";
 import {
   createPostgresDatabase,
   deletePostgresRows,
@@ -107,6 +108,28 @@ function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === "AbortError";
 }
 
+function isOperationId(value: string): boolean {
+  return /^[0-9a-f]{32}$/.test(value);
+}
+
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      window.clearTimeout(timer);
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 function queryRuneCount(value: string): number {
   return Array.from(value).length;
 }
@@ -158,6 +181,7 @@ export default function DatabasesPage({
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
   const [duplicateError, setDuplicateError] = useState("");
+  const [duplicateProgress, setDuplicateProgress] = useState<{ id: string; status: string } | null>(null);
   const [pendingSelect, setPendingSelect] = useState<string | null>(null);
   const revealAbort = useRef<AbortController | null>(null);
   const rotateAbort = useRef<AbortController | null>(null);
@@ -324,6 +348,7 @@ export default function DatabasesPage({
     setDuplicateOpen(false);
     setDuplicateError("");
     setDuplicating(false);
+    setDuplicateProgress(null);
   }
 
   function openDetails(name: string) {
@@ -612,6 +637,58 @@ export default function DatabasesPage({
     }
   }
 
+  function expireDuplicateSession() {
+    setDuplicateOpen(false);
+    setDuplicateError("");
+    setDuplicateProgress(null);
+    setTicket(null);
+    setTicketRotateWarning(false);
+    setRevealError(sessionExpired);
+  }
+
+  async function pollDuplicateOperation(
+    operationId: string,
+    submittedName: string,
+    controller: AbortController,
+  ): Promise<string | null> {
+    let waitBeforePoll = false;
+    while (!controller.signal.aborted) {
+      if (waitBeforePoll) {
+        await delay(1000, controller.signal);
+      }
+      waitBeforePoll = true;
+      const result = await fetchOperation(operationId, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        return null;
+      }
+      if (result.status === 401) {
+        expireDuplicateSession();
+        return null;
+      }
+      if (result.status !== 200) {
+        setDuplicateProgress(null);
+        setDuplicateError(errorMessage(result.body, postgresUnavailable));
+        return null;
+      }
+      const operation = asRecord(result.body.operation);
+      const status = operation ? stringField(operation, "status") : "";
+      setDuplicateProgress({ id: operationId, status });
+      if (status === "succeeded") {
+        const succeeded = operation ? asRecord(operation.result) : null;
+        const named = succeeded ? stringField(succeeded, "database") : "";
+        return named !== "" ? named : submittedName;
+      }
+      if (status === "failed" || status === "indeterminate" || status === "canceled") {
+        const failed = operation ? asRecord(operation.error) : null;
+        const message = failed ? stringField(failed, "message") : "";
+        setDuplicateProgress(null);
+        setDuplicateError(message !== "" ? message : postgresUnavailable);
+        return null;
+      }
+    }
+    return null;
+  }
+
   async function handleDuplicate(database: string, owner: string) {
     if (!selected || duplicating || revealing || rotating || creating || truncating || dropping || ticket) {
       return;
@@ -629,11 +706,7 @@ export default function DatabasesPage({
         return;
       }
       if (result.status === 401) {
-        setDuplicateOpen(false);
-        setDuplicateError("");
-        setTicket(null);
-        setTicketRotateWarning(false);
-        setRevealError(sessionExpired);
+        expireDuplicateSession();
         return;
       }
       if (result.status === 400 || result.status === 403 || result.status === 409) {
@@ -666,6 +739,28 @@ export default function DatabasesPage({
         setDuplicateError("");
         setTicket(null);
         setRevealError(errorMessage(result.body, postgresUnavailable));
+        return;
+      }
+      if (result.status === 202) {
+        const operation = asRecord(result.body.operation);
+        const operationId = operation ? stringField(operation, "id") : "";
+        if (!isOperationId(operationId)) {
+          setDuplicateError(errorMessage(result.body, postgresUnavailable));
+          return;
+        }
+        setDuplicateOpen(false);
+        setDuplicateError("");
+        setTicket(null);
+        setTicketRotateWarning(false);
+        setDuplicateProgress({ id: operationId, status: operation ? stringField(operation, "status") : "" });
+        const createdName = await pollDuplicateOperation(operationId, database, controller);
+        if (controller.signal.aborted || createdName === null) {
+          return;
+        }
+        setDuplicateProgress(null);
+        setDuplicating(false);
+        refreshList();
+        openDetails(createdName);
         return;
       }
       if (result.status === 201) {
@@ -1199,6 +1294,17 @@ export default function DatabasesPage({
         </div>
         <p>Manageable project databases only. Passwords are not revealed.</p>
       </header>
+      {duplicateProgress ? (
+        <p className="muted-copy" role="status">
+          Duplicating database. Operation{" "}
+          <span className="identifier">{displayText(duplicateProgress.id)}</span>.
+        </p>
+      ) : null}
+      {!duplicateOpen && duplicateError ? (
+        <p className="form-warning" role="alert">
+          {duplicateError}
+        </p>
+      ) : null}
       {ticket ? (
         <CredentialTicket
           kind="postgres"
