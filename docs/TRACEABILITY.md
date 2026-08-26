@@ -208,6 +208,10 @@ Independent security reviewer **Approve Partial / reject Complete** on `9a32115`
 
 Independent evidence reviewer **Approve Partial / reject Complete** on `9a32115`. UX matches compact Recent audit. `docs/API.md` untouched. TRACEABILITY stays Partial. Writer did not edit `package.json` / lockfile / `ci.yml`. No PLAT-001 / PLAT-003 / NFR-012 Complete over-claim. Tests not re-run (writer-claimed 413 passed; parent independently re-ran 413 passed and build after merge). Residuals: no Playwright, no live audit DB, no Overview→Audit shortcut, no quick-create, no footer. Do not mark PLAT-001, PLAT-003, PLAT-004, NFR-012, REDIS-004, OPS-006, NFR-011, PG-010/011, or OPS-004 Complete.
 
+### PLAT-001 Overview recent audit verification (2026-08-26)
+
+Independent verifier **Approve Partial / reject Complete** on `4155bb8` (ancestor of `b61fd94` evidence pin; UI sources `c5f1eb1` / `4155bb8` unchanged). Required `npm --prefix web run test:run` 413 passed / 413; `npm --prefix web run build` succeeded (tsc --noEmit + vite build). Compact Overview recent audit matches the Partial slice: authenticated GET `/api/v1/audit?limit=8` only after the shell paints (no CSRF, no cursor), When/Action/Target/Outcome via `displayText` + `.bidi-isolate` with empty-target em dash and visually hidden Not recorded, `/status` envelope 401/throw/malformed paints neither cards nor recent-audit, audit 401/503/throw keeps the five `/status` cards, Audit page first GET stays unprefixed, Older still uses verbatim `next_cursor`. Residuals: no Playwright viewports, no live audit DB, no Overview→Audit shortcut, no quick-create, no footer. Do not mark PLAT-001, PLAT-003, or NFR-012 Complete.
+
 
 
 
