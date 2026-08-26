@@ -89,6 +89,7 @@ type Transition struct {
 	Error      *OperationError
 	StartedAt  *time.Time
 	FinishedAt *time.Time
+	KeepLocks  bool
 }
 
 type ProbeOutcome struct {
@@ -102,9 +103,14 @@ type Probe interface {
 	DuplicateState(ctx context.Context, op Operation) (ProbeOutcome, error)
 }
 
+type Compensator interface {
+	CompensateDuplicate(ctx context.Context, op Operation) error
+}
+
 type Store interface {
 	Get(ctx context.Context, id string) (Operation, error)
+	ListQueued(ctx context.Context) ([]Operation, error)
 	InsertQueued(ctx context.Context, op Operation, locks []ResourceLock) error
 	Transition(ctx context.Context, id string, change Transition) error
-	Reconcile(ctx context.Context, probe Probe, now time.Time) error
+	Reconcile(ctx context.Context, probe Probe, compensator Compensator, now time.Time) error
 }

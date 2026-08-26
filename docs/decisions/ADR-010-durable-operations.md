@@ -16,7 +16,8 @@ This slice persists **only** `postgres.database.duplicate`. Other action names m
 ### HTTP
 
 - Duplicate **target** after enqueue is **always 202** `{ "operation": { "id", "status": "queued" }, "request_id" }`. Never wait for TEMPLATE. Never return a credential on that POST.
-- Current implemented duplicate remains **201 in-request** until backend-integration.
+- Current implemented duplicate remains **201 in-request** until backend-integration writers change the handler.
+- Persist intended `result_json` `{database,owner,source}` at `queued`. GET still omits `result` unless `succeeded`.
 - After `succeeded`, the operator uses existing Reveal. GET operations never includes passwords or credential URLs.
 - `GET /api/v1/operations/{id}` is session + `platform.read`, no CSRF. No collection GET, no cancel endpoint. Invalid id → 400; missing → 404; SQLite down → 503. `Cache-Control: no-store`.
 - AUTH-006 stays in-handler owner password. This ADR does not add `POST /api/v1/auth/reauth` or a reauth cookie/TTL.
@@ -48,11 +49,13 @@ Allow-list `resource_kind`: `postgres.database`, `postgres.role`, `redis.user`.
 ### Restart Reconcile
 
 1. `running` → `interrupted`
-2. Resume `compensating` (compensation only)
-3. For each `interrupted` duplicate, a `Probe` inspects cluster+vault. Live SQL is backend-integration; this slice fakes Probe.
-4. Probe: nothing created → `failed`; clone+role+vault complete → `succeeded`; partial → `compensating` then `failed`; cannot tell → `indeterminate`
-5. `queued` stays queued (dispatcher is backend-integration)
+2. Resume `compensating` (compensation only). Non-nil `Compensator` drops leftover clone/role/vault **before** terminal + lock release. Compensator error → `indeterminate` with `KeepLocks` (locks kept). Nil Compensator keeps fail-and-release (allowed only before 202).
+3. For each `interrupted` duplicate, a `Probe` inspects cluster+vault. Live SQL is a later writer; this slice may use a nil Probe.
+4. Probe: nothing created → `failed`; clone+role+vault complete → `succeeded`; partial → `compensating` then Compensator; cannot tell → `indeterminate`
+5. `queued` stays queued. `ListQueued` is the dispatcher seam (1s in-process poller after Open + live Reconcile).
 6. Prune terminal rows
+
+`Reconcile(ctx, probe, compensator, now)`. Do not ship 202 with a nil Probe.
 
 ### Secrets
 
@@ -63,4 +66,4 @@ Forbidden in SQLite `result_json` / `error_json` and in GET JSON: password, cred
 - GET can exist before duplicate becomes 202.
 - Crash during TEMPLATE cannot safely retry CREATE DATABASE; interrupted work is inspected, not blindly retried.
 - Multi-instance HA still requires a future ADR (leases/heartbeats).
-- Audit `postgres.database.duplicate` stays in the worker (backend-integration), fail-closed after cluster+vault.
+- Audit `postgres.database.duplicate` stays in the worker (backend-integration), fail-closed after cluster+vault. Optional metadata key `operation_id`. Audit failure after worker success keeps `succeeded` and does not compensate a complete clone.

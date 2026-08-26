@@ -254,6 +254,11 @@ func insertQueuedDuplicate(t *testing.T, srv *Server) operations.Operation {
 		Actor:             "admin",
 		Target:            "project_a_copy",
 		AcceptedRequestID: mustOperationID(t),
+		Result: &operations.DuplicateResult{
+			Database: "project_a_copy",
+			Owner:    "app_project_a_copy",
+			Source:   "project_a",
+		},
 	}
 	locks := []operations.ResourceLock{
 		{Kind: operations.ResourceDatabase, Name: "project_a"},

@@ -529,6 +529,10 @@ func (c PoolCatalog) SavedRoleNames(ctx context.Context, roles []string) (map[st
 	return out, nil
 }
 
+func (c PoolCatalog) SystemIdentifier(_ context.Context) (string, error) {
+	return "", ErrUnavailable
+}
+
 const encryptedPasswordSQL = `SELECT encrypted_password FROM public.project_credentials WHERE role_name = $1`
 
 func (c PoolCatalog) EncryptedPassword(ctx context.Context, role string) (string, error) {

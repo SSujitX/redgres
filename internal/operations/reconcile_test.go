@@ -3,6 +3,7 @@ package operations
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -32,7 +33,7 @@ func TestReconcileFlipsRunningToInterruptedThenProbes(t *testing.T) {
 	}
 	probe := &fakeProbe{outcome: ProbeOutcome{}}
 	now := time.Date(2026, 8, 26, 6, 0, 0, 0, time.UTC)
-	if err := store.Reconcile(context.Background(), probe, now); err != nil {
+	if err := store.Reconcile(context.Background(), probe, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.Get(context.Background(), op.ID)
@@ -53,7 +54,7 @@ func TestReconcileQueuedStaysQueued(t *testing.T) {
 	if err := store.InsertQueued(context.Background(), op, locks); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Reconcile(context.Background(), &fakeProbe{}, time.Date(2026, 8, 26, 6, 0, 0, 0, time.UTC)); err != nil {
+	if err := store.Reconcile(context.Background(), &fakeProbe{}, nil, time.Date(2026, 8, 26, 6, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.Get(context.Background(), op.ID)
@@ -74,7 +75,7 @@ func TestReconcileNilProbeMarksIndeterminate(t *testing.T) {
 	if err := store.Transition(context.Background(), op.ID, Transition{From: StatusQueued, To: StatusRunning}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Reconcile(context.Background(), nil, time.Date(2026, 8, 26, 6, 0, 0, 0, time.UTC)); err != nil {
+	if err := store.Reconcile(context.Background(), nil, nil, time.Date(2026, 8, 26, 6, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.Get(context.Background(), op.ID)
@@ -114,7 +115,7 @@ func TestReconcileProbeOutcomes(t *testing.T) {
 				t.Fatal(err)
 			}
 			probe := &fakeProbe{outcome: tc.outcome, err: tc.err}
-			if err := store.Reconcile(context.Background(), probe, now); err != nil {
+			if err := store.Reconcile(context.Background(), probe, nil, now); err != nil {
 				t.Fatal(err)
 			}
 			got, err := store.Get(context.Background(), op.ID)
@@ -146,7 +147,7 @@ func TestReconcileResumesCompensatingToFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	probe := &fakeProbe{outcome: ProbeOutcome{CloneExists: true, RoleExists: true, VaultRowExists: true}}
-	if err := store.Reconcile(context.Background(), probe, time.Date(2026, 8, 26, 6, 0, 0, 0, time.UTC)); err != nil {
+	if err := store.Reconcile(context.Background(), probe, nil, time.Date(2026, 8, 26, 6, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.Get(context.Background(), op.ID)
@@ -190,7 +191,7 @@ func TestReconcilePrunesOldTerminalAndKeepsNonTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := store.Reconcile(context.Background(), &fakeProbe{}, now); err != nil {
+	if err := store.Reconcile(context.Background(), &fakeProbe{}, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Get(context.Background(), oldOp.ID); !errors.Is(err, ErrNotFound) {
@@ -228,7 +229,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			t.Fatal(err)
 		}
 	}
-	if err := store.Reconcile(context.Background(), &fakeProbe{}, now); err != nil {
+	if err := store.Reconcile(context.Background(), &fakeProbe{}, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -243,5 +244,78 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	}
 	if _, err := store.Get(context.Background(), ids[len(ids)-1]); err != nil {
 		t.Fatalf("newest terminal missing: %v", err)
+	}
+}
+
+type fakeCompensator struct {
+	err   error
+	calls int
+}
+
+func (f *fakeCompensator) CompensateDuplicate(context.Context, Operation) error {
+	f.calls++
+	return f.err
+}
+
+func TestReconcileCompensatorSuccessReleasesLocks(t *testing.T) {
+	store := newTestStore(t)
+	op, locks := queuedDuplicate(t, "project_a", "project_a_copy", "app_project_a_copy")
+	if err := store.InsertQueued(context.Background(), op, locks); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Transition(context.Background(), op.ID, Transition{From: StatusQueued, To: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 26, 6, 0, 0, 0, time.UTC)
+	compensator := &fakeCompensator{}
+	probe := &fakeProbe{outcome: ProbeOutcome{CloneExists: true}}
+	if err := store.Reconcile(context.Background(), probe, compensator, now); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusFailed {
+		t.Fatalf("status = %q", got.Status)
+	}
+	if compensator.calls != 1 {
+		t.Fatalf("compensator calls = %d", compensator.calls)
+	}
+	overlap, overlapLocks := queuedDuplicate(t, "project_a", "other_copy", "app_other_copy")
+	if err := store.InsertQueued(context.Background(), overlap, overlapLocks); err != nil {
+		t.Fatalf("locks should be released: %v", err)
+	}
+}
+
+func TestReconcileCompensatorErrorKeepsLocks(t *testing.T) {
+	store := newTestStore(t)
+	op, locks := queuedDuplicate(t, "project_a", "project_a_copy", "app_project_a_copy")
+	if err := store.InsertQueued(context.Background(), op, locks); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Transition(context.Background(), op.ID, Transition{From: StatusQueued, To: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 26, 6, 0, 0, 0, time.UTC)
+	compensator := &fakeCompensator{err: errors.New("drop failed: password=canary-secret")}
+	probe := &fakeProbe{outcome: ProbeOutcome{CloneExists: true}}
+	if err := store.Reconcile(context.Background(), probe, compensator, now); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusIndeterminate {
+		t.Fatalf("status = %q", got.Status)
+	}
+	if got.Error != nil && (strings.Contains(got.Error.Message, "canary-secret") || strings.Contains(got.Error.Message, "password=")) {
+		t.Fatalf("compensator dump stored: %#v", got.Error)
+	}
+	overlap, overlapLocks := queuedDuplicate(t, "project_a", "other_copy", "app_other_copy")
+	err = store.InsertQueued(context.Background(), overlap, overlapLocks)
+	if !errors.Is(err, ErrLockHeld) {
+		t.Fatalf("got %v, want ErrLockHeld", err)
 	}
 }

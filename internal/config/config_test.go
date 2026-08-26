@@ -68,6 +68,9 @@ func TestLoadDevelopmentDefaults(t *testing.T) {
 	if cfg.FeaturePostgresDrop {
 		t.Fatal("FeaturePostgresDrop should be false when unset")
 	}
+	if cfg.BackupCatalogDir != "" {
+		t.Fatalf("BackupCatalogDir = %q", cfg.BackupCatalogDir)
+	}
 	if cfg.LogLevel != DefaultLogLevel {
 		t.Fatalf("LogLevel = %q", cfg.LogLevel)
 	}
@@ -520,5 +523,70 @@ func TestLoadFlagErrorOmitsValue(t *testing.T) {
 	}
 	if strings.Contains(msg, "not-a-duration") {
 		t.Fatalf("error echoed value: %q", msg)
+	}
+}
+
+func TestLoadBackupCatalogDevelopment(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_BACKUP_CATALOG", `./backup-catalog`)
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BackupCatalogDir != `./backup-catalog` {
+		t.Fatalf("BackupCatalogDir = %q", cfg.BackupCatalogDir)
+	}
+}
+
+func TestLoadBackupCatalogRejectsReservedCharacters(t *testing.T) {
+	isolateConfig(t)
+	for _, value := range []string{
+		`/var/lib/redgres/backup?x`,
+		`/var/lib/redgres/backup#x`,
+		`/var/lib/redgres/backup%x`,
+	} {
+		t.Setenv("REDGRES_BACKUP_CATALOG", value)
+		_, err := Load(nil)
+		if err == nil {
+			t.Fatalf("accepted %q", value)
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "REDGRES_BACKUP_CATALOG") {
+			t.Fatalf("error %q should name the env var", msg)
+		}
+		if strings.Contains(msg, value) {
+			t.Fatalf("error echoed path: %q", msg)
+		}
+	}
+}
+
+func TestLoadBackupCatalogProductionJail(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_ENVIRONMENT", "production")
+	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
+	t.Setenv("REDGRES_BASE_URL", "https://console.example.com")
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
+	t.Setenv("REDGRES_COOKIE_SECURE", "true")
+	t.Setenv("REDGRES_SESSION_TTL", "12h")
+	t.Setenv("REDGRES_ABSOLUTE_SESSION_TTL", "24h")
+	t.Setenv("REDGRES_BACKUP_CATALOG", ProductionStateDirectory+"/backups")
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BackupCatalogDir != ProductionStateDirectory+"/backups" {
+		t.Fatalf("BackupCatalogDir = %q", cfg.BackupCatalogDir)
+	}
+	t.Setenv("REDGRES_BACKUP_CATALOG", "/tmp/backups")
+	_, err = Load(nil)
+	if err == nil {
+		t.Fatal("expected production to reject catalog outside /var/lib/redgres")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "REDGRES_BACKUP_CATALOG") {
+		t.Fatalf("error %q should name the env var", msg)
+	}
+	if strings.Contains(msg, "/tmp/backups") {
+		t.Fatalf("error echoed path: %q", msg)
 	}
 }

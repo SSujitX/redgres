@@ -103,6 +103,8 @@ type MemoryCatalog struct {
 	LastTransferOwner             string
 	TransferErr                   error
 	SkippedTransferOwners         []string
+	SystemIdentifierValue         string
+	SystemIdentifierErr           error
 }
 
 func (m *MemoryCatalog) Ping(context.Context) error {
@@ -345,6 +347,16 @@ func (m *MemoryCatalog) SavedRoleNames(_ context.Context, roles []string) (map[s
 		}
 	}
 	return out, nil
+}
+
+func (m *MemoryCatalog) SystemIdentifier(_ context.Context) (string, error) {
+	if m.SystemIdentifierErr != nil {
+		return "", m.SystemIdentifierErr
+	}
+	if m.SystemIdentifierValue != "" {
+		return m.SystemIdentifierValue, nil
+	}
+	return "", ErrUnavailable
 }
 
 func (m *MemoryCatalog) DatabaseExists(_ context.Context, name string) (bool, error) {

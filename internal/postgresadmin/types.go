@@ -34,6 +34,7 @@ type Catalog interface {
 	Truncate(ctx context.Context, database string, tables []TableItem) error
 	ListConnectionGroups(ctx context.Context) ([]ConnectionGroup, error)
 	SavedRoleNames(ctx context.Context, roles []string) (map[string]struct{}, error)
+	SystemIdentifier(ctx context.Context) (string, error)
 	EncryptedPassword(ctx context.Context, role string) (string, error)
 	DatabaseExists(ctx context.Context, name string) (bool, error)
 	RoleExists(ctx context.Context, name string) (bool, error)

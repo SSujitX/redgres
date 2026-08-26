@@ -29,7 +29,7 @@ var allowedMetadataKeys = map[string]map[string]struct{}{
 	"postgres.database.create":    keySet("database", "owner"),
 	"postgres.credential.reveal":  keySet("database", "owner"),
 	"postgres.credential.rotate":  keySet("database", "owner"),
-	"postgres.database.duplicate": keySet("database", "owner", "source"),
+	"postgres.database.duplicate": keySet("database", "owner", "source", "operation_id"),
 	"postgres.rows.delete":        keySet("database", "schema", "table", "deleted"),
 	"postgres.database.truncate":  keySet("database", "truncated", "total_tables"),
 	"postgres.database.drop":      keySet("database", "owner", "dropped_role"),

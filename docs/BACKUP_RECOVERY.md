@@ -84,9 +84,9 @@ Each drill records date, backup manifest, isolated target, commands/tool version
 
 ## 9. DROP gate catalog (schema v1)
 
-Live dump, off-host copy, restore, and `deploy/backup.sh` are installer-recovery. This section freezes the filesystem manifest types used by `backup.EvaluateDropGate` ([ADR-011](decisions/ADR-011-drop-backup-gate.md)). There is no SQLite backup table and no `REDGRES_BACKUP_CATALOG` until backend-integration.
+Live dump, off-host copy, restore, and `deploy/backup.sh` are installer-recovery. This section freezes the filesystem manifest types used by `backup.EvaluateDropGate` ([ADR-011](decisions/ADR-011-drop-backup-gate.md)). There is no SQLite backup table. The catalog jail is `REDGRES_BACKUP_CATALOG`. The only catalog file is jail-root **`current.json`**. Clients never supply a path.
 
-Required identity: `schema_version` = 1; `backup_set_id` 32 lowercase hex; `completed_at` RFC3339Nano; `cluster.system_identifier` decimal string (caller later supplies the live value from official `pg_control_system()`; this package does not query PostgreSQL).
+Required identity: `schema_version` = 1; `backup_set_id` 32 lowercase hex; `completed_at` RFC3339Nano; `cluster.system_identifier` decimal string of `SELECT system_identifier FROM pg_control_system()` ([17](https://www.postgresql.org/docs/17/functions-info.html), [18](https://www.postgresql.org/docs/18/functions-info.html)).
 
 Required PostgreSQL artifact for DROP of database `D`: `kind=postgres.database`, `name=D`, `sha256` 64 lowercase hex, `size_bytes` ≥ 0, `path` relative and jail-local via `internal/securefile`.
 

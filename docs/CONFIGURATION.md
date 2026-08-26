@@ -17,6 +17,7 @@ Status: implemented in `internal/config`.
 | `REDGRES_COOKIE_SECURE` | Yes | `true` | Must be true in production |
 | `REDGRES_LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, or `error`. Never enables secret/body logging |
 | `REDGRES_DEV_ASSET_DIR` | No (rejected) | `./internal/web/dist/app` | Development only; must be an existing directory; rejected in production; must not contain `?`, `#`, or NUL. Empty selects the embedded assets |
+| `REDGRES_BACKUP_CATALOG` | No | `/var/lib/redgres/backups` | Optional catalog jail directory. Must not contain `?`, `#`, `%`, or NUL (never echo the path). Production must be `/var/lib/redgres` or a path under it. Empty is allowed at Load. The only catalog file is jail-root `current.json`. HTTP DROP does not consume this key on the freeze SHA. |
 
 ## PostgreSQL
 
@@ -82,7 +83,7 @@ There is no `REDGRES_FEATURE_POSTGRES_ROTATE`. Rotate is not a destructive flag.
 There is no `REDGRES_FEATURE_POSTGRES_DUPLICATE`. Duplicate is not a destructive flag.
 There is no `ENABLE_DESTRUCTIVE_ACTIONS` and no `REDGRES_FEATURE_POSTGRES_DELETE`.
 
-Enabling a flag makes the server-side workflow reachable; it never bypasses capabilities, protected targets, CSRF, confirmation, reauthentication, or audit. Flag-off DELETE rows is `403` `forbidden` with copy **Row delete is turned off.** before JSON decode. Flag-off POST truncate is `403` `forbidden` with copy **Truncate is turned off.** before JSON decode. Flag-off DELETE database is `403` `forbidden` with copy **Drop is turned off.** before JSON decode. `GET /api/v1/session` does not gain a `features` object in this slice. Backup freshness is **not** an HTTP gate on PG-011 Partial (**BF-1**). ADR-011 catalog types exist; there is **no** `REDGRES_BACKUP_CATALOG` env var this slice. Do not add a backup-catalog key until backend-integration wires `EvaluateDropGate`.
+Enabling a flag makes the server-side workflow reachable; it never bypasses capabilities, protected targets, CSRF, confirmation, reauthentication, or audit. Flag-off DELETE rows is `403` `forbidden` with copy **Row delete is turned off.** before JSON decode. Flag-off POST truncate is `403` `forbidden` with copy **Truncate is turned off.** before JSON decode. Flag-off DELETE database is `403` `forbidden` with copy **Drop is turned off.** before JSON decode. `GET /api/v1/session` does not gain a `features` object in this slice. `REDGRES_BACKUP_CATALOG` is loaded (optional). Unset is allowed at `config.Load`. Production values must be under `/var/lib/redgres`. Reserved `?`, `#`, `%`, and NUL are rejected without echoing the path. HTTP DROP still does not call `EvaluateDropGate` on the freeze SHA (BF-1). When DROP is wired, unset or unusable catalog is `503` **Backup catalog is not configured.** (never echo the path). The catalog file is jail-root `current.json` only.
 
 ## Owner bootstrap CLI
 

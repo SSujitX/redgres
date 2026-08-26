@@ -68,6 +68,7 @@ type Config struct {
 	FeaturePostgresRowDelete bool
 	FeaturePostgresTruncate  bool
 	FeaturePostgresDrop      bool
+	BackupCatalogDir         string
 }
 
 func Load(args []string) (Config, error) {
@@ -149,6 +150,9 @@ func Load(args []string) (Config, error) {
 		return Config{}, err
 	} else if v != nil {
 		cfg.FeaturePostgresDrop = *v
+	}
+	if err := cfg.loadBackupCatalog(); err != nil {
+		return Config{}, err
 	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
@@ -322,6 +326,25 @@ func validateSQLitePath(path string, production bool) error {
 			return errors.New("REDGRES_SQLITE_PATH: production path must be under /var/lib/redgres")
 		}
 	}
+	return nil
+}
+
+func (c *Config) loadBackupCatalog() error {
+	raw := strings.TrimSpace(os.Getenv("REDGRES_BACKUP_CATALOG"))
+	if raw == "" {
+		c.BackupCatalogDir = ""
+		return nil
+	}
+	if strings.ContainsAny(raw, "?#%") || strings.ContainsRune(raw, 0) {
+		return errors.New("REDGRES_BACKUP_CATALOG: must not contain URI reserved characters")
+	}
+	if c.Production() {
+		cleaned := pathpkg.Clean(strings.ReplaceAll(raw, `\`, "/"))
+		if cleaned != ProductionStateDirectory && !strings.HasPrefix(cleaned, ProductionStateDirectory+"/") {
+			return errors.New("REDGRES_BACKUP_CATALOG: production path must be under /var/lib/redgres")
+		}
+	}
+	c.BackupCatalogDir = raw
 	return nil
 }
 

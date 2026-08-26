@@ -57,7 +57,7 @@ func run(args []string) error {
 	if err := database.Migrate(db, migrations.FS); err != nil {
 		return err
 	}
-	if err := operations.NewStore(db).Reconcile(context.Background(), nil, time.Now().UTC()); err != nil {
+	if err := operations.NewStore(db).Reconcile(context.Background(), nil, nil, time.Now().UTC()); err != nil {
 		return err
 	}
 	assets, closeAssets, err := web.Open(cfg.DevAssetDir)

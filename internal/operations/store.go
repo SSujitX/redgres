@@ -43,6 +43,34 @@ SELECT id, action, status, actor, accepted_request_id, target, phase, result_jso
   FROM operations
  WHERE id = ?`
 
+func (s store) ListQueued(ctx context.Context) ([]Operation, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, action, status, actor, accepted_request_id, target, phase, result_json, error_json,
+       created_at, updated_at, started_at, finished_at
+  FROM operations
+ WHERE status = ?
+ ORDER BY created_at ASC, id ASC`, string(StatusQueued))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Operation
+	for rows.Next() {
+		op, err := scanOperation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, op)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return []Operation{}, nil
+	}
+	return out, nil
+}
+
 func (s store) InsertQueued(ctx context.Context, op Operation, locks []ResourceLock) error {
 	if !validID(op.ID) {
 		return ErrInvalidID
@@ -75,6 +103,17 @@ func (s store) InsertQueued(ctx context.Context, op Operation, locks []ResourceL
 	if phase == "" {
 		phase = PhaseAccepted
 	}
+	if unsafeResultValue(op.Actor) || unsafeResultValue(op.Target) || unsafeResultValue(string(phase)) || unsafeResultValue(op.AcceptedRequestID) {
+		return ErrUnsafeResult
+	}
+	var resultJSON any
+	if op.Result != nil {
+		raw, err := json.Marshal(*op.Result)
+		if err != nil {
+			return err
+		}
+		resultJSON = string(raw)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -84,9 +123,9 @@ func (s store) InsertQueued(ctx context.Context, op Operation, locks []ResourceL
 INSERT INTO operations (
     id, action, status, actor, accepted_request_id, target, phase,
     result_json, error_json, created_at, updated_at, started_at, finished_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)`,
 		op.ID, string(ActionDuplicate), string(StatusQueued), op.Actor, op.AcceptedRequestID,
-		nullIfEmpty(op.Target), nullIfEmpty(string(phase)),
+		nullIfEmpty(op.Target), nullIfEmpty(string(phase)), resultJSON,
 		formatTime(created), formatTime(updated),
 	)
 	if err != nil {
@@ -113,7 +152,7 @@ func (s store) Transition(ctx context.Context, id string, change Transition) err
 	return s.transition(ctx, id, change, time.Now().UTC())
 }
 
-func (s store) Reconcile(ctx context.Context, probe Probe, now time.Time) error {
+func (s store) Reconcile(ctx context.Context, probe Probe, compensator Compensator, now time.Time) error {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	} else {
@@ -136,13 +175,10 @@ func (s store) Reconcile(ctx context.Context, probe Probe, now time.Time) error 
 		return err
 	}
 	for _, id := range compensating {
-		if err := s.transition(ctx, id, Transition{
-			From:       StatusCompensating,
-			To:         StatusFailed,
-			Phase:      PhaseCompensating,
-			FinishedAt: &now,
-			Error:      &OperationError{Code: "compensation_incomplete", Message: "Compensation did not finish."},
-		}, now); err != nil {
+		if err := s.finishCompensation(ctx, id, compensator, now, &OperationError{
+			Code:    "compensation_incomplete",
+			Message: "Compensation did not finish.",
+		}); err != nil {
 			return err
 		}
 	}
@@ -151,14 +187,14 @@ func (s store) Reconcile(ctx context.Context, probe Probe, now time.Time) error 
 		return err
 	}
 	for _, id := range interrupted {
-		if err := s.resolveInterrupted(ctx, id, probe, now); err != nil {
+		if err := s.resolveInterrupted(ctx, id, probe, compensator, now); err != nil {
 			return err
 		}
 	}
 	return s.pruneTerminal(ctx, now)
 }
 
-func (s store) resolveInterrupted(ctx context.Context, id string, probe Probe, now time.Time) error {
+func (s store) resolveInterrupted(ctx context.Context, id string, probe Probe, compensator Compensator, now time.Time) error {
 	if probe == nil {
 		return s.transition(ctx, id, Transition{
 			From:       StatusInterrupted,
@@ -219,14 +255,37 @@ func (s store) resolveInterrupted(ctx context.Context, id string, probe Probe, n
 		}, now); err != nil {
 			return err
 		}
-		return s.transition(ctx, id, Transition{
-			From:       StatusCompensating,
-			To:         StatusFailed,
-			Phase:      PhaseCompensating,
-			FinishedAt: &now,
-			Error:      &OperationError{Code: "duplicate_incomplete", Message: "Duplicate was incomplete."},
-		}, now)
+		return s.finishCompensation(ctx, id, compensator, now, &OperationError{
+			Code:    "duplicate_incomplete",
+			Message: "Duplicate was incomplete.",
+		})
 	}
+}
+
+func (s store) finishCompensation(ctx context.Context, id string, compensator Compensator, now time.Time, fail *OperationError) error {
+	if compensator != nil {
+		op, err := s.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := compensator.CompensateDuplicate(ctx, op); err != nil {
+			return s.transition(ctx, id, Transition{
+				From:       StatusCompensating,
+				To:         StatusIndeterminate,
+				Phase:      PhaseCompensating,
+				FinishedAt: &now,
+				KeepLocks:  true,
+				Error:      &OperationError{Code: "compensation_incomplete", Message: "Compensation did not finish."},
+			}, now)
+		}
+	}
+	return s.transition(ctx, id, Transition{
+		From:       StatusCompensating,
+		To:         StatusFailed,
+		Phase:      PhaseCompensating,
+		FinishedAt: &now,
+		Error:      fail,
+	}, now)
 }
 
 func (s store) pruneTerminal(ctx context.Context, now time.Time) error {
@@ -346,6 +405,9 @@ func (s store) transition(ctx context.Context, id string, change Transition, now
 	if !legalEdge(change.From, change.To) {
 		return ErrIllegalEdge
 	}
+	if change.KeepLocks && change.To != StatusIndeterminate {
+		return ErrIllegalEdge
+	}
 	if err := validateResult(change.Result); err != nil {
 		return err
 	}
@@ -416,7 +478,7 @@ UPDATE operations
 	if n != 1 {
 		return ErrIllegalEdge
 	}
-	if terminalStatus(change.To) {
+	if terminalStatus(change.To) && !change.KeepLocks {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM operation_locks WHERE operation_id = ?`, id); err != nil {
 			return err
 		}
@@ -484,7 +546,7 @@ func scanOperation(row rowScanner) (Operation, error) {
 		}
 		op.FinishedAt = &t
 	}
-	if resultJSON.Valid && resultJSON.String != "" && op.Status == StatusSucceeded {
+	if resultJSON.Valid && resultJSON.String != "" {
 		var result DuplicateResult
 		if err := json.Unmarshal([]byte(resultJSON.String), &result); err != nil {
 			return Operation{}, err
@@ -536,11 +598,11 @@ func resultJSONFor(to Status, next *DuplicateResult, current *DuplicateResult) (
 	if chosen == nil {
 		chosen = current
 	}
-	if to != StatusSucceeded {
-		return nil, nil
+	if to == StatusSucceeded && chosen == nil {
+		return nil, ErrUnsafeResult
 	}
 	if chosen == nil {
-		return nil, ErrUnsafeResult
+		return nil, nil
 	}
 	if err := checkResult(*chosen); err != nil {
 		return nil, err

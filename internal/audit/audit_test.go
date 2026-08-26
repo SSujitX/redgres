@@ -136,3 +136,34 @@ func TestAuditStoresOnlyAllowedMetadata(t *testing.T) {
 		t.Fatalf("metadata = %#v", meta)
 	}
 }
+
+func TestDuplicateAuditAllowsOperationID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redgres.db")
+	db, err := database.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	store := Store{DB: db}
+	err = store.Record("admin", "postgres.database.duplicate", "project_a_copy", "success", "aabbccddeeff00112233445566778899", "127.0.0.1", map[string]any{
+		"database":     "project_a_copy",
+		"owner":        "app_project_a_copy",
+		"source":       "project_a",
+		"operation_id": "0123456789abcdef0123456789abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.Record("admin", "postgres.database.duplicate", "project_a_copy", "success", "aabbccddeeff00112233445566778899", "127.0.0.1", map[string]any{
+		"database": "project_a_copy",
+		"owner":    "app_project_a_copy",
+		"source":   "project_a",
+		"password": "canary-secret",
+	})
+	if !errors.Is(err, ErrUnsafeMetadata) {
+		t.Fatalf("got %v, want ErrUnsafeMetadata", err)
+	}
+}

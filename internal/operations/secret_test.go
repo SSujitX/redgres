@@ -89,7 +89,7 @@ func TestReconcileProbeErrorDoesNotStoreDump(t *testing.T) {
 	id := runningDuplicate(t, store)
 	now := time.Date(2026, 8, 26, 6, 0, 0, 0, time.UTC)
 	probe := &fakeProbe{err: errors.New("pq: password=canary-secret postgres://owner:canary-secret@127.0.0.1/db")}
-	if err := store.Reconcile(context.Background(), probe, now); err != nil {
+	if err := store.Reconcile(context.Background(), probe, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.Get(context.Background(), id)

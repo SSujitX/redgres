@@ -59,6 +59,75 @@ func TestInsertQueuedRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInsertQueuedPersistsIntendedResult(t *testing.T) {
+	store := newTestStore(t)
+	op, locks := queuedDuplicate(t, "project_a", "project_a_copy", "app_project_a_copy")
+	op.Result = &DuplicateResult{Database: "project_a_copy", Owner: "app_project_a_copy", Source: "project_a"}
+	if err := store.InsertQueued(context.Background(), op, locks); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Result == nil || got.Result.Database != "project_a_copy" || got.Result.Owner != "app_project_a_copy" || got.Result.Source != "project_a" {
+		t.Fatalf("queued result = %#v", got.Result)
+	}
+	if err := store.Transition(context.Background(), op.ID, Transition{From: StatusQueued, To: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	running, err := store.Get(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running.Result == nil || running.Result.Database != "project_a_copy" {
+		t.Fatalf("running dropped queued result: %#v", running.Result)
+	}
+}
+
+func TestInsertQueuedRejectsUnsafeActor(t *testing.T) {
+	store := newTestStore(t)
+	op, locks := queuedDuplicate(t, "project_a", "project_a_copy", "app_project_a_copy")
+	op.Actor = "canary-secret"
+	err := store.InsertQueued(context.Background(), op, locks)
+	if !errors.Is(err, ErrUnsafeResult) {
+		t.Fatalf("got %v, want ErrUnsafeResult", err)
+	}
+	_, err = store.Get(context.Background(), op.ID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rejected insert persisted: %v", err)
+	}
+}
+
+func TestListQueuedReturnsQueuedOnly(t *testing.T) {
+	store := newTestStore(t)
+	first, firstLocks := queuedDuplicate(t, "src_a", "dst_a", "role_a")
+	second, secondLocks := queuedDuplicate(t, "src_b", "dst_b", "role_b")
+	running, runningLocks := queuedDuplicate(t, "src_c", "dst_c", "role_c")
+	if err := store.InsertQueued(context.Background(), first, firstLocks); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertQueued(context.Background(), second, secondLocks); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertQueued(context.Background(), running, runningLocks); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Transition(context.Background(), running.ID, Transition{From: StatusQueued, To: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ListQueued(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("queued = %d, want 2", len(got))
+	}
+	if got[0].ID != first.ID || got[1].ID != second.ID {
+		t.Fatalf("order = %q %q", got[0].ID, got[1].ID)
+	}
+}
+
 func TestInsertQueuedRejectsOtherAction(t *testing.T) {
 	store := newTestStore(t)
 	op, locks := queuedDuplicate(t, "project_a", "project_a_copy", "app_project_a_copy")
