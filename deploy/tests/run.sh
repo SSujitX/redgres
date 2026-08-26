@@ -27,25 +27,35 @@ redgres_test_mode_is_group_or_world_writable() {
   (( (8#${mode} & 8#022) != 0 ))
 }
 
-tmp_base="${TMPDIR:-/tmp}"
-if [[ "${EUID}" -eq 0 ]]; then
-  tmp_base='/root'
+# Trusted-path tests cannot live below the world-writable /tmp ancestry on
+# Linux. Keep disposable fixtures below the current user's trusted directory;
+# fall back to the already-trusted checkout only when that is unavailable.
+test_tmp_base="${HOME:-}"
+if [[ -z "${test_tmp_base}" || ! -d "${test_tmp_base}" ]]; then
+  test_tmp_base="${deploy_dir%/*}"
 fi
-tmpdir="$(mktemp -d "${tmp_base}/redgres-install-test.XXXXXX")"
+tmpdir="$(mktemp -d "${test_tmp_base}/redgres-install-test.XXXXXX")"
 stub_dir="${tmpdir}/stubs"
 detect_dir="${tmpdir}/detect"
 unsafe_dir="${tmpdir}/unsafe"
 stub_log="${tmpdir}/stub.log"
 process_canary="${tmpdir}/process-canary"
+bootstrap_helper_dir="${tmpdir}/bootstrap-helpers"
+bootstrap_helper_log="${tmpdir}/bootstrap-helper.log"
+source_tree_marker="${tmpdir}/source-tree-sourced"
 config_file="${tmpdir}/install.env"
 plan_file="${tmpdir}/postgres-extensions.json"
 sourced_marker="${tmpdir}/config-sourced"
-mkdir -p "${stub_dir}" "${detect_dir}" "${unsafe_dir}"
+mkdir -p "${stub_dir}" "${detect_dir}" "${unsafe_dir}" "${bootstrap_helper_dir}"
 : >"${stub_log}"
+: >"${bootstrap_helper_log}"
 original_path="${PATH}"
 
 cleanup() {
-  rm -rf "${tmpdir}"
+  case "${tmpdir}" in
+    "${test_tmp_base}"/redgres-install-test.*) rm -rf -- "${tmpdir}" ;;
+    *) printf 'refusing unsafe installer-test cleanup target\n' >&2 ;;
+  esac
 }
 trap cleanup EXIT
 
@@ -77,6 +87,21 @@ for _stub in ${STUB_NAMES}; do
   write_stub "${_stub}"
 done
 
+write_bootstrap_helper_stub() {
+  local name="$1"
+  cat >"${bootstrap_helper_dir}/${name}" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "${name}" >>"${bootstrap_helper_log}"
+printf 'FORBIDDEN ambient bootstrap helper invoked: %s\n' "${name}" >&2
+exit 97
+STUB
+  chmod +x "${bootstrap_helper_dir}/${name}"
+}
+
+for _helper in dirname cat stat; do
+  write_bootstrap_helper_stub "${_helper}"
+done
+
 # Installer PATH: detection stubs, mutation stubs, then original PATH minus
 # directories that contain host postgres/redis-server/pgbouncer (so missing-binary
 # tests cannot leak a real binary, without hiding cat/dirname).
@@ -105,6 +130,10 @@ write_detect_stub() {
   cat >"${detect_dir}/${name}" <<STUB
 #!/usr/bin/env bash
 # Detection stub: fixture stdout only. Do not append to mutation stub_log.
+if [[ -n "\${REDGRES_INSTALLER_CANARY-}" || -n "\${BASH_ENV-}" || -n "\${ENV-}" || -n "\${LD_PRELOAD-}" || -n "\${LD_LIBRARY_PATH-}" || -n "\${LD_AUDIT-}" ]]; then
+  printf 'inventory child inherited ambient environment\n' >'${process_canary}'
+  exit 96
+fi
 cat '${fixture}'
 exit 0
 STUB
@@ -115,6 +144,7 @@ DETECT_POSTGRES=''
 DETECT_REDIS=''
 DETECT_PGBOUNCER=''
 EXTRA_PATH_PREFIX=''
+INSTALL_PATH_OVERRIDE=''
 
 export PATH="${stub_dir}:${PATH}"
 
@@ -123,8 +153,10 @@ status=0
 
 run_install() {
   : >"${stub_log}"
+  : >"${bootstrap_helper_log}"
   rm -f "${sourced_marker}"
   rm -f "${process_canary}"
+  rm -f "${source_tree_marker}"
   clear_detect_stubs
   if [[ -n "${DETECT_POSTGRES}" ]]; then
     write_detect_stub postgres "${DETECT_POSTGRES}"
@@ -138,11 +170,13 @@ run_install() {
   DETECT_POSTGRES=''
   DETECT_REDIS=''
   DETECT_PGBOUNCER=''
+  local installer_under_test="${INSTALL_PATH_OVERRIDE:-${install_sh}}"
   set +e
-  output="$(PATH="${EXTRA_PATH_PREFIX:+${EXTRA_PATH_PREFIX}:}${installer_path}" "${BASH}" "${install_sh}" "$@" 2>&1)"
+  output="$(PATH="${EXTRA_PATH_PREFIX:+${EXTRA_PATH_PREFIX}:}${installer_path}" "${BASH}" -p "${installer_under_test}" "$@" 2>&1)"
   status=$?
   set -e
   EXTRA_PATH_PREFIX=''
+  INSTALL_PATH_OVERRIDE=''
 }
 
 assert_no_mutation() {
@@ -153,6 +187,10 @@ assert_no_mutation() {
   fi
   if [[ -e "${sourced_marker}" ]]; then
     fail "${name}: --config was sourced"
+    return 1
+  fi
+  if [[ -s "${bootstrap_helper_log}" ]]; then
+    fail "${name}: ambient bootstrap helper invoked: $(tr '\n' ' ' <"${bootstrap_helper_log}")"
     return 1
   fi
   return 0
@@ -423,6 +461,83 @@ expect_rollback_partial() {
 # --- --help ---
 run_install --help
 expect_status 'help exits 0' 0
+
+set +e
+output="$(
+  builtin cd -- "${deploy_dir}/.." &&
+    PATH="${bootstrap_helper_dir}:${installer_path}" \
+    BASH_ENV="${config_file}" \
+    ./deploy/install.sh --help
+  2>&1
+)"
+status=$?
+set -e
+if [[ "${status}" -eq 0 && ! -e "${sourced_marker}" && ! -s "${bootstrap_helper_log}" ]]; then
+  pass 'direct invocation ignores BASH_ENV and ambient PATH helpers'
+else
+  fail "direct invocation did not establish privileged bootstrap: exit=${status}: ${output}"
+fi
+
+# --- trusted bootstrap: ambient PATH is data, not executable authority ---
+EXTRA_PATH_PREFIX="${bootstrap_helper_dir}"
+run_install --help
+expect_status 'malicious ambient PATH cannot hijack bootstrap helpers' 0
+
+DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
+DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
+DETECT_PGBOUNCER="${fixtures_dir}/pgbouncer-1.24.1.version"
+EXTRA_PATH_PREFIX="${bootstrap_helper_dir}"
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode existing-postgres \
+  --expect-postgres-major 17 \
+  --redis-mode existing \
+  --expect-redis-series 8.2 \
+  --pgbouncer-mode existing
+expect_status_and_stages 'sanitized runtime PATH inventories captured host-search fixtures' \
+  'postgres: detected=postgres (PostgreSQL) 17.11 major=17 expect=17 result=ok' \
+  'redis: detected=Redis server v=8.2.0 sha=00000000:0 malloc=libc bits=64 build=0 series=8.2 expect=8.2 result=ok' \
+  'pgbouncer: detected=PgBouncer 1.24.1 result=recorded'
+assert_no_mutation 'sanitized inventory child receives no ambient environment'
+
+# Validate copied trees only; never weaken or rewrite the repository checkout.
+unsafe_source_root="${tmpdir}/unsafe-source"
+unsafe_source_deploy="${unsafe_source_root}/deploy"
+mkdir -p "${unsafe_source_deploy}"
+cp -R "${deploy_dir}/." "${unsafe_source_deploy}/"
+printf "\nprintf '' >'%s'\n" "${source_tree_marker}" >>"${unsafe_source_deploy}/lib/common.sh"
+chmod 777 "${unsafe_source_deploy}/lib"
+unsafe_source_mode="$(/usr/bin/stat -Lc '%a' -- "${unsafe_source_deploy}/lib")"
+if redgres_test_mode_is_group_or_world_writable "${unsafe_source_mode}"; then
+  INSTALL_PATH_OVERRIDE="${unsafe_source_deploy}/install.sh"
+  run_install --help
+  if [[ "${status}" -eq 1 && ! -e "${source_tree_marker}" ]]; then
+    pass 'writable installer source tree is rejected before sourcing'
+  else
+    fail "writable installer source tree was not rejected before sourcing: exit=${status}: ${output}"
+  fi
+else
+  pass 'writable installer source tree test skipped (filesystem has no Unix mode semantics)'
+fi
+
+symlink_source_root="${tmpdir}/symlink-source"
+symlink_source_deploy="${symlink_source_root}/real-deploy"
+symlink_source_entry="${symlink_source_root}/linked-deploy"
+mkdir -p "${symlink_source_deploy}"
+cp -R "${deploy_dir}/." "${symlink_source_deploy}/"
+printf "\nprintf '' >'%s'\n" "${source_tree_marker}" >>"${symlink_source_deploy}/lib/common.sh"
+if ln -s "${symlink_source_deploy}" "${symlink_source_entry}" 2>/dev/null && [[ -L "${symlink_source_entry}" ]]; then
+  INSTALL_PATH_OVERRIDE="${symlink_source_entry}/install.sh"
+  run_install --help
+  if [[ "${status}" -eq 1 && ! -e "${source_tree_marker}" ]]; then
+    pass 'symlinked installer source tree is rejected before sourcing'
+  else
+    fail "symlinked installer source tree was not rejected before sourcing: exit=${status}: ${output}"
+  fi
+else
+  pass 'symlinked installer source tree test skipped (filesystem has no symlink semantics)'
+fi
 
 # --- happy dry-run (existing services) ---
 DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"

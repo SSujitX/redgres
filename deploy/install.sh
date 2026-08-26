@@ -1,22 +1,149 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 # Fail-closed installer dispatcher. OPS-001 / OPS-002 / OPS-003 / OPS-004 / OPS-005 / OPS-006 / OPS-007 Partial: no host mutation.
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck disable=SC1091
-source "${script_dir}/lib/common.sh"
-# shellcheck disable=SC1091
-source "${script_dir}/lib/inventory.sh"
-# shellcheck disable=SC1091
-source "${script_dir}/lib/verify.sh"
-# shellcheck disable=SC1091
-source "${script_dir}/lib/release.sh"
-# shellcheck disable=SC1091
-source "${script_dir}/lib/postgres_plan.sh"
-# shellcheck disable=SC1091
-source "${script_dir}/lib/backup.sh"
-# shellcheck disable=SC1091
-source "${script_dir}/lib/postgres_extensions.sh"
+case "$-" in
+  *p*) ;;
+  *)
+    builtin printf '%s\n' 'installer must be executed directly or with /bin/bash -p' >&2
+    exit 1
+    ;;
+esac
+
+# Capture the caller's PATH as inventory input only. Installer implementation
+# commands must resolve from this fixed, administrator-owned system path.
+REDGRES_HOST_SEARCH_PATH="${PATH-}"
+readonly REDGRES_HOST_SEARCH_PATH
+PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+LC_ALL='C'
+IFS=$' \t\n'
+umask 077
+export LC_ALL PATH
+builtin hash -r
+builtin unset BASH_ENV ENV CDPATH GLOBIGNORE BASH_COMPAT POSIXLY_CORRECT
+builtin unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT
+
+redgres_bootstrap_die() {
+  builtin printf '%s\n' "$*" >&2
+  exit 1
+}
+
+# This batched validator intentionally exists before common.sh is sourced. It
+# trusts only the fixed /usr/bin/stat supplied by the supported Ubuntu profile.
+redgres_bootstrap_validate_source_tree() {
+  local trusted_entrypoint="$1"
+  local trusted_script_dir="$2"
+  shift 2
+  local candidate component extra kind line mode owner
+  local candidate_index
+  local stat_bin='/usr/bin/stat'
+  local -a paths=("${trusted_entrypoint}")
+  local -a kinds=('file')
+  local -a metadata=()
+
+  component="${trusted_entrypoint%/*}"
+  [[ -n "${component}" ]] || component='/'
+  while :; do
+    paths+=("${component}")
+    kinds+=('directory')
+    [[ "${component}" == '/' ]] && break
+    component="${component%/*}"
+    [[ -n "${component}" ]] || component='/'
+  done
+  paths+=("${trusted_script_dir}/lib")
+  kinds+=('directory')
+  for candidate in "$@"; do
+    paths+=("${candidate}")
+    kinds+=('file')
+  done
+
+  [[ -x "${stat_bin}" && ! -L "${stat_bin}" ]] || redgres_bootstrap_die 'trusted stat is unavailable'
+  for ((candidate_index = 0; candidate_index < ${#paths[@]}; candidate_index++)); do
+    candidate="${paths[${candidate_index}]}"
+    kind="${kinds[${candidate_index}]}"
+    [[ "${candidate}" == /* && ! -L "${candidate}" ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+    case "${kind}" in
+      file) [[ -f "${candidate}" ]] || redgres_bootstrap_die 'installer source tree is not trusted' ;;
+      directory) [[ -d "${candidate}" ]] || redgres_bootstrap_die 'installer source tree is not trusted' ;;
+    esac
+  done
+
+  builtin mapfile -t metadata < <("${stat_bin}" -Lc '%u %a' -- "${paths[@]}")
+  [[ "${#metadata[@]}" -eq "${#paths[@]}" ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+  for line in "${metadata[@]}"; do
+    builtin read -r owner mode extra <<< "${line}"
+    [[ -z "${extra-}" && "${owner}" =~ ^[0-9]+$ && "${mode}" =~ ^[0-7]+$ ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+    if [[ "${EUID}" -eq 0 ]]; then
+      [[ "${owner}" == '0' ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+    else
+      [[ "${owner}" == '0' || "${owner}" == "${EUID}" ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+    fi
+    (( (8#${mode} & 8#022) == 0 )) || redgres_bootstrap_die 'installer source tree is not trusted'
+  done
+}
+
+entrypoint="${BASH_SOURCE[0]}"
+case "${entrypoint}" in
+  /*) ;;
+  ./*) entrypoint="$(builtin pwd -P)/${entrypoint#./}" ;;
+  */*) entrypoint="$(builtin pwd -P)/${entrypoint}" ;;
+  *) redgres_bootstrap_die 'installer must be invoked by path' ;;
+esac
+case "${entrypoint}" in
+  */./*|*/../*|*/.|*/..)
+    redgres_bootstrap_die "installer entrypoint is not trusted"
+    ;;
+esac
+entrypoint_dir="${entrypoint%/*}"
+[[ -n "${entrypoint_dir}" ]] || entrypoint_dir='/'
+script_dir="$(builtin cd -- "${entrypoint_dir}" && builtin pwd -P)" || redgres_bootstrap_die "installer source tree is not trusted"
+[[ "${script_dir}" == "${entrypoint_dir}" ]] || redgres_bootstrap_die "installer source tree is not trusted"
+
+source_files=(
+  "${script_dir}/lib/common.sh"
+  "${script_dir}/lib/inventory.sh"
+  "${script_dir}/lib/verify.sh"
+  "${script_dir}/lib/release.sh"
+  "${script_dir}/lib/postgres_plan.sh"
+  "${script_dir}/lib/backup.sh"
+  "${script_dir}/lib/postgres_extensions.sh"
+)
+redgres_bootstrap_validate_source_tree "${entrypoint}" "${script_dir}" "${source_files[@]}"
+
+source_fds=()
+source_identity_paths=()
+for source_file in "${source_files[@]}"; do
+  exec {source_fd}<"${source_file}" || redgres_bootstrap_die 'installer source tree is not trusted'
+  source_fds+=("${source_fd}")
+  source_identity_paths+=("${source_file}" "/proc/self/fd/${source_fd}")
+done
+
+source_identity_metadata=()
+builtin mapfile -t source_identity_metadata < <(/usr/bin/stat -Lc '%u %a %d:%i' -- "${source_identity_paths[@]}")
+[[ "${#source_identity_metadata[@]}" -eq "${#source_identity_paths[@]}" ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+for ((source_index = 0; source_index < ${#source_identity_metadata[@]}; source_index += 2)); do
+  builtin read -r source_path_owner source_path_mode source_path_identity source_extra <<< "${source_identity_metadata[${source_index}]}"
+  builtin read -r source_fd_owner source_fd_mode source_fd_identity source_fd_extra <<< "${source_identity_metadata[$((source_index + 1))]}"
+  [[ -z "${source_extra-}" && -z "${source_fd_extra-}" ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+  [[ "${source_path_owner}" =~ ^[0-9]+$ && "${source_path_mode}" =~ ^[0-7]+$ ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+  [[ "${source_fd_owner}" == "${source_path_owner}" && "${source_fd_mode}" == "${source_path_mode}" ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+  [[ "${source_fd_identity}" == "${source_path_identity}" ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+  if [[ "${EUID}" -eq 0 ]]; then
+    [[ "${source_fd_owner}" == '0' ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+  else
+    [[ "${source_fd_owner}" == '0' || "${source_fd_owner}" == "${EUID}" ]] || redgres_bootstrap_die 'installer source tree is not trusted'
+  fi
+  (( (8#${source_fd_mode} & 8#022) == 0 )) || redgres_bootstrap_die 'installer source tree is not trusted'
+done
+
+for source_fd in "${source_fds[@]}"; do
+  # shellcheck disable=SC1090
+  builtin source "/dev/fd/${source_fd}"
+  exec {source_fd}<&-
+done
+unset source_fd source_fds source_file source_files source_identity_paths source_identity_metadata source_index
+unset source_path_owner source_path_mode source_path_identity source_fd_owner source_fd_mode source_fd_identity source_extra source_fd_extra
+unset entrypoint entrypoint_dir
 
 usage() {
   cat <<'EOF'
@@ -146,10 +273,8 @@ if [[ "${1:-}" == "verify" ]]; then
   if [[ -z "${verify_config_path}" ]]; then
     redgres_die "--config is required"
   fi
-  # Existence only. Never source, eval, or cat the file; never print contents.
-  if [[ ! -f "${verify_config_path}" ]]; then
-    redgres_die "--config must be an existing regular file"
-  fi
+  # Trusted-path/identity check only. Never source, eval, or print contents.
+  redgres_require_trusted_unread_file '--config' "${verify_config_path}"
   if [[ "${verify_dry_run}" -ne 1 ]]; then
     redgres_not_implemented "verify without --dry-run is not implemented"
   fi
@@ -195,10 +320,8 @@ if [[ "${1:-}" == "update" ]]; then
   if [[ -z "${update_release_path}" ]]; then
     redgres_die "--release is required"
   fi
-  # Existence only. Never source, eval, cat, extract, or print contents.
-  if [[ ! -f "${update_release_path}" ]]; then
-    redgres_die "--release must be an existing regular file"
-  fi
+  # Trusted-path/identity check only. Never source, eval, extract, or print contents.
+  redgres_require_trusted_unread_file '--release' "${update_release_path}"
   if [[ "${update_dry_run}" -ne 1 ]]; then
     redgres_not_implemented "update without --dry-run is not implemented"
   fi
@@ -319,13 +442,8 @@ if [[ "${1:-}" == "postgres-extensions" ]]; then
   if [[ -z "${ext_extension_path}" ]]; then
     redgres_die "--extension-plan is required"
   fi
-  # Existence only. Never source, eval, or cat the file; never print contents.
-  if [[ ! -f "${ext_config_path}" ]]; then
-    redgres_die "--config must be an existing regular file"
-  fi
-  if [[ ! -f "${ext_extension_path}" ]]; then
-    redgres_die "--extension-plan must be an existing regular file"
-  fi
+  redgres_require_trusted_unread_file '--config' "${ext_config_path}"
+  redgres_require_trusted_unread_file '--extension-plan' "${ext_extension_path}"
   if [[ "${ext_dry_run}" -ne 1 ]]; then
     redgres_not_implemented "postgres-extensions apply without --dry-run is not implemented"
   fi
@@ -373,10 +491,7 @@ if [[ "${1:-}" == "backup" ]]; then
   if [[ -z "${backup_config_path}" ]]; then
     redgres_die "--config is required"
   fi
-  # Existence only. Never source, eval, or cat the file; never print contents.
-  if [[ ! -f "${backup_config_path}" ]]; then
-    redgres_die "--config must be an existing regular file"
-  fi
+  redgres_require_trusted_unread_file '--config' "${backup_config_path}"
   if [[ "${backup_dry_run}" -ne 1 ]]; then
     redgres_not_implemented "backup without --dry-run is not implemented"
   fi
@@ -420,13 +535,8 @@ if [[ "${1:-}" == "postgres-plan" ]]; then
   if [[ -z "${plan_extension_path}" ]]; then
     redgres_die "--extension-plan is required"
   fi
-  # Existence only. Never source, eval, or cat the file; never print contents.
-  if [[ ! -f "${plan_config_path}" ]]; then
-    redgres_die "--config must be an existing regular file"
-  fi
-  if [[ ! -f "${plan_extension_path}" ]]; then
-    redgres_die "--extension-plan must be an existing regular file"
-  fi
+  redgres_require_trusted_unread_file '--config' "${plan_config_path}"
+  redgres_require_trusted_unread_file '--extension-plan' "${plan_extension_path}"
   redgres_postgres_plan_dry_run "${plan_config_path}" "${plan_extension_path}"
   exit 0
 fi
@@ -560,16 +670,14 @@ fi
 # identifier-safe databases, pg_cron one control db, one scheduler identity).
 # It is never applied during --dry-run; package/preload/restart stay skipped.
 if [[ -n "${extension_plan}" ]]; then
-  if [[ ! -f "${extension_plan}" ]]; then
-    redgres_die "--extension-plan must be an existing regular file"
-  fi
+  redgres_require_trusted_unread_file '--extension-plan' "${extension_plan}"
   redgres_plan_validate "${extension_plan}"
 fi
 
 # OPS-001: --config is optional on the main path, but when supplied it must be
 # an existing regular file (same rule as the subcommands); never source it.
-if [[ -n "${config_path}" && ! -f "${config_path}" ]]; then
-  redgres_die "--config must be an existing regular file"
+if [[ -n "${config_path}" ]]; then
+  redgres_require_trusted_unread_file '--config' "${config_path}"
 fi
 
 print_stages

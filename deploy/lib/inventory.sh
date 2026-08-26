@@ -1,65 +1,74 @@
 #!/usr/bin/env bash
 # Host --version inventory for existing-mode --dry-run (OPS-002 Partial).
-# Resolve PATH candidates once, validate them, then execute only the absolute
-# trusted path. Do not start servers, source --config, or mutate.
+# Manually scan the caller PATH captured by install.sh, validate the first
+# matching candidate, then execute only its absolute validated path. Runtime
+# PATH is never used for host detection. Do not start servers, source --config,
+# or mutate.
 # SQL SHOW / Redis INFO / PgBouncer SHOW VERSION are deferred.
 set -euo pipefail
-
-redgres_mode_is_group_or_world_writable() {
-  local mode="$1"
-  (( (8#${mode} & 8#022) != 0 ))
-}
 
 redgres_validate_host_binary() {
   local name="$1"
   local candidate="$2"
-  local owner mode component
-  local stat_bin='/usr/bin/stat'
-
-  [[ "${candidate}" == /* ]] || redgres_die "${name} is not trusted"
-  [[ ! -L "${candidate}" && -f "${candidate}" && -x "${candidate}" ]] || redgres_die "${name} is not trusted"
-  [[ -x "${stat_bin}" && ! -L "${stat_bin}" ]] || redgres_die "trusted stat is unavailable"
-  read -r owner mode < <("${stat_bin}" -Lc '%u %a' -- "${candidate}") || redgres_die "${name} is not trusted"
-  if [[ "${EUID}" -eq 0 ]]; then
-    [[ "${owner}" == "0" ]] || redgres_die "${name} is not trusted"
-  else
-    [[ "${owner}" == "0" || "${owner}" == "${EUID}" ]] || redgres_die "${name} is not trusted"
-  fi
-  redgres_mode_is_group_or_world_writable "${mode}" && redgres_die "${name} is not trusted"
-
-  component="${candidate%/*}"
-  [[ -n "${component}" ]] || component='/'
-  while :; do
-    [[ ! -L "${component}" && -d "${component}" ]] || redgres_die "${name} is not trusted"
-    read -r owner mode < <("${stat_bin}" -Lc '%u %a' -- "${component}") || redgres_die "${name} is not trusted"
-    if [[ "${EUID}" -eq 0 ]]; then
-      [[ "${owner}" == "0" ]] || redgres_die "${name} is not trusted"
-    else
-      [[ "${owner}" == "0" || "${owner}" == "${EUID}" ]] || redgres_die "${name} is not trusted"
-    fi
-    redgres_mode_is_group_or_world_writable "${mode}" && redgres_die "${name} is not trusted"
-    [[ "${component}" == "/" ]] && break
-    component="${component%/*}"
-    [[ -n "${component}" ]] || component='/'
-  done
+  redgres_validate_trusted_path "${name}" "${candidate}" executable
 }
 
 redgres_resolve_host_binary() {
   local name="$1"
-  local candidate
-  candidate="$(command -v -- "${name}")" || redgres_die "${name} not found"
-  redgres_validate_host_binary "${name}" "${candidate}"
-  printf '%s' "${candidate}"
+  local search_path="${REDGRES_HOST_SEARCH_PATH-}"
+  local remaining directory candidate suffix has_more
+  local -a suffixes=('')
+
+  case "${OSTYPE-}" in
+    msys*|cygwin*) suffixes+=('.exe') ;;
+  esac
+
+  remaining="${search_path}"
+  while :; do
+    has_more=0
+    if [[ "${remaining}" == *:* ]]; then
+      directory="${remaining%%:*}"
+      remaining="${remaining#*:}"
+      has_more=1
+    else
+      directory="${remaining}"
+    fi
+
+    [[ -n "${directory}" ]] || redgres_die "${name} search path is not trusted"
+    case "${directory}" in
+      /*) ;;
+      *) redgres_die "${name} search path is not trusted" ;;
+    esac
+    case "${directory}" in
+      */./*|*/../*|*/.|*/..)
+        redgres_die "${name} search path is not trusted"
+        ;;
+    esac
+
+    for suffix in "${suffixes[@]}"; do
+      candidate="${directory%/}/${name}${suffix}"
+      if [[ -e "${candidate}" || -L "${candidate}" ]]; then
+        redgres_validate_host_binary "${name}" "${candidate}"
+        printf '%s' "${candidate}"
+        return 0
+      fi
+    done
+
+    [[ "${has_more}" -eq 1 ]] || break
+  done
+  redgres_die "${name} not found"
 }
 
 redgres_read_host_version() {
   local bin="$1"
   local bin_path
+  local env_bin='/usr/bin/env'
   local out status
   bin_path="$(redgres_resolve_host_binary "${bin}")"
   redgres_validate_host_binary "${bin}" "${bin_path}"
+  [[ -x "${env_bin}" && ! -L "${env_bin}" ]] || redgres_die "trusted env is unavailable"
   set +e
-  out="$("${bin_path}" --version)"
+  out="$("${env_bin}" -i PATH="${PATH}" LC_ALL=C "${bin_path}" --version 2>&1)"
   status=$?
   set -e
   out="${out//$'\r'/}"

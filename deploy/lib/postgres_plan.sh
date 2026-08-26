@@ -53,25 +53,24 @@ redgres_plan_compact() {
 redgres_plan_validate() {
   local plan_path="$1"
   local raw='' compact='' policy='' sel_content='' rest='' obj='' cap='' dbs='' db='' sched='' expected=''
+  local plan_fd plan_size snapshot
   local -a selections=() dbs_list=() cap_ids sched_ids protected_ids sched_ids_used
   local sched_ident='' pg_cron_count=0
   read -r -a cap_ids <<< "${REDGRES_PLAN_CAPABILITIES}"
   read -r -a sched_ids <<< "${REDGRES_PLAN_SCHEDULERS}"
   read -r -a protected_ids <<< "${REDGRES_PLAN_PROTECTED_DATABASES}"
 
-  # Re-validate as a regular file immediately before reading (fail closed on a
-  # path swapped to a FIFO/directory after the dispatcher check).
-  if [[ ! -f "${plan_path}" ]]; then
-    redgres_die "--extension-plan must be an existing regular file"
-  fi
-  # NUL detection before bash variable read (variables cannot hold NUL).
-  if [[ "$(wc -c <"${plan_path}")" -ne "$(tr -d '\000' <"${plan_path}" | wc -c)" ]]; then
-    redgres_die "extension plan contains NUL"
-  fi
-  if [[ "$(wc -c <"${plan_path}")" -gt 65536 ]]; then
+  redgres_open_trusted_readonly '--extension-plan' "${plan_path}" plan_fd plan_size
+  if [[ "${plan_size}" -gt 65536 ]]; then
+    redgres_close_trusted_fd "${plan_fd}"
     redgres_die "extension plan is too large"
   fi
-  raw="$(<"${plan_path}")" || redgres_die "extension plan is not readable"
+  snapshot="$(/usr/bin/head -c "${plan_size}" <&"${plan_fd}"; builtin printf 'x')" || redgres_die "extension plan is not readable"
+  redgres_close_trusted_fd "${plan_fd}"
+  raw="${snapshot%x}"
+  if [[ "${#raw}" -ne "${plan_size}" ]]; then
+    redgres_die "extension plan contains NUL"
+  fi
   # A UTF-8 BOM may prefix operator-edited files; strip it defensively.
   if [[ "${raw}" == $'\xEF\xBB\xBF'* ]]; then
     raw="${raw#$'\xEF\xBB\xBF'}"
