@@ -90,7 +90,7 @@ func TestLiveHTTPDropWithBackupCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h, cookie, csrf, _, _ := buildLiveHTTPServer(t, func(c *config.Config) {
+	h, cookie, csrf, _, _, _ := buildLiveHTTPServer(t, func(c *config.Config) {
 		c.BackupCatalogDir = catalogDir
 	})
 
