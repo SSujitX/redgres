@@ -18,11 +18,11 @@ import (
 )
 
 const (
-	bkDB          = "backup_live"
-	bkOwner       = "app_backup_live"
-	bkTargetName  = "redgres-bk-target"
-	bkTargetPort  = "55436"
-	bkSetID       = "feedface0123456789abcdef01234567"
+	bkDB         = "backup_live"
+	bkOwner      = "app_backup_live"
+	bkTargetName = "redgres-bk-target"
+	bkTargetPort = "55436"
+	bkSetID      = "feedface0123456789abcdef01234567"
 )
 
 func pgImageDigest(t *testing.T) string {
@@ -139,7 +139,8 @@ func TestLiveBackupRestoreDropGate(t *testing.T) {
 
 	// Copy the real artifact into the backup catalog jail.
 	catalogDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(catalogDir, "backup.dump"), dumpBytes, 0o600); err != nil {
+	artifactPath := filepath.Join(catalogDir, "backup.dump")
+	if err := os.WriteFile(artifactPath, dumpBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -181,11 +182,48 @@ func TestLiveBackupRestoreDropGate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The DROP gate passes over HTTP with the real-artifact manifest.
+	// Tampering with the real dump after the manifest is written must fail
+	// closed before PostgreSQL or the vault is mutated.
 	h, cookie, csrf, _, _, _ := buildLiveHTTPServer(t, func(c *config.Config) {
 		c.BackupCatalogDir = catalogDir
 	})
+	vconn := livePGConn(t, host, port, "database_console_vault", "postgres", livePGPassword(t, pgPassFile))
+	var originalVaultToken string
+	if err := vconn.QueryRow(ctx, "SELECT encrypted_password FROM public.project_credentials WHERE role_name = $1", bkOwner).Scan(&originalVaultToken); err != nil {
+		t.Fatalf("vault row before tamper: %v", err)
+	}
+	tamperedBytes := append([]byte(nil), dumpBytes...)
+	tamperedBytes[len(tamperedBytes)/2] ^= 0xff
+	if err := os.WriteFile(artifactPath, tamperedBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	rec := liveAuthed(t, h, http.MethodDelete, "/api/v1/postgres/databases/"+bkDB, cookie, csrf,
+		`{"database_confirmation":"`+bkDB+`","owner_password":"`+liveOwnerPassword+`"}`)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("tampered backup drop status %d: %s", rec.Code, rec.Body.String())
+	}
+	var databaseExists bool
+	if err := superConn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", bkDB).Scan(&databaseExists); err != nil {
+		t.Fatalf("database check after denied drop: %v", err)
+	}
+	if !databaseExists {
+		t.Fatal("database was dropped despite tampered backup")
+	}
+	var vaultTokenAfterDenial string
+	if err := vconn.QueryRow(ctx, "SELECT encrypted_password FROM public.project_credentials WHERE role_name = $1", bkOwner).Scan(&vaultTokenAfterDenial); err != nil {
+		t.Fatalf("vault row after denied drop: %v", err)
+	}
+	if vaultTokenAfterDenial != originalVaultToken {
+		t.Fatal("vault credential changed despite denied drop")
+	}
+
+	// Restoring the exact bytes referenced by the manifest makes the same
+	// checksummed backup eligible and allows the DROP to complete.
+	if err := os.WriteFile(artifactPath, dumpBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec = liveAuthed(t, h, http.MethodDelete, "/api/v1/postgres/databases/"+bkDB, cookie, csrf,
 		`{"database_confirmation":"`+bkDB+`","owner_password":"`+liveOwnerPassword+`"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("drop status %d: %s", rec.Code, rec.Body.String())
@@ -196,9 +234,8 @@ func TestLiveBackupRestoreDropGate(t *testing.T) {
 	if strings.Contains(rec.Body.String(), bkDB) {
 		t.Fatal("dropped database still listed")
 	}
-	vconn := livePGConn(t, host, port, "database_console_vault", "postgres", livePGPassword(t, pgPassFile))
 	var vaultCount int
-	if err := vconn.QueryRow(ctx, "SELECT count(*)::int FROM public.project_credentials WHERE role_name = '" + bkOwner + "'").Scan(&vaultCount); err != nil {
+	if err := vconn.QueryRow(ctx, "SELECT count(*)::int FROM public.project_credentials WHERE role_name = $1", bkOwner).Scan(&vaultCount); err != nil {
 		t.Fatalf("vault check: %v", err)
 	}
 	if vaultCount != 0 {
