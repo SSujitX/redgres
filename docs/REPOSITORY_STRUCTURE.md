@@ -30,6 +30,8 @@ Redgres/
 │   │   ├── types.go
 │   │   ├── parse.go
 │   │   └── evaluate.go
+│   ├── release/
+│   │   └── release.go
 │   ├── postgresadmin/
 │   │   ├── adapter.go
 │   │   ├── databases.go
@@ -166,6 +168,7 @@ Redgres/
 - UI API types are generated from or checked against the versioned API contract where practical.
 - UI shell, search, and primitives are shared components; feature folders consume semantic tokens and do not create independent navigation, palettes, or breakpoints.
 - Deployment scripts never source application `.env` files as shell code; they parse known keys safely.
+- `internal/release` is the only Go allow-list for PostgreSQL majors (`17|18`) and Redis series (`8.2|8.8`). Expected-version config cannot widen it. Skippable live-test OCI pin constants may live here; they are not §6 evidence.
 - `deploy/manifests/postgres-capabilities.json` is release-owned and maps canonical capability IDs to exact PostgreSQL-major/architecture artifacts, SQL names, preload/restart metadata and verification probes. Operator plans reference IDs only and cannot inject packages, repositories, SQL or libraries.
 - Tests use fixtures and ephemeral services, never live production endpoints by default.
 
