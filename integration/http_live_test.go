@@ -119,9 +119,9 @@ func statusStates(t *testing.T, rec *httptest.ResponseRecorder) map[string]strin
 // buildLiveHTTPServer boots an in-process Redgres HTTP server wired to real
 // PostgreSQL (with provisioned vault), real Redis, and a real SQLite control
 // plane, seeds the owner, logs in, and returns the handler, session
-// credentials, and the live PostgreSQL host/port. cfgExtra is applied before
-// the server is constructed.
-func buildLiveHTTPServer(t *testing.T, cfgExtra func(*config.Config)) (http.Handler, string, string, string, string) {
+// credentials, the live PostgreSQL host/port, and the SQLite path. cfgExtra
+// is applied before the server is constructed.
+func buildLiveHTTPServer(t *testing.T, cfgExtra func(*config.Config)) (http.Handler, string, string, string, string, string) {
 	t.Helper()
 	clearInheritedRedgresEnv(t)
 	pgHost, pgPort, pgPassFile, pgOK := livePostgresEnv(t)
@@ -194,7 +194,7 @@ func buildLiveHTTPServer(t *testing.T, cfgExtra func(*config.Config)) (http.Hand
 	}
 	h := srv.Handler()
 	cookie, csrf := liveLogin(t, h)
-	return h, cookie, csrf, pgHost, pgPort
+	return h, cookie, csrf, pgHost, pgPort, dbPath
 }
 
 // TestLiveHTTPOverRealServices drives the HTTP API of an in-process Redgres
@@ -204,7 +204,7 @@ func buildLiveHTTPServer(t *testing.T, cfgExtra func(*config.Config)) (http.Hand
 // AUTH-006 owner-password reauth, the DROP backup-catalog 503 gate, the Redis
 // ACL user lifecycle, and audit visibility.
 func TestLiveHTTPOverRealServices(t *testing.T) {
-	h, cookie, csrf, pgHost, pgPort := buildLiveHTTPServer(t, nil)
+	h, cookie, csrf, pgHost, pgPort, _ := buildLiveHTTPServer(t, nil)
 
 	// --- PLAT-001: live component status ---
 	states := statusStates(t, liveAuthed(t, h, http.MethodGet, "/api/v1/status", cookie, csrf, ""))
