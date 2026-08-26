@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { fetchAuditEvents, type AuditEvent } from "../../api/audit";
 import { fetchRedisStatus, type RedisStatusMetrics, type RedisStatusPayload } from "../../api/redis";
 import { errorMessage, fetchStatus, type StatusComponent } from "../../api/status";
 import type { ToolLinks } from "../../api/auth";
@@ -28,6 +29,8 @@ type RedisDetail =
 
 const sessionExpired = "Your session has expired. Sign in again to continue.";
 const statusUnavailable = "Component status is unavailable. Try again.";
+const storageUnavailable = "Control-plane storage is unavailable";
+const auditUnavailable = "Audit history is unavailable. Try again.";
 
 function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === "AbortError";
@@ -159,6 +162,67 @@ function indexById(components: StatusComponent[]): Map<string, StatusComponent> 
   return out;
 }
 
+function IsolatedText({ value, identifier }: { value: string; identifier?: boolean }) {
+  return <span className={identifier ? "bidi-isolate identifier" : "bidi-isolate"}>{displayText(value)}</span>;
+}
+
+function RecordedText({ value, identifier }: { value: string; identifier?: boolean }) {
+  if (value === "") {
+    return (
+      <span className={identifier ? "bidi-isolate identifier" : "bidi-isolate"}>
+        —<span className="visually-hidden"> Not recorded</span>
+      </span>
+    );
+  }
+  return <IsolatedText value={value} identifier={identifier} />;
+}
+
+function WhenStamp({ value }: { value: string }) {
+  const shown = displayText(value);
+  return (
+    <time className="bidi-isolate identifier" dateTime={shown}>
+      {shown} UTC
+    </time>
+  );
+}
+
+function RecentAuditList({ events }: { events: AuditEvent[] }) {
+  return (
+    <ol className="overview-recent-audit-list">
+      {events.map((event) => (
+        <li key={event.id} className="overview-recent-audit-item">
+          <dl>
+            <div>
+              <dt>When</dt>
+              <dd>
+                <WhenStamp value={event.created_at ?? ""} />
+              </dd>
+            </div>
+            <div>
+              <dt>Action</dt>
+              <dd>
+                <IsolatedText value={event.action ?? ""} />
+              </dd>
+            </div>
+            <div>
+              <dt>Target</dt>
+              <dd>
+                <RecordedText value={event.target ?? ""} identifier />
+              </dd>
+            </div>
+            <div>
+              <dt>Outcome</dt>
+              <dd>
+                <IsolatedText value={event.outcome ?? ""} />
+              </dd>
+            </div>
+          </dl>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function ToolLinkAnchors({ links }: { links: ToolLinks }) {
   const pgadmin = links.pgadmin;
   const redisinsight = links.redisinsight;
@@ -240,6 +304,9 @@ export default function OverviewPage({ toolLinks = {} }: { toolLinks?: ToolLinks
   const [redisDetail, setRedisDetail] = useState<RedisDetail>({ kind: "none" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[] | null>(null);
+  const [auditError, setAuditError] = useState("");
+  const [auditLoading, setAuditLoading] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -251,11 +318,47 @@ export default function OverviewPage({ toolLinks = {} }: { toolLinks?: ToolLinks
     };
   }, []);
 
+  async function loadAudit(controller: AbortController) {
+    setAuditLoading(true);
+    setAuditError("");
+    setAuditEvents(null);
+    try {
+      const result = await fetchAuditEvents({ limit: 8 }, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 200 && Array.isArray(result.body.events)) {
+        setAuditEvents(result.body.events);
+        setAuditError("");
+        return;
+      }
+      if (result.status === 401) {
+        setAuditError(sessionExpired);
+        return;
+      }
+      if (result.status === 503) {
+        setAuditError(errorMessage(result.body, storageUnavailable));
+        return;
+      }
+      setAuditError(errorMessage(result.body, auditUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setAuditError(auditUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setAuditLoading(false);
+      }
+    }
+  }
+
   async function load(controller: AbortController) {
     setLoading(true);
     setError("");
     setComponents(null);
     setRedisDetail({ kind: "none" });
+    void loadAudit(controller);
     const statusOutcome = fetchStatus({ signal: controller.signal }).then(
       (result) => ({ kind: "ok" as const, result }),
       (err: unknown) => ({ kind: "throw" as const, err }),
@@ -314,6 +417,7 @@ export default function OverviewPage({ toolLinks = {} }: { toolLinks?: ToolLinks
 
   const byId = components ? indexById(components) : new Map<string, StatusComponent>();
   const showCards = !error && components !== null;
+  const showRecentAudit = !error;
 
   return (
     <article>
@@ -365,6 +469,26 @@ export default function OverviewPage({ toolLinks = {} }: { toolLinks?: ToolLinks
             );
           })}
         </ul>
+      ) : null}
+      {showRecentAudit ? (
+        <section className="overview-recent-audit">
+          <h2>Recent audit</h2>
+          {auditError ? (
+            <p className="form-warning" role="alert">
+              {auditError}
+            </p>
+          ) : auditLoading && auditEvents === null ? (
+            <p className="muted-copy" role="status">
+              Loading recent audit.
+            </p>
+          ) : auditEvents !== null && auditEvents.length === 0 ? (
+            <p className="muted-copy" role="status">
+              No audit events.
+            </p>
+          ) : auditEvents !== null && auditEvents.length > 0 ? (
+            <RecentAuditList events={auditEvents} />
+          ) : null}
+        </section>
       ) : null}
     </article>
   );

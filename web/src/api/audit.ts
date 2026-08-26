@@ -19,8 +19,23 @@ export type AuditPage = {
   request_id?: string;
 };
 
-export async function fetchAuditEvents(cursor?: string, init: RequestInit = {}) {
-  const path = cursor ? `/api/v1/audit?cursor=${encodeURIComponent(cursor)}` : "/api/v1/audit";
+export type FetchAuditEventsQuery = {
+  cursor?: string;
+  limit?: number;
+};
+
+export async function fetchAuditEvents(query?: string | FetchAuditEventsQuery, init: RequestInit = {}) {
+  const cursor = typeof query === "string" ? query : query?.cursor;
+  const limit = typeof query === "object" && query != null ? query.limit : undefined;
+  const params = new URLSearchParams();
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+  if (limit != null) {
+    params.set("limit", String(limit));
+  }
+  const qs = params.toString();
+  const path = qs === "" ? "/api/v1/audit" : `/api/v1/audit?${qs}`;
   return apiRequest<AuditPage & ApiErrorBody>(path, init);
 }
 

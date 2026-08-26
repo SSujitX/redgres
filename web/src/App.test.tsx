@@ -407,6 +407,10 @@ function isAuditUrl(url: string): boolean {
   return url === "/api/v1/audit" || url.startsWith("/api/v1/audit?");
 }
 
+function isCompactAuditUrl(url: string): boolean {
+  return url === "/api/v1/audit?limit=8";
+}
+
 function isStatusUrl(url: string): boolean {
   return url === "/api/v1/status" || url.startsWith("/api/v1/status?");
 }
@@ -889,6 +893,12 @@ function disconnectedStatus() {
   });
 }
 
+function disconnectedAudit() {
+  return jsonResponse(200, {
+    events: [],
+  });
+}
+
 function mixedStatus() {
   return jsonResponse(200, {
     components: [
@@ -1068,6 +1078,9 @@ function unknownApi(url: string) {
   if (isSearchUrl(url)) {
     return disconnectedSearch();
   }
+  if (isAuditUrl(url)) {
+    return disconnectedAudit();
+  }
   return jsonResponse(500, {});
 }
 
@@ -1114,6 +1127,7 @@ describe("App session and login", () => {
     expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/healthz"))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isStatusUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isAuditUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isRedisStatusUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isSearchUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !isConnectionUrl(String(call[0])))).toBe(true);
@@ -1255,7 +1269,15 @@ describe("App session and login", () => {
     const searchCall = fetch.mock.calls.find((call) => String(call[0]) === "/api/v1/search?q=audit");
     const method = searchCall?.[1]?.method;
     expect(method === undefined || method === "GET").toBe(true);
-    expect(fetch.mock.calls.every((call) => !isAuditUrl(String(call[0])))).toBe(true);
+    expect(
+      fetch.mock.calls.every((call) => {
+        const url = String(call[0]);
+        if (!isAuditUrl(url)) {
+          return true;
+        }
+        return isCompactAuditUrl(url);
+      }),
+    ).toBe(true);
     const redisGroup = within(dialog).getByRole("region", { name: "Redis ACL users" });
     expect(await within(redisGroup).findByText("Not configured")).toBeInTheDocument();
     expect(within(dialog).queryByText(/Redis ACL user search is not available yet/)).not.toBeInTheDocument();
@@ -1313,7 +1335,8 @@ describe("App session and login", () => {
     const search = await screen.findByRole("button", { name: "Search" });
     fireEvent.click(search);
     fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "audit" } });
-    expect(screen.getByRole("status")).toHaveTextContent("1 matching page.");
+    const searchDialog = screen.getByRole("dialog", { name: "Search" });
+    expect(within(searchDialog).getByRole("status")).toHaveTextContent("1 matching page.");
     fireEvent.click(screen.getByRole("button", { name: "Close search" }));
     await waitFor(() => {
       expect(search).toHaveFocus();
@@ -1347,11 +1370,11 @@ describe("App session and login", () => {
     expect(within(dialog).getByRole("region", { name: "Redis ACL users" })).toBeInTheDocument();
     expect(within(dialog).getByRole("region", { name: "Navigation" })).toBeInTheDocument();
     expect(within(dialog).getByRole("region", { name: "Documentation" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Searching.");
-    expect(screen.getByRole("status").textContent).not.toMatch(/No matching pages/);
+    expect(within(dialog).getByRole("status")).toHaveTextContent("Searching.");
+    expect(within(dialog).getByRole("status").textContent).not.toMatch(/No matching pages/);
     const hit = await screen.findByRole("button", { name: /project_a/ });
     expect(hit.className).toContain("nav-result-postgres");
-    expect(screen.getByRole("status")).toHaveTextContent("1 matching database.");
+    expect(within(dialog).getByRole("status")).toHaveTextContent("1 matching database.");
     expect(screen.queryByText(/^No matching pages/)).not.toBeInTheDocument();
     expect(screen.queryByText("canary-secret")).not.toBeInTheDocument();
     expect(dialog.querySelector("input[type=password]")).toBeNull();
@@ -1531,7 +1554,9 @@ describe("App session and login", () => {
     fireEvent.change(input, { target: { value: "x".repeat(129) } });
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(fetch.mock.calls.every((call) => !isSearchUrl(String(call[0])))).toBe(true);
-    expect(screen.getByRole("status")).toHaveTextContent("Query is too long.");
+    expect(within(screen.getByRole("dialog", { name: "Search" })).getByRole("status")).toHaveTextContent(
+      "Query is too long.",
+    );
     expect(input).toHaveAttribute("aria-invalid", "true");
   });
 
@@ -7144,7 +7169,8 @@ describe("App session and login", () => {
     fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
     expect(await screen.findByRole("table", { name: "Audit events" })).toBeInTheDocument();
     const auditCalls = fetch.mock.calls.map((call) => String(call[0])).filter((url) => isAuditUrl(url));
-    expect(auditCalls[0]).toBe("/api/v1/audit");
+    expect(auditCalls[0]).toBe("/api/v1/audit?limit=8");
+    expect(auditCalls.filter((url) => !isCompactAuditUrl(url))[0]).toBe("/api/v1/audit");
   });
 
   it("pages older with the verbatim next_cursor and disables Older without a usable cursor (AC-3)", async () => {
@@ -7177,6 +7203,7 @@ describe("App session and login", () => {
     fireEvent.click(screen.getByRole("button", { name: "Older" }));
     expect(await screen.findAllByText("page-two")).not.toHaveLength(0);
     expect(fetch.mock.calls.map((call) => String(call[0])).filter((url) => isAuditUrl(url))).toEqual([
+      "/api/v1/audit?limit=8",
       "/api/v1/audit",
       "/api/v1/audit?cursor=YTE6MTQyMQ",
     ]);
@@ -7270,6 +7297,7 @@ describe("App session and login", () => {
     fireEvent.click(screen.getByRole("button", { name: "Newer" }));
     expect(await screen.findAllByText("newest")).not.toHaveLength(0);
     expect(fetch.mock.calls.map((call) => String(call[0])).filter((url) => isAuditUrl(url))).toEqual([
+      "/api/v1/audit?limit=8",
       "/api/v1/audit",
       "/api/v1/audit?cursor=cursor-one",
       "/api/v1/audit?cursor=cursor-two",
@@ -7703,6 +7731,7 @@ describe("App session and login", () => {
     render(<App />);
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !isStatusUrl(String(call[0])))).toBe(true);
+    expect(fetch.mock.calls.every((call) => !isAuditUrl(String(call[0])))).toBe(true);
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/healthz"))).toBe(true);
     expect(screen.queryByLabelText("PgBouncer: Not configured")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("PgBouncer: Not connected")).not.toBeInTheDocument();
@@ -7849,7 +7878,7 @@ describe("App session and login", () => {
       return unknownApi(url);
     });
     render(<App />);
-    expect(await screen.findByRole("status")).toHaveTextContent("Loading component status.");
+    expect(await screen.findByText("Loading component status.")).toHaveAttribute("role", "status");
     expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
     release();
     expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
@@ -7873,11 +7902,14 @@ describe("App session and login", () => {
     const urls = fetch.mock.calls.map((call) => String(call[0]));
     const statusCalls = urls.filter((url) => isStatusUrl(url));
     const redisStatusCalls = urls.filter((url) => isRedisStatusUrl(url));
+    const compactAuditCalls = urls.filter((url) => isCompactAuditUrl(url));
     expect(isStatusUrl("/api/v1/redis/status")).toBe(false);
     expect(statusCalls.length).toBeGreaterThanOrEqual(2);
     expect(statusCalls.every((url) => url === "/api/v1/status")).toBe(true);
     expect(redisStatusCalls.length).toBeGreaterThanOrEqual(2);
     expect(redisStatusCalls.every((url) => url === "/api/v1/redis/status")).toBe(true);
+    expect(compactAuditCalls.length).toBeGreaterThanOrEqual(2);
+    expect(compactAuditCalls.every((url) => url === "/api/v1/audit?limit=8")).toBe(true);
   });
 
   it("clears Overview cards on logout", async () => {
@@ -7900,6 +7932,465 @@ describe("App session and login", () => {
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(screen.queryByLabelText("PostgreSQL direct: Unavailable")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+  });
+
+  it("mounts Overview compact audit as GET /api/v1/audit?limit=8 without CSRF or cursor", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-mount".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Recent audit" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isCompactAuditUrl(String(call[0])))).toBe(true);
+    });
+    const compactCalls = fetch.mock.calls.filter((call) => isCompactAuditUrl(String(call[0])));
+    expect(compactCalls.length).toBe(1);
+    expect(String(compactCalls[0]?.[0])).toBe("/api/v1/audit?limit=8");
+    expect(String(compactCalls[0]?.[0])).not.toContain("cursor");
+    const method = compactCalls[0]?.[1]?.method;
+    expect(method === undefined || method === "GET").toBe(true);
+    expect(new Headers(compactCalls[0]?.[1]?.headers).get("X-CSRF-Token")).toBeNull();
+    expect(fetch.mock.calls.every((call) => String(call[0]) !== "/api/v1/audit")).toBe(true);
+  });
+
+  it("paints compact When, Action, Target, and Outcome and never extra keys", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-paint".padEnd(64, "0") });
+      }
+      if (isCompactAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [
+            auditEvent({
+              id: 20,
+              actor: "hidden-actor",
+              action: "newer-action",
+              target: "shown-target\u202E",
+              outcome: "failure",
+              request_id: "hidden-request-id",
+              client_ip: "192.0.2.55",
+              created_at: "2026-08-25T04:11:09.123456789Z",
+              metadata: { password: "canary-secret", url: "postgres://canary-secret@10.0.0.1/db" },
+              password: "canary-secret",
+              extra_url: "postgres://canary-secret@10.0.0.1/db",
+            }),
+            auditEvent({
+              id: 19,
+              actor: "also-hidden",
+              action: "older-action",
+              target: "",
+              outcome: "success",
+              request_id: "also-hidden-request",
+              client_ip: "192.0.2.9",
+              created_at: "2026-08-24T00:00:00Z",
+            }),
+          ],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByText("newer-action")).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { name: "Recent audit" });
+    expect(heading.closest(".status-card-postgres")).toBeNull();
+    expect(heading.closest(".status-card-redis")).toBeNull();
+    const region = heading.closest(".overview-recent-audit");
+    expect(region).not.toBeNull();
+    expect(region?.querySelector(".service-rail-postgres")).toBeNull();
+    expect(region?.querySelector(".service-rail-redis")).toBeNull();
+    expect(region?.querySelector(".audit-stack")).toBeNull();
+    expect(region?.querySelector(".audit-grid")).toBeNull();
+    const list = region?.querySelector(".overview-recent-audit-list");
+    expect(list).not.toBeNull();
+    const listText = list?.textContent ?? "";
+    expect(listText.indexOf("newer-action")).toBeLessThan(listText.indexOf("older-action"));
+    expect(listText).toContain("When");
+    expect(listText).toContain("Action");
+    expect(listText).toContain("Target");
+    expect(listText).toContain("Outcome");
+    expect(within(region as HTMLElement).getByText("newer-action")).toHaveClass("bidi-isolate");
+    expect(within(region as HTMLElement).getByText("failure")).toHaveClass("bidi-isolate");
+    const target = within(region as HTMLElement).getByText(/shown-target/);
+    expect(target).toHaveClass("bidi-isolate");
+    expect(target).toHaveClass("identifier");
+    expect(target.textContent).toContain("\uFFFD");
+    expect(target.textContent).not.toContain("\u202E");
+    const stamp = within(region as HTMLElement).getByText(/2026-08-25T04:11:09\.123456789Z/);
+    expect(stamp.tagName).toBe("TIME");
+    expect(stamp).toHaveClass("bidi-isolate");
+    expect(stamp).toHaveClass("identifier");
+    expect(stamp).toHaveAttribute("dateTime", "2026-08-25T04:11:09.123456789Z");
+    expect(stamp.textContent).toContain("UTC");
+    expect(within(region as HTMLElement).getByText("Not recorded")).toHaveClass("visually-hidden");
+    expect(screen.queryByText("hidden-actor")).not.toBeInTheDocument();
+    expect(screen.queryByText("also-hidden")).not.toBeInTheDocument();
+    expect(screen.queryByText("hidden-request-id")).not.toBeInTheDocument();
+    expect(screen.queryByText("192.0.2.55")).not.toBeInTheDocument();
+    expect(screen.queryByText("192.0.2.9")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("canary-secret");
+    expect(document.body.textContent).not.toContain("postgres://");
+  });
+
+  it("shows Overview compact empty audit only after HTTP 200 events: []", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-empty".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByText("No audit events.")).toHaveAttribute("role", "status");
+    expect(screen.getByRole("heading", { name: "Recent audit" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows Overview compact audit loading status", async () => {
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-load".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url) || isCompactAuditUrl(url)) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blocked.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        if (isStatusUrl(url)) {
+          return disconnectedStatus();
+        }
+        return disconnectedAudit();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByText("Loading recent audit.")).toHaveAttribute("role", "status");
+    expect(screen.getByText("Loading component status.")).toHaveAttribute("role", "status");
+    release();
+    expect(await screen.findByText("No audit events.")).toHaveAttribute("role", "status");
+    expect(screen.queryByText("Loading recent audit.")).not.toBeInTheDocument();
+  });
+
+  it("keeps Overview status cards when compact audit returns 401", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-401".padEnd(64, "0") });
+      }
+      if (isCompactAuditUrl(url)) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    expect(screen.getByLabelText("PostgreSQL direct: Unavailable")).toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    expect(screen.getByLabelText("Redis: Reachable")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tool links: Not configured")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByText("No audit events.")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
+  });
+
+  it("keeps Overview status cards when compact audit returns 503", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-503".padEnd(64, "0") });
+      }
+      if (isCompactAuditUrl(url)) {
+        return jsonResponse(503, {
+          error: { code: "dependency_unavailable", message: "Control-plane storage is unavailable" },
+        });
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    expect(screen.getByLabelText("PostgreSQL direct: Unavailable")).toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    expect(screen.getByLabelText("Redis: Reachable")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tool links: Not configured")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Control-plane storage is unavailable");
+    expect(screen.queryByText("No audit events.")).not.toBeInTheDocument();
+  });
+
+  it("keeps Overview status cards when compact audit throws", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-throw".padEnd(64, "0") });
+      }
+      if (isCompactAuditUrl(url)) {
+        throw new TypeError("Failed to fetch");
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    expect(screen.getByLabelText("PostgreSQL direct: Unavailable")).toBeInTheDocument();
+    expect(screen.getByLabelText("PgBouncer: Not configured")).toBeInTheDocument();
+    expect(screen.getByLabelText("Redis: Reachable")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tool links: Not configured")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Audit history is unavailable. Try again.");
+    expect(screen.queryByText("No audit events.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Control-plane storage is unavailable")).not.toBeInTheDocument();
+  });
+
+  it("hides compact audit when Overview status is 401", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-status-401-audit".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      if (isCompactAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [auditEvent({ action: "must-not-paint-audit" })],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired. Sign in again to continue.");
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent audit" })).not.toBeInTheDocument();
+    expect(screen.queryByText("must-not-paint-audit")).not.toBeInTheDocument();
+    expect(screen.queryByText("No audit events.")).not.toBeInTheDocument();
+  });
+
+  it("hides compact audit when Overview status fetch throws", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-status-throw-audit".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        throw new TypeError("Failed to fetch");
+      }
+      if (isCompactAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [auditEvent({ action: "must-not-paint-audit" })],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Component status is unavailable. Try again.");
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent audit" })).not.toBeInTheDocument();
+    expect(screen.queryByText("must-not-paint-audit")).not.toBeInTheDocument();
+  });
+
+  it("hides compact audit when Overview status payload is malformed", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-status-malformed-audit".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => {
+            throw new SyntaxError("Unexpected end of JSON input");
+          },
+        };
+      }
+      if (isCompactAuditUrl(url)) {
+        return jsonResponse(200, {
+          events: [auditEvent({ action: "must-not-paint-audit" })],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Component status is unavailable. Try again.");
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent audit" })).not.toBeInTheDocument();
+    expect(screen.queryByText("must-not-paint-audit")).not.toBeInTheDocument();
+  });
+
+  it("refetches status, redis/status, and compact audit on Overview Refresh", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-refresh".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      if (isCompactAuditUrl(url)) {
+        return jsonResponse(200, { events: [auditEvent({ action: "refresh-action" })] });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByText("refresh-action")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText("refresh-action")).toBeInTheDocument();
+    const urls = fetch.mock.calls.map((call) => String(call[0]));
+    expect(urls.filter((url) => isStatusUrl(url)).length).toBeGreaterThanOrEqual(2);
+    expect(urls.filter((url) => isRedisStatusUrl(url)).length).toBeGreaterThanOrEqual(2);
+    expect(urls.filter((url) => isCompactAuditUrl(url)).length).toBeGreaterThanOrEqual(2);
+    expect(urls.filter((url) => isAuditUrl(url)).every((url) => isCompactAuditUrl(url))).toBe(true);
+  });
+
+  it("aborts in-flight compact audit when leaving Overview", async () => {
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const rejections: unknown[] = [];
+    const onRejection = (event: PromiseRejectionEvent) => {
+      rejections.push(event.reason);
+    };
+    window.addEventListener("unhandledrejection", onRejection);
+    stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-abort".padEnd(64, "0") });
+      }
+      if (isCompactAuditUrl(url)) {
+        await new Promise<void>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          const onAbort = () => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          init?.signal?.addEventListener("abort", onAbort);
+          void blocked.then(() => {
+            init?.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          });
+        });
+        return jsonResponse(200, { events: [auditEvent({ action: "leftover-audit-action" })] });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    expect(await screen.findByText("Loading recent audit.")).toHaveAttribute("role", "status");
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Documentation" }),
+    );
+    expect(await screen.findByRole("heading", { name: "Documentation" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent audit" })).not.toBeInTheDocument();
+    expect(screen.queryByText("leftover-audit-action")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading recent audit.")).not.toBeInTheDocument();
+    release();
+    await waitFor(() => {
+      expect(rejections).toEqual([]);
+    });
+    window.removeEventListener("unhandledrejection", onRejection);
+  });
+
+  it("clears Overview compact audit events on logout", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-logout".padEnd(64, "0") });
+      }
+      if (url.includes("/api/v1/auth/logout")) {
+        return jsonResponse(200, { ok: true });
+      }
+      if (isCompactAuditUrl(url)) {
+        return jsonResponse(200, { events: [auditEvent({ action: "logout-audit-action" })] });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByText("logout-audit-action")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "admin" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByText("logout-audit-action")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent audit" })).not.toBeInTheDocument();
+  });
+
+  it("does not persist Overview compact audit in storage or the location URL", async () => {
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-storage".padEnd(64, "0") });
+      }
+      if (isCompactAuditUrl(url)) {
+        return jsonResponse(200, { events: [auditEvent({ action: "stored-audit-action" })] });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByText("stored-audit-action")).toBeInTheDocument();
+    expect(localSet).not.toHaveBeenCalled();
+    expect(window.location.search).not.toMatch(/audit|limit|cursor/);
+    expect(window.location.hash).not.toMatch(/audit/);
+    localSet.mockRestore();
+  });
+
+  it("does not GET /audit from System, Documentation, Permission presets, Databases, or ACL users after leaving Overview", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-leave".padEnd(64, "0") });
+      }
+      if (isRedisUsersListUrl(url)) {
+        return redisAclListOk([redisAclListItem()]);
+      }
+      if (isRedisPresetsUrl(url)) {
+        return redisPresetsOk();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Recent audit" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isCompactAuditUrl(String(call[0])))).toBe(true);
+    });
+    const countAfterOverview = fetch.mock.calls.filter((call) => isAuditUrl(String(call[0]))).length;
+    expect(countAfterOverview).toBe(1);
+    goToSystem();
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("Loading component status.")).not.toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Documentation" }),
+    );
+    expect(await screen.findByRole("heading", { name: "Documentation" })).toBeInTheDocument();
+    goToPermissionPresets();
+    expect(await screen.findByRole("heading", { name: "Permission presets" })).toBeInTheDocument();
+    await goToDatabases();
+    expect(await screen.findByRole("heading", { name: "Databases" })).toBeInTheDocument();
+    goToAclUsers();
+    expect(await screen.findByRole("heading", { name: "ACL users" })).toBeInTheDocument();
+    expect(fetch.mock.calls.filter((call) => isAuditUrl(String(call[0]))).length).toBe(countAfterOverview);
+    expect(fetch.mock.calls.filter((call) => isAuditUrl(String(call[0]))).every((call) => isCompactAuditUrl(String(call[0])))).toBe(
+      true,
+    );
   });
 
   it("paints no tool link anchors when session omits tool_links and status is not_configured", async () => {
