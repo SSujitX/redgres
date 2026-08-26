@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/SSujitX/redgres/internal/audit"
+	"github.com/SSujitX/redgres/internal/operations"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
 	"github.com/SSujitX/redgres/internal/secrets"
 )
@@ -221,7 +223,7 @@ func TestPostgresDuplicateProtectedSourceIs404NoDDL(t *testing.T) {
 	}
 }
 
-func TestPostgresDuplicate201NoStoreOneTimeFalse(t *testing.T) {
+func TestPostgresDuplicate202NoStoreNoCredential(t *testing.T) {
 	fx := loadPython49(t)
 	cat := duplicateMemory(t)
 	srv := duplicateServer(t, cat, secrets.DeriveVaultKey(fx.SessionSecret))
@@ -230,7 +232,7 @@ func TestPostgresDuplicate201NoStoreOneTimeFalse(t *testing.T) {
 	cookie, csrf := login(t, h)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, authed(http.MethodPost, postgresDuplicatePath, cookie, csrf, postgresDuplicateBody))
-	if rec.Code != http.StatusCreated {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
 	}
 	if rec.Header().Get("Cache-Control") != "no-store, max-age=0" {
@@ -239,56 +241,63 @@ func TestPostgresDuplicate201NoStoreOneTimeFalse(t *testing.T) {
 	if rec.Header().Get("Pragma") != "no-cache" {
 		t.Fatalf("pragma = %q", rec.Header().Get("Pragma"))
 	}
-	if !strings.Contains(rec.Body.String(), `"one_time":false`) {
-		t.Fatalf("one_time must be JSON false: %s", rec.Body.String())
+	if strings.Contains(rec.Body.String(), `"credential"`) || strings.Contains(rec.Body.String(), `"password"`) || strings.Contains(rec.Body.String(), `"one_time"`) {
+		t.Fatalf("202 leaked credential: %s", rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), `"warning"`) || strings.Contains(rec.Body.String(), `"transferred_from"`) {
-		t.Fatal("must not copy sibling warning/transferred_from")
+	if strings.Contains(rec.Body.String(), "postgresql://") || strings.Contains(rec.Body.String(), duplicateCanaryPassword) {
+		t.Fatalf("202 leaked secret: %s", rec.Body.String())
+	}
+	if cat.CreateRoleCalls != 0 || cat.CreateDatabaseTemplateCalls != 0 || cat.TerminateCalls != 0 {
+		t.Fatal("202 must not wait for TEMPLATE")
 	}
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	resource, _ := body["resource"].(map[string]any)
-	if resource["type"] != "postgres_database" || resource["name"] != "project_a_copy" {
-		t.Fatalf("resource = %#v", resource)
+	if _, ok := body["resource"]; ok {
+		t.Fatalf("202 must not include resource: %#v", body)
 	}
-	cred, _ := body["credential"].(map[string]any)
-	password, _ := cred["password"].(string)
-	if cred["username"] != "app_project_a_copy" || password == "" || cred["one_time"] != false {
-		t.Fatalf("credential = %#v", cred)
+	op, _ := body["operation"].(map[string]any)
+	id, _ := op["id"].(string)
+	if !requestIDOK(id) || op["status"] != "queued" {
+		t.Fatalf("operation = %#v", op)
 	}
-	urls, _ := cred["urls"].(map[string]any)
-	if urls["direct"] != "postgresql://app_project_a_copy:"+password+"@db.example.com:5432/project_a_copy?sslmode=require" {
-		t.Fatalf("direct = %#v", urls["direct"])
+	if _, ok := op["result"]; ok {
+		t.Fatalf("202 operation must not include result: %#v", op)
 	}
-	if urls["pooled"] != "postgresql://app_project_a_copy:"+password+"@db.example.com:6432/project_a_copy?sslmode=require" {
-		t.Fatalf("pooled = %#v", urls["pooled"])
+	reqID, _ := body["request_id"].(string)
+	if !requestIDOK(reqID) {
+		t.Fatalf("request_id = %q", reqID)
 	}
-	id, _ := body["request_id"].(string)
-	if !requestIDOK(id) {
-		t.Fatalf("request_id = %q", id)
-	}
-	var metadata string
-	if err := srv.db.QueryRow(`SELECT metadata FROM audit_events WHERE action = 'postgres.database.duplicate' AND outcome = 'success' ORDER BY id DESC LIMIT 1`).Scan(&metadata); err != nil {
+	var resultJSON string
+	if err := srv.db.QueryRow(`SELECT result_json FROM operations WHERE id = ?`, id).Scan(&resultJSON); err != nil {
 		t.Fatal(err)
 	}
-	var meta map[string]any
-	if err := json.Unmarshal([]byte(metadata), &meta); err != nil {
+	var stored operations.DuplicateResult
+	if err := json.Unmarshal([]byte(resultJSON), &stored); err != nil {
 		t.Fatal(err)
 	}
-	if meta["database"] != "project_a_copy" || meta["owner"] != "app_project_a_copy" || meta["source"] != "project_a" {
-		t.Fatalf("metadata = %s", metadata)
+	if stored.Database != "project_a_copy" || stored.Owner != "app_project_a_copy" || stored.Source != "project_a" {
+		t.Fatalf("stored result = %#v", stored)
 	}
-	if len(meta) != 3 {
-		t.Fatalf("metadata keys = %#v", meta)
+	got := httptest.NewRecorder()
+	h.ServeHTTP(got, authed(http.MethodGet, "/api/v1/operations/"+id, cookie, "", ""))
+	if got.Code != http.StatusOK {
+		t.Fatalf("GET status = %d %s", got.Code, got.Body.String())
 	}
-	if strings.Contains(metadata, password) || strings.Contains(metadata, "postgresql://") || strings.Contains(metadata, duplicateCanaryPassword) {
-		t.Fatalf("audit leaked secret: %s", metadata)
+	if strings.Contains(got.Body.String(), `"result"`) || strings.Contains(got.Body.String(), `"password"`) || strings.Contains(got.Body.String(), `"credential"`) {
+		t.Fatalf("queued GET leaked result/credential: %s", got.Body.String())
+	}
+	var n int
+	if err := srv.db.QueryRow(`SELECT count(*) FROM audit_events WHERE action = 'postgres.database.duplicate' AND outcome = 'success'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("enqueue must not success-audit: %d", n)
 	}
 }
 
-func TestPostgresDuplicateIsolationMismatchIs503(t *testing.T) {
+func TestPostgresDuplicateIsolationMismatchDoesNotRunOnPOST(t *testing.T) {
 	fx := loadPython49(t)
 	cat := &postgresadmin.MemoryCatalog{
 		Rows: []postgresadmin.CatalogRow{duplicateRow()},
@@ -303,45 +312,31 @@ func TestPostgresDuplicateIsolationMismatchIs503(t *testing.T) {
 	cookie, csrf := login(t, h)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, authed(http.MethodPost, postgresDuplicatePath, cookie, csrf, postgresDuplicateBody))
-	if rec.Code != http.StatusServiceUnavailable {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
 	}
-	var body errorBody
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if body.Error.Code != CodeDependencyUnavailable || body.Error.Message != postgresDuplicateIsolationMessage {
-		t.Fatalf("error = %#v", body.Error)
-	}
 	if strings.Contains(rec.Body.String(), `"credential"`) {
-		t.Fatalf("503 leaked credential: %s", rec.Body.String())
+		t.Fatalf("202 leaked credential: %s", rec.Body.String())
 	}
-	if len(cat.DroppedDatabases) != 1 || cat.DroppedDatabases[0] != "project_a_copy" {
-		t.Fatalf("dropped = %#v", cat.DroppedDatabases)
+	if cat.CreateDatabaseTemplateCalls != 0 || cat.DropDatabaseCalls != 0 {
+		t.Fatal("POST must not TEMPLATE or compensate")
 	}
 }
 
 func TestPostgresDuplicateInProgressCopy(t *testing.T) {
 	fx := loadPython49(t)
-	cat := &postgresadmin.MemoryCatalog{
-		Rows:            []postgresadmin.CatalogRow{duplicateRow()},
-		TemplateStarted: make(chan struct{}, 1),
-		TemplateHold:    make(chan struct{}),
-	}
+	cat := duplicateMemory(t)
 	srv := duplicateServer(t, cat, secrets.DeriveVaultKey(fx.SessionSecret))
 	seedOwner(t, srv)
 	h := srv.Handler()
 	cookie, csrf := login(t, h)
-	done := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, authed(http.MethodPost, postgresDuplicatePath, cookie, csrf, postgresDuplicateBody))
-		done <- rec
-	}()
-	select {
-	case <-cat.TemplateStarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first duplicate did not reach TEMPLATE")
+	first := httptest.NewRecorder()
+	h.ServeHTTP(first, authed(http.MethodPost, postgresDuplicatePath, cookie, csrf, postgresDuplicateBody))
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first status = %d %s", first.Code, first.Body.String())
+	}
+	if cat.CreateDatabaseTemplateCalls != 0 {
+		t.Fatal("lock 409 path must not TEMPLATE")
 	}
 	second := httptest.NewRecorder()
 	h.ServeHTTP(second, authed(http.MethodPost, "/api/v1/postgres/databases/project_a/duplicate", cookie, csrf, `{"database":"project_b_copy","owner":"app_project_b_copy"}`))
@@ -358,14 +353,8 @@ func TestPostgresDuplicateInProgressCopy(t *testing.T) {
 	if body.Error.Message == postgresRotateInProgressMessage {
 		t.Fatal("must not reuse rotate 409 copy")
 	}
-	close(cat.TemplateHold)
-	select {
-	case rec := <-done:
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("first status = %d %s", rec.Code, rec.Body.String())
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("first duplicate blocked")
+	if strings.Contains(second.Body.String(), `"credential"`) || strings.Contains(second.Body.String(), `"password"`) {
+		t.Fatalf("409 leaked credential: %s", second.Body.String())
 	}
 }
 
@@ -417,7 +406,7 @@ func TestPostgresRotate409CopyUnchanged(t *testing.T) {
 	}
 }
 
-func TestPostgresDuplicateVaultInsertFailureCompensates(t *testing.T) {
+func TestPostgresDuplicateVaultInsertFailureDoesNotRunOnPOST(t *testing.T) {
 	fx := loadPython49(t)
 	canary := "postgresql://canary-token:secret@10.0.0.1/db"
 	cat := &postgresadmin.MemoryCatalog{
@@ -430,17 +419,14 @@ func TestPostgresDuplicateVaultInsertFailureCompensates(t *testing.T) {
 	cookie, csrf := login(t, h)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, authed(http.MethodPost, postgresDuplicatePath, cookie, csrf, postgresDuplicateBody))
-	if rec.Code != http.StatusServiceUnavailable {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "canary-token") || strings.Contains(rec.Body.String(), `"credential"`) {
 		t.Fatalf("leaked canary: %s", rec.Body.String())
 	}
-	if cat.DropDatabaseCalls != 1 || cat.DroppedDatabases[0] != "project_a_copy" {
-		t.Fatalf("dropped = %#v", cat.DroppedDatabases)
-	}
-	if cat.DropRoleCalls != 1 || cat.DroppedRoles[0] != "app_project_a_copy" {
-		t.Fatalf("roles = %#v", cat.DroppedRoles)
+	if cat.CreateDatabaseTemplateCalls != 0 || cat.InsertCalls != 0 || cat.DropDatabaseCalls != 0 {
+		t.Fatal("POST must not DDL before worker")
 	}
 }
 
@@ -483,7 +469,7 @@ func TestPostgresDuplicateWrongMethodsAre405(t *testing.T) {
 	}
 	post := httptest.NewRecorder()
 	h.ServeHTTP(post, authed(http.MethodPost, postgresDuplicatePath, cookie, csrf, postgresDuplicateBody))
-	if post.Code != http.StatusCreated {
+	if post.Code != http.StatusAccepted {
 		t.Fatalf("POST status = %d %s", post.Code, post.Body.String())
 	}
 	item := httptest.NewRecorder()
@@ -520,7 +506,7 @@ func TestPostgresDuplicateNilAdapterAuditsFailure(t *testing.T) {
 	}
 }
 
-func TestPostgresDuplicateAuditFailClosed(t *testing.T) {
+func TestPostgresDuplicateAuditFailClosedDoesNotRunOnPOST(t *testing.T) {
 	fx := loadPython49(t)
 	cat := duplicateMemory(t)
 	srv := duplicateServer(t, cat, secrets.DeriveVaultKey(fx.SessionSecret))
@@ -536,16 +522,104 @@ func TestPostgresDuplicateAuditFailClosed(t *testing.T) {
 	srv.audit = audit.Store{DB: dead}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, authed(http.MethodPost, postgresDuplicatePath, cookie, csrf, postgresDuplicateBody))
-	if rec.Code != http.StatusServiceUnavailable {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), `"credential"`) || strings.Contains(rec.Body.String(), `"password"`) {
-		t.Fatalf("audit failure returned credential: %s", rec.Body.String())
+		t.Fatalf("enqueue returned credential: %s", rec.Body.String())
 	}
-	if cat.InsertCalls != 1 {
-		t.Fatalf("cluster+vault must remain: inserts=%d", cat.InsertCalls)
+	if cat.InsertCalls != 0 || cat.CreateDatabaseTemplateCalls != 0 {
+		t.Fatal("POST must not vault or TEMPLATE")
 	}
 	if cat.DropDatabaseCalls != 0 || cat.DropRoleCalls != 0 {
-		t.Fatal("audit-fail must not compensate")
+		t.Fatal("enqueue must not compensate")
+	}
+}
+
+func TestPostgresDuplicateNilOperationsIs503(t *testing.T) {
+	fx := loadPython49(t)
+	cat := duplicateMemory(t)
+	srv := duplicateServer(t, cat, secrets.DeriveVaultKey(fx.SessionSecret))
+	srv.operations = nil
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, postgresDuplicatePath, cookie, csrf, postgresDuplicateBody))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeDependencyUnavailable {
+		t.Fatalf("code = %q", body.Error.Code)
+	}
+	if strings.Contains(rec.Body.String(), `"credential"`) || strings.Contains(rec.Body.String(), `"password"`) {
+		t.Fatalf("503 leaked credential: %s", rec.Body.String())
+	}
+	if cat.CreateDatabaseTemplateCalls != 0 {
+		t.Fatal("nil operations must not TEMPLATE")
+	}
+}
+
+func TestPostgresDuplicateWorkerSucceedsWithoutPOSTCredential(t *testing.T) {
+	fx := loadPython49(t)
+	cat := duplicateMemory(t)
+	srv := duplicateServer(t, cat, secrets.DeriveVaultKey(fx.SessionSecret))
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodPost, postgresDuplicatePath, cookie, csrf, postgresDuplicateBody))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var accepted postgresDuplicateAcceptedBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
+		t.Fatal(err)
+	}
+	svc, ok := srv.postgres.(*postgresadmin.Service)
+	if !ok {
+		t.Fatal("postgres inventory must be *Service")
+	}
+	if err := postgresadmin.RunQueuedDuplicates(context.Background(), srv.operations, svc, srv.audit); err != nil {
+		t.Fatal(err)
+	}
+	if cat.CreateDatabaseTemplateCalls != 1 || cat.InsertCalls != 1 {
+		t.Fatalf("worker template/insert = %d/%d", cat.CreateDatabaseTemplateCalls, cat.InsertCalls)
+	}
+	got := httptest.NewRecorder()
+	h.ServeHTTP(got, authed(http.MethodGet, "/api/v1/operations/"+accepted.Operation.ID, cookie, "", ""))
+	if got.Code != http.StatusOK {
+		t.Fatalf("GET status = %d %s", got.Code, got.Body.String())
+	}
+	if strings.Contains(got.Body.String(), `"password"`) || strings.Contains(got.Body.String(), `"credential"`) || strings.Contains(got.Body.String(), "postgresql://") {
+		t.Fatalf("GET leaked secret: %s", got.Body.String())
+	}
+	var body operationGetBody
+	if err := json.Unmarshal(got.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Operation.Status != string(operations.StatusSucceeded) || body.Operation.Result == nil {
+		t.Fatalf("succeeded = %+v", body.Operation)
+	}
+	if body.Operation.Result.Database != "project_a_copy" || body.Operation.Result.Owner != "app_project_a_copy" || body.Operation.Result.Source != "project_a" {
+		t.Fatalf("result = %#v", body.Operation.Result)
+	}
+	var metadata string
+	if err := srv.db.QueryRow(`SELECT metadata FROM audit_events WHERE action = 'postgres.database.duplicate' AND outcome = 'success' ORDER BY id DESC LIMIT 1`).Scan(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal([]byte(metadata), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta["database"] != "project_a_copy" || meta["owner"] != "app_project_a_copy" || meta["source"] != "project_a" || meta["operation_id"] != accepted.Operation.ID {
+		t.Fatalf("metadata = %s", metadata)
+	}
+	if len(meta) != 4 {
+		t.Fatalf("metadata keys = %#v", meta)
 	}
 }

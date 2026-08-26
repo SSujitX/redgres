@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
+	"github.com/SSujitX/redgres/internal/operations"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
 	"github.com/go-chi/chi/v5"
 )
@@ -11,6 +13,20 @@ import (
 type postgresDuplicateRequest struct {
 	Database string `json:"database"`
 	Owner    string `json:"owner"`
+}
+
+type postgresDuplicateAcceptedBody struct {
+	Operation postgresDuplicateAcceptedOperation `json:"operation"`
+	RequestID string                             `json:"request_id"`
+}
+
+type postgresDuplicateAcceptedOperation struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+type duplicatePreparer interface {
+	PrepareDuplicate(ctx context.Context, source, database, owner string) error
 }
 
 func (s *Server) handlePostgresDatabasesDuplicate(w http.ResponseWriter, r *http.Request) {
@@ -55,39 +71,53 @@ func (s *Server) handlePostgresDatabasesDuplicate(w http.ResponseWriter, r *http
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), postgresDuplicateTimeout)
-	defer cancel()
-	created, err := s.postgres.Duplicate(ctx, source, body.Database, body.Owner)
-	if err != nil {
-		s.writePostgresError(w, r, err)
+	if s.operations == nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
-	cred := postgresRevealCredential{
-		Username: created.Owner,
-		Password: created.Password,
-		OneTime:  false,
-	}
-	var urls postgresRevealURLs
-	if s.cfg.PostgresPublicHost != "" && s.cfg.PostgresDirectPort != "" {
-		if u, urlErr := postgresadmin.ProjectConnectionURL(s.cfg.PostgresPublicHost, s.cfg.PostgresDirectPort, created.Owner, created.Password, created.Database); urlErr == nil {
-			urls.Direct = u
-		}
-	}
-	if s.cfg.PostgresPublicHost != "" && s.cfg.PostgresPooledPort != "" {
-		if u, urlErr := postgresadmin.ProjectConnectionURL(s.cfg.PostgresPublicHost, s.cfg.PostgresPooledPort, created.Owner, created.Password, created.Database); urlErr == nil {
-			urls.Pooled = u
-		}
-	}
-	if urls.Direct != "" || urls.Pooled != "" {
-		cred.URLs = &urls
-	}
-	if err := s.audit.Record(sess.Username, "postgres.database.duplicate", created.Database, "success", requestID(r), requestClientIP(r), map[string]any{"database": created.Database, "owner": created.Owner, "source": source}); err != nil {
+	preparer, ok := s.postgres.(duplicatePreparer)
+	if !ok {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "PostgreSQL is unavailable")
 		return
 	}
-	s.writeJSON(w, r, http.StatusCreated, postgresRevealResponse{
-		Resource:   postgresRevealResource{Type: "postgres_database", Name: created.Database},
-		Credential: cred,
-		RequestID:  requestID(r),
+	ctx, cancel := context.WithTimeout(r.Context(), postgresDuplicateTimeout)
+	defer cancel()
+	if err := preparer.PrepareDuplicate(ctx, source, body.Database, body.Owner); err != nil {
+		s.writePostgresError(w, r, err)
+		return
+	}
+	id, err := operations.NewID()
+	if err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	op := operations.Operation{
+		ID:                id,
+		Action:            operations.ActionDuplicate,
+		Actor:             sess.Username,
+		Target:            body.Database,
+		AcceptedRequestID: requestID(r),
+		Result: &operations.DuplicateResult{
+			Database: body.Database,
+			Owner:    body.Owner,
+			Source:   source,
+		},
+	}
+	locks := []operations.ResourceLock{
+		{Kind: operations.ResourceDatabase, Name: source},
+		{Kind: operations.ResourceDatabase, Name: body.Database},
+		{Kind: operations.ResourceRole, Name: body.Owner},
+	}
+	if err := s.operations.InsertQueued(ctx, op, locks); err != nil {
+		if errors.Is(err, operations.ErrLockHeld) {
+			s.writeError(w, r, http.StatusConflict, CodeOperationInProgress, postgresDuplicateInProgressMessage)
+			return
+		}
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	s.writeJSON(w, r, http.StatusAccepted, postgresDuplicateAcceptedBody{
+		Operation: postgresDuplicateAcceptedOperation{ID: id, Status: string(operations.StatusQueued)},
+		RequestID: requestID(r),
 	})
 }

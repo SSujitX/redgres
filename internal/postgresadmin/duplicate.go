@@ -359,65 +359,75 @@ func (m *cloneMembershipManager) release(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) Duplicate(ctx context.Context, source, database, owner string) (CreatedDatabase, error) {
+// PrepareDuplicate validates a duplicate request without locking or DDL.
+// HTTP enqueue calls this before InsertQueued so a missing vault key or
+// unreachable vault fails closed with 503 before any operations row.
+func (s *Service) PrepareDuplicate(ctx context.Context, source, database, owner string) error {
 	if err := ValidateIdentifier(source); err != nil {
-		return CreatedDatabase{}, err
+		return err
 	}
 	if err := ValidateIdentifier(database); err != nil {
-		return CreatedDatabase{}, err
+		return err
 	}
 	if err := ValidateIdentifier(owner); err != nil {
-		return CreatedDatabase{}, err
+		return err
 	}
 	if s == nil {
-		return CreatedDatabase{}, ErrUnavailable
+		return ErrUnavailable
 	}
 	if s.policy.DatabaseDenied(database) || s.policy.OwnerDenied(owner) {
-		return CreatedDatabase{}, ErrProtected
+		return ErrProtected
 	}
 	if s.catalog == nil {
-		return CreatedDatabase{}, ErrUnavailable
+		return ErrUnavailable
 	}
 	if s.policy.DatabaseDenied(source) {
-		return CreatedDatabase{}, ErrNotFound
+		return ErrNotFound
 	}
 
 	row, err := s.catalog.Lookup(ctx, source)
 	if err != nil {
-		return CreatedDatabase{}, mapCatalogError(err)
+		return mapCatalogError(err)
 	}
 	if row.Owner == "" || !row.AllowConn || row.IsTemplate {
-		return CreatedDatabase{}, ErrNotFound
+		return ErrNotFound
 	}
 	if !s.policy.Manageable(row.Name, row.Owner, row.AllowConn, row.IsTemplate) && s.policy.DatabaseDenied(row.Name) {
-		return CreatedDatabase{}, ErrNotFound
+		return ErrNotFound
 	}
 	if row.OwnerIsSuperuser || !row.OwnerCanLogin || s.policy.OwnerDenied(row.Owner) {
-		return CreatedDatabase{}, ErrProtected
+		return ErrProtected
 	}
 	if owner == row.Owner {
-		return CreatedDatabase{}, FieldError{Field: conflictFieldOwner, Message: duplicateSameOwnerMessage}
+		return FieldError{Field: conflictFieldOwner, Message: duplicateSameOwnerMessage}
 	}
 	if s.vaultKey == "" {
-		return CreatedDatabase{}, ErrUnavailable
+		return ErrUnavailable
 	}
 
 	existsDB, err := s.catalog.DatabaseExists(ctx, database)
 	if err != nil {
-		return CreatedDatabase{}, mapCatalogError(err)
+		return mapCatalogError(err)
 	}
 	if existsDB {
-		return CreatedDatabase{}, Conflict{Field: conflictFieldDatabase}
+		return Conflict{Field: conflictFieldDatabase}
 	}
 	existsRole, err := s.catalog.RoleExists(ctx, owner)
 	if err != nil {
-		return CreatedDatabase{}, mapCatalogError(err)
+		return mapCatalogError(err)
 	}
 	if existsRole {
-		return CreatedDatabase{}, Conflict{Field: conflictFieldOwner}
+		return Conflict{Field: conflictFieldOwner}
 	}
 	if _, err := s.catalog.SavedRoleNames(ctx, []string{owner}); err != nil {
-		return CreatedDatabase{}, ErrUnavailable
+		return ErrUnavailable
+	}
+	return nil
+}
+
+func (s *Service) Duplicate(ctx context.Context, source, database, owner string) (CreatedDatabase, error) {
+	if err := s.PrepareDuplicate(ctx, source, database, owner); err != nil {
+		return CreatedDatabase{}, err
 	}
 
 	password, err := GeneratePassword()
