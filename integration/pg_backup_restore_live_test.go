@@ -105,7 +105,8 @@ func TestLiveBackupRestoreDropGate(t *testing.T) {
 	waitPGReady(t, bkTargetName)
 
 	// Logical dump of the source via a throwaway pinned container.
-	dockerRun(t, "run", "--rm", "-e", "PGPASSWORD=redgres-ci", "-v", dumpMount, image,
+	dockerRun(t, "run", "--rm", "--add-host", "host.docker.internal:host-gateway",
+		"-e", "PGPASSWORD=redgres-ci", "-v", dumpMount, image,
 		"pg_dump", "-h", "host.docker.internal", "-p", port, "-U", "postgres", "-Fc",
 		"-f", "/dump/backup.dump", bkDB)
 	dumpBytes, err := os.ReadFile(filepath.Join(dumpDir, "backup.dump"))
@@ -121,7 +122,8 @@ func TestLiveBackupRestoreDropGate(t *testing.T) {
 	// role must exist on the isolated host first (a real DR operator creates
 	// project roles before restore).
 	dockerRun(t, "exec", bkTargetName, "psql", "-U", "postgres", "-c", "CREATE ROLE "+bkOwner+" LOGIN")
-	dockerRun(t, "run", "--rm", "-e", "PGPASSWORD=redgres-ci", "-v", dumpMount, image,
+	dockerRun(t, "run", "--rm", "--add-host", "host.docker.internal:host-gateway",
+		"-e", "PGPASSWORD=redgres-ci", "-v", dumpMount, image,
 		"pg_restore", "-h", "host.docker.internal", "-p", bkTargetPort, "-U", "postgres",
 		"-d", "postgres", "-C", "/dump/backup.dump")
 	targetConn := livePGConn(t, "127.0.0.1", bkTargetPort, bkDB, "postgres", livePGPassword(t, pgPassFile))

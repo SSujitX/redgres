@@ -139,7 +139,7 @@ func TestLiveDuplicate202OverHTTP(t *testing.T) {
 	// working password for the copy database.
 	var token string
 	vconn := livePGConn(t, pgHost, pgPort, "database_console_vault", "postgres", livePGPassword(t, os.Getenv("REDGRES_TEST_POSTGRES_PASSWORD_FILE")))
-	if err := vconn.QueryRow(ctx, "SELECT encrypted_password FROM public.project_credentials WHERE role_name = '" + dupCopyOwner + "'").Scan(&token); err != nil {
+	if err := vconn.QueryRow(ctx, "SELECT encrypted_password FROM public.project_credentials WHERE role_name = '"+dupCopyOwner+"'").Scan(&token); err != nil {
 		t.Fatalf("vault row: %v", err)
 	}
 	plain, err := secrets.Decrypt(secrets.DeriveVaultKey(testVaultSecret), token)

@@ -262,7 +262,7 @@ func TestLiveCmdServePoller(t *testing.T) {
 	password := livePGPassword(t, os.Getenv("REDGRES_TEST_POSTGRES_PASSWORD_FILE"))
 	vconn := livePGConn(t, pgHost, pgPort, "database_console_vault", "postgres", password)
 	var token string
-	if err := vconn.QueryRow(context.Background(), "SELECT encrypted_password FROM public.project_credentials WHERE role_name = '" + serveCopyOwner + "'").Scan(&token); err != nil {
+	if err := vconn.QueryRow(context.Background(), "SELECT encrypted_password FROM public.project_credentials WHERE role_name = '"+serveCopyOwner+"'").Scan(&token); err != nil {
 		t.Fatalf("vault row: %v", err)
 	}
 	plain, err := secrets.Decrypt(secrets.DeriveVaultKey(testVaultSecret), token)

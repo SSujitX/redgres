@@ -329,7 +329,7 @@ func TestLivePostgresServiceBehavior(t *testing.T) {
 	}
 	superConn := livePGConn(t, host, port, "postgres", "postgres", password)
 	var roleExists bool
-	if err := superConn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '" + liveOwner2 + "')").Scan(&roleExists); err != nil {
+	if err := superConn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '"+liveOwner2+"')").Scan(&roleExists); err != nil {
 		t.Fatalf("role existence check: %v", err)
 	}
 	if roleExists {

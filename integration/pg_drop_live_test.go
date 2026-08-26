@@ -139,7 +139,7 @@ func TestLiveHTTPDropWithBackupCatalog(t *testing.T) {
 
 	// The owner role and vault row are gone.
 	var roleExists bool
-	if err := superConn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '" + dropLiveOwner + "')").Scan(&roleExists); err != nil {
+	if err := superConn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '"+dropLiveOwner+"')").Scan(&roleExists); err != nil {
 		t.Fatalf("role check: %v", err)
 	}
 	if roleExists {
@@ -147,7 +147,7 @@ func TestLiveHTTPDropWithBackupCatalog(t *testing.T) {
 	}
 	vconn := livePGConn(t, pgHost, pgPort, "database_console_vault", "postgres", livePGPassword(t, pgPassFile))
 	var vaultCount int
-	if err := vconn.QueryRow(ctx, "SELECT count(*)::int FROM public.project_credentials WHERE role_name = '" + dropLiveOwner + "'").Scan(&vaultCount); err != nil {
+	if err := vconn.QueryRow(ctx, "SELECT count(*)::int FROM public.project_credentials WHERE role_name = '"+dropLiveOwner+"'").Scan(&vaultCount); err != nil {
 		t.Fatalf("vault check: %v", err)
 	}
 	if vaultCount != 0 {
