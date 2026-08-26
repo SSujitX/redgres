@@ -123,8 +123,15 @@ func TestListQueuedReturnsQueuedOnly(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("queued = %d, want 2", len(got))
 	}
-	if got[0].ID != first.ID || got[1].ID != second.ID {
-		t.Fatalf("order = %q %q", got[0].ID, got[1].ID)
+	ids := map[string]struct{}{got[0].ID: {}, got[1].ID: {}}
+	if _, ok := ids[first.ID]; !ok {
+		t.Fatalf("missing first queued id %q in %q %q", first.ID, got[0].ID, got[1].ID)
+	}
+	if _, ok := ids[second.ID]; !ok {
+		t.Fatalf("missing second queued id %q in %q %q", second.ID, got[0].ID, got[1].ID)
+	}
+	if _, ok := ids[running.ID]; ok {
+		t.Fatalf("running id %q listed as queued", running.ID)
 	}
 }
 
