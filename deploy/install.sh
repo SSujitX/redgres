@@ -110,6 +110,10 @@ is_redis_series() {
 
 if [[ "${1:-}" == "verify" ]]; then
   shift
+  if [[ "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
   verify_dry_run=0
   verify_non_interactive=0
   verify_config_path=''
@@ -155,6 +159,10 @@ fi
 
 if [[ "${1:-}" == "update" ]]; then
   shift
+  if [[ "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
   update_dry_run=0
   update_non_interactive=0
   update_release_path=''
@@ -200,6 +208,10 @@ fi
 
 if [[ "${1:-}" == "rollback" ]]; then
   shift
+  if [[ "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
   rollback_dry_run=0
   rollback_non_interactive=0
   rollback_to=''

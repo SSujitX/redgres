@@ -589,6 +589,9 @@ run_install --non-interactive --dry-run --mode fresh-postgres --postgres-version
 expect_status '--expect-redis-series with redis-mode fresh exits 1' 1
 
 # --- OPS-003 verify --dry-run skip matrix ---
+run_install verify --help
+expect_status 'verify --help exits 0' 0
+
 run_install verify --non-interactive --dry-run --config "${config_file}"
 expect_verify_partial 'verify dry-run skip matrix exits 0'
 
@@ -1035,6 +1038,9 @@ printf 'unused-plan-config\n' >"${plan_config}"
 
 
 # --- OPS-005 update --dry-run skip matrix ---
+run_install update --help
+expect_status 'update --help exits 0' 0
+
 run_install update --non-interactive --dry-run --release "${config_file}"
 expect_update_partial 'update dry-run skip matrix exits 0'
 
@@ -1068,6 +1074,9 @@ run_install update --non-interactive --dry-run --release "${config_file}" --mode
 expect_status 'update unknown --mode flag exits 1' 1
 
 # --- OPS-005 rollback --dry-run skip matrix ---
+run_install rollback --help
+expect_status 'rollback --help exits 0' 0
+
 run_install rollback --non-interactive --dry-run --to rel-1
 expect_rollback_partial 'rollback dry-run skip matrix exits 0'
 
