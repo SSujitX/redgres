@@ -1,6 +1,8 @@
 package release
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -171,5 +173,37 @@ func TestLiveTestPinsAreDigestsNotLatest(t *testing.T) {
 	}
 	if PgBouncerProbeSQL != "SHOW VERSION" {
 		t.Fatalf("PgBouncerProbeSQL = %q", PgBouncerProbeSQL)
+	}
+}
+
+func TestDisposableGHAContainsLiveTestPins(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatalf("read ci.yml: %v", err)
+	}
+	text := string(raw)
+	job := text
+	if i := strings.Index(text, "  integration:"); i >= 0 {
+		job = text[i:]
+		if j := strings.Index(job[len("  integration:"):], "\n  playwright:"); j >= 0 {
+			job = job[:len("  integration:")+j]
+		}
+	}
+	for _, pin := range []string{LiveTestPostgres186, LiveTestRedis882, LiveTestPostgres1711, LiveTestRedis829} {
+		if !strings.Contains(job, pin) {
+			t.Fatalf("disposable integration job missing pin %q", pin)
+		}
+	}
+	if strings.Contains(strings.ToLower(job), "pgbouncer") {
+		t.Fatal("disposable integration job must not pin a PgBouncer image")
+	}
+	if strings.Contains(job, "postgres:latest") || strings.Contains(job, "redis:latest") {
+		t.Fatal("disposable integration job must not use latest")
+	}
+	if strings.Contains(job, "8.10") {
+		t.Fatal("disposable integration job must not add Redis 8.10")
+	}
+	if strings.Contains(job, "compatibility-") {
+		t.Fatal("disposable integration job must not use compatibility-* names")
 	}
 }
