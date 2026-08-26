@@ -7762,6 +7762,23 @@ describe("App session and login", () => {
     localSet.mockRestore();
   });
 
+  it("opens the existing Create database flow from Overview quick create", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "overview-create".padEnd(64, "0") });
+      }
+      if (url === "/api/v1/postgres/databases") {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    const quickCreate = screen.getByRole("region", { name: "Quick create" });
+    fireEvent.click(within(quickCreate).getByRole("button", { name: "Create database" }));
+    expect(await screen.findByRole("dialog", { name: "Create database" })).toBeInTheDocument();
+  });
+
   it("shows mixed Overview status without blanking Redis", async () => {
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
@@ -7790,6 +7807,61 @@ describe("App session and login", () => {
     expect(screen.getByText("Independent component status.")).toBeInTheDocument();
   });
 
+  it("summarizes mixed component status as degraded in the sidebar footer", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "footer-degraded".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return mixedStatus();
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const aggregate = await screen.findByLabelText("Aggregate health: Degraded");
+    expect(aggregate).toHaveTextContent("Degraded");
+    expect(aggregate).toHaveClass("aggregate-health-degraded");
+    expect(aggregate).not.toHaveTextContent(/host|dsn|url/i);
+  });
+
+  it("summarizes healthy probes without treating optional tool links as a health failure", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "footer-healthy".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "ok" },
+            { id: "pgbouncer", state: "ok" },
+            { id: "redis", state: "ok" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+        });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Aggregate health: Healthy")).toHaveClass("aggregate-health-healthy");
+  });
+
+  it("treats an empty component list as unavailable aggregate health", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "footer-empty".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, { components: [] });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Aggregate health: Health unavailable")).toHaveClass(
+      "aggregate-health-unavailable",
+    );
+  });
+
   it("shows a session-expired Overview alert without status cards", async () => {
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
@@ -7806,6 +7878,7 @@ describe("App session and login", () => {
     expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Aggregate health: Health unavailable")).toBeInTheDocument();
   });
 
   it("shows a generic Overview alert when status fetch throws", async () => {
@@ -7879,9 +7952,11 @@ describe("App session and login", () => {
     });
     render(<App />);
     expect(await screen.findByText("Loading component status.")).toHaveAttribute("role", "status");
+    expect(screen.getByLabelText("Aggregate health: Checking health")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
     release();
     expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    expect(screen.getByLabelText("Aggregate health: Degraded")).toBeInTheDocument();
     expect(screen.queryByText("Loading component status.")).not.toBeInTheDocument();
   });
 
@@ -13307,4 +13382,3 @@ describe("Documentation catalog", () => {
     expectLanding();
   });
 });
-

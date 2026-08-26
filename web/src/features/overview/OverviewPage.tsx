@@ -4,6 +4,7 @@ import { fetchRedisStatus, type RedisStatusMetrics, type RedisStatusPayload } fr
 import { errorMessage, fetchStatus, type StatusComponent } from "../../api/status";
 import type { ToolLinks } from "../../api/auth";
 import { displayText } from "../../text/displayText";
+import type { SectionId } from "../../nav";
 
 type CardSpec = {
   id: string;
@@ -20,6 +21,10 @@ const CARDS: CardSpec[] = [
 ];
 
 type Tone = "ok" | "unavailable" | "warning";
+
+export type AggregateHealthState = "loading" | "healthy" | "degraded" | "unavailable";
+
+const HEALTH_COMPONENT_IDS = ["redgres_state", "postgres_direct", "pgbouncer", "redis"];
 
 type RedisDetail =
   | { kind: "none" }
@@ -162,6 +167,14 @@ function indexById(components: StatusComponent[]): Map<string, StatusComponent> 
   return out;
 }
 
+function aggregateHealth(components: StatusComponent[]): AggregateHealthState {
+  if (components.length === 0) {
+    return "unavailable";
+  }
+  const byId = indexById(components);
+  return HEALTH_COMPONENT_IDS.every((id) => byId.get(id)?.state === "ok") ? "healthy" : "degraded";
+}
+
 function IsolatedText({ value, identifier }: { value: string; identifier?: boolean }) {
   return <span className={identifier ? "bidi-isolate identifier" : "bidi-isolate"}>{displayText(value)}</span>;
 }
@@ -299,7 +312,15 @@ function RedisMetrics({
   );
 }
 
-export default function OverviewPage({ toolLinks = {} }: { toolLinks?: ToolLinks }) {
+export default function OverviewPage({
+  toolLinks = {},
+  onNavigate,
+  onAggregateHealthChange,
+}: {
+  toolLinks?: ToolLinks;
+  onNavigate?: (section: SectionId) => void;
+  onAggregateHealthChange?: (state: AggregateHealthState) => void;
+}) {
   const [components, setComponents] = useState<StatusComponent[] | null>(null);
   const [redisDetail, setRedisDetail] = useState<RedisDetail>({ kind: "none" });
   const [error, setError] = useState("");
@@ -354,6 +375,7 @@ export default function OverviewPage({ toolLinks = {} }: { toolLinks?: ToolLinks
   }
 
   async function load(controller: AbortController) {
+    onAggregateHealthChange?.("loading");
     setLoading(true);
     setError("");
     setComponents(null);
@@ -376,10 +398,12 @@ export default function OverviewPage({ toolLinks = {} }: { toolLinks?: ToolLinks
         if (isAbortError(status.err)) {
           return;
         }
+        onAggregateHealthChange?.("unavailable");
         setError(statusUnavailable);
         return;
       }
       if (status.result.status === 200 && Array.isArray(status.result.body.components)) {
+        onAggregateHealthChange?.(aggregateHealth(status.result.body.components));
         setComponents(status.result.body.components);
         setError("");
         if (redis.kind === "throw") {
@@ -397,9 +421,11 @@ export default function OverviewPage({ toolLinks = {} }: { toolLinks?: ToolLinks
         return;
       }
       if (status.result.status === 401) {
+        onAggregateHealthChange?.("unavailable");
         setError(sessionExpired);
         return;
       }
+      onAggregateHealthChange?.("unavailable");
       setError(errorMessage(status.result.body, statusUnavailable));
     } finally {
       if (!controller.signal.aborted) {
@@ -469,6 +495,17 @@ export default function OverviewPage({ toolLinks = {} }: { toolLinks?: ToolLinks
             );
           })}
         </ul>
+      ) : null}
+      {onNavigate ? (
+        <section className="overview-quick-create" aria-labelledby="overview-quick-create-title">
+          <div>
+            <h2 id="overview-quick-create-title">Quick create</h2>
+            <p className="muted-copy">Start the existing PostgreSQL provisioning flow.</p>
+          </div>
+          <button type="button" className="primary-button" onClick={() => onNavigate("postgres-create")}>
+            Create database
+          </button>
+        </section>
       ) : null}
       {showRecentAudit ? (
         <section className="overview-recent-audit">

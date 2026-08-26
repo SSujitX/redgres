@@ -75,6 +75,28 @@
   font-size: 0.875rem;
 }
 
+.aggregate-health {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.aggregate-health-loading {
+  color: var(--muted);
+}
+
+.aggregate-health-healthy {
+  color: var(--success);
+}
+
+.aggregate-health-degraded {
+  color: var(--warning);
+}
+
+.aggregate-health-unavailable {
+  color: var(--danger);
+}
+
 .app-main {
   flex: 1;
   min-width: 0;
@@ -228,6 +250,33 @@
   text-decoration: none;
   margin-top: var(--space-3);
   margin-inline-end: var(--space-2);
+}
+
+.overview-quick-create {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-surface);
+}
+
+.overview-quick-create > div {
+  min-width: 0;
+}
+
+.overview-quick-create .muted-copy {
+  margin-top: var(--space-1);
+}
+
+@media (max-width: 479px) {
+  .overview-quick-create .primary-button {
+    width: 100%;
+  }
 }
 
 .status-ok {

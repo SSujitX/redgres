@@ -4,7 +4,7 @@ import { useFocusTrap } from "../../hooks/useFocusTrap";
 import type { ToolLinks } from "../../api/auth";
 import Icon from "../icons";
 import NavigationSearch from "../search/NavigationSearch";
-import OverviewPage from "../../features/overview/OverviewPage";
+import OverviewPage, { type AggregateHealthState } from "../../features/overview/OverviewPage";
 import { SectionPage } from "../../features/pages/Placeholders";
 
 type AppShellProps = {
@@ -26,6 +26,7 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
   const [focusUsername, setFocusUsername] = useState<string | null>(null);
   const [focusArticle, setFocusArticle] = useState<string | null>(null);
   const [focusNonce, setFocusNonce] = useState(0);
+  const [aggregateHealth, setAggregateHealth] = useState<AggregateHealthState>("loading");
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -135,15 +136,10 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
             <p className="brand-name">Redgres</p>
           </div>
           {nav}
-          <p className="sidebar-footer">
-            Redgres
-            <span className="not-connected">
-              <span className="warning-mark" aria-hidden="true">
-                !
-              </span>
-              Not connected
-            </span>
-          </p>
+          <div className="sidebar-footer">
+            <span>Redgres</span>
+            <AggregateHealth state={aggregateHealth} />
+          </div>
         </aside>
 
         <div className="app-main">
@@ -218,7 +214,11 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
           </header>
           <main className="workspace">
             {section === "overview" ? (
-              <OverviewPage toolLinks={toolLinks} />
+              <OverviewPage
+                toolLinks={toolLinks}
+                onNavigate={go}
+                onAggregateHealthChange={setAggregateHealth}
+              />
             ) : (
               <SectionPage
                 section={section}
@@ -263,6 +263,33 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
         restoreFocusRef={searchButtonRef}
       />
     </div>
+  );
+}
+
+function AggregateHealth({ state }: { state: AggregateHealthState }) {
+  const copy =
+    state === "healthy"
+      ? "Healthy"
+      : state === "degraded"
+        ? "Degraded"
+        : state === "unavailable"
+          ? "Health unavailable"
+          : "Checking health";
+  const showWarning = state === "degraded" || state === "unavailable";
+  return (
+    <span
+      className={`aggregate-health aggregate-health-${state}`}
+      aria-live="polite"
+      aria-atomic="true"
+      aria-label={`Aggregate health: ${copy}`}
+    >
+      {showWarning ? (
+        <span className="warning-mark" aria-hidden="true">
+          !
+        </span>
+      ) : null}
+      {copy}
+    </span>
   );
 }
 
