@@ -116,13 +116,13 @@ func statusStates(t *testing.T, rec *httptest.ResponseRecorder) map[string]strin
 	return out
 }
 
-// TestLiveHTTPOverRealServices drives the HTTP API of an in-process Redgres
-// server wired to real PostgreSQL (with provisioned vault), real Redis, and a
-// real SQLite control-plane database: login flags, CSRF, status, PostgreSQL
-// create/list/details/connection/reveal/rotate, rows-delete/truncate with
-// AUTH-006 owner-password reauth, the DROP backup-catalog 503 gate, the Redis
-// ACL user lifecycle, and audit visibility.
-func TestLiveHTTPOverRealServices(t *testing.T) {
+// buildLiveHTTPServer boots an in-process Redgres HTTP server wired to real
+// PostgreSQL (with provisioned vault), real Redis, and a real SQLite control
+// plane, seeds the owner, logs in, and returns the handler, session
+// credentials, and the live PostgreSQL host/port. cfgExtra is applied before
+// the server is constructed.
+func buildLiveHTTPServer(t *testing.T, cfgExtra func(*config.Config)) (http.Handler, string, string, string, string) {
+	t.Helper()
 	clearInheritedRedgresEnv(t)
 	pgHost, pgPort, pgPassFile, pgOK := livePostgresEnv(t)
 	redisURLFile, redisOK := liveRedisEnv(t)
@@ -169,6 +169,9 @@ func TestLiveHTTPOverRealServices(t *testing.T) {
 		FeaturePostgresTruncate:  true,
 		FeaturePostgresDrop:      true,
 	}
+	if cfgExtra != nil {
+		cfgExtra(&cfg)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -191,6 +194,17 @@ func TestLiveHTTPOverRealServices(t *testing.T) {
 	}
 	h := srv.Handler()
 	cookie, csrf := liveLogin(t, h)
+	return h, cookie, csrf, pgHost, pgPort
+}
+
+// TestLiveHTTPOverRealServices drives the HTTP API of an in-process Redgres
+// server wired to real PostgreSQL (with provisioned vault), real Redis, and a
+// real SQLite control-plane database: login flags, CSRF, status, PostgreSQL
+// create/list/details/connection/reveal/rotate, rows-delete/truncate with
+// AUTH-006 owner-password reauth, the DROP backup-catalog 503 gate, the Redis
+// ACL user lifecycle, and audit visibility.
+func TestLiveHTTPOverRealServices(t *testing.T) {
+	h, cookie, csrf, pgHost, pgPort := buildLiveHTTPServer(t, nil)
 
 	// --- PLAT-001: live component status ---
 	states := statusStates(t, liveAuthed(t, h, http.MethodGet, "/api/v1/status", cookie, csrf, ""))
