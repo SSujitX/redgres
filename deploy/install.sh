@@ -11,6 +11,8 @@ source "${script_dir}/lib/inventory.sh"
 source "${script_dir}/lib/verify.sh"
 # shellcheck disable=SC1091
 source "${script_dir}/lib/release.sh"
+# shellcheck disable=SC1091
+source "${script_dir}/lib/postgres_plan.sh"
 
 usage() {
   cat <<'EOF'
@@ -24,18 +26,23 @@ Usage:
   deploy/install.sh verify --non-interactive --dry-run --config PATH
   deploy/install.sh update --non-interactive --dry-run --release PATH
   deploy/install.sh rollback --non-interactive --dry-run --to VERSION
+  deploy/install.sh postgres-plan --config PATH --extension-plan PATH
 
 This Partial prints the planned stage list on --dry-run and inventories PATH
 host --version for existing PostgreSQL/Redis/PgBouncer. verify --dry-run prints
 a skip matrix (result=partial); it does not probe DNS/Cloudflare/public TLS.
 update/rollback --dry-run print skip matrices (result=partial); they do not
 extract, switch current, migrate SQLite, write systemd, or probe healthz.
+postgres-plan --config PATH --extension-plan PATH is a read-only extension-plan
+validator: it checks policy, capability IDs, explicit databases, and scheduler
+rules, then prints a plan preview and skip matrix (result=partial). It never
+sources --config, never mutates, and never resolves packages/preload/restart.
 It does not install packages, pull images, write systemd, open a firewall, or
 change DNS/Cloudflare. It does not start servers, source --config, call curl,
 or run SQL SHOW / Redis INFO.
 
-Exit 0: --help, valid --non-interactive --dry-run plan, or skip matrix
-Exit 1: unsupported, incomplete, missing, unparseable, or mismatched selection
+Exit 0: --help, valid --non-interactive --dry-run plan, skip matrix, or valid postgres-plan
+Exit 1: unsupported, incomplete, missing, unparseable, mismatched selection, or invalid extension plan
 Exit 2: mutation install, live verify/update/rollback, or other subcommand not implemented
 
 Majors/series only (not Hub tags). latest and latest-tested are rejected.
@@ -223,8 +230,51 @@ if [[ "${1:-}" == "rollback" ]]; then
   exit 0
 fi
 
-if [[ "${1:-}" == "backup" || "${1:-}" == "postgres-plan" || "${1:-}" == "postgres-extensions" ]]; then
+if [[ "${1:-}" == "backup" || "${1:-}" == "postgres-extensions" ]]; then
   redgres_not_implemented "subcommand ${1} is not implemented"
+fi
+
+# OPS-007 postgres-plan: read-only extension-plan validation. Never sources
+# --config, never mutates, never resolves packages/preload/restart (Partial).
+if [[ "${1:-}" == "postgres-plan" ]]; then
+  shift
+  plan_config_path=''
+  plan_extension_path=''
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --config)
+        [[ $# -ge 2 ]] || redgres_die "missing value for --config"
+        plan_config_path="$2"
+        shift 2
+        ;;
+      --extension-plan)
+        [[ $# -ge 2 ]] || redgres_die "missing value for --extension-plan"
+        plan_extension_path="$2"
+        shift 2
+        ;;
+      -*)
+        redgres_die "unknown flag: $1"
+        ;;
+      *)
+        redgres_die "unknown argument: $1"
+        ;;
+    esac
+  done
+  if [[ -z "${plan_config_path}" ]]; then
+    redgres_die "--config is required"
+  fi
+  if [[ -z "${plan_extension_path}" ]]; then
+    redgres_die "--extension-plan is required"
+  fi
+  # Existence only. Never source, eval, or cat the file; never print contents.
+  if [[ ! -f "${plan_config_path}" ]]; then
+    redgres_die "--config must be an existing regular file"
+  fi
+  if [[ ! -f "${plan_extension_path}" ]]; then
+    redgres_die "--extension-plan must be an existing regular file"
+  fi
+  redgres_postgres_plan_dry_run "${plan_config_path}" "${plan_extension_path}"
+  exit 0
 fi
 
 while [[ $# -gt 0 ]]; do

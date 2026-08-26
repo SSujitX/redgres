@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # POSIX installer dispatcher tests (OPS-001 / OPS-002 / OPS-003 / OPS-005 / OPS-006 Partial).
 # Prepends failing mutation stubs so a real host call fails the test.
 # Detection stubs print fixture --version stdout and must not append to stub_log.
@@ -561,11 +561,179 @@ expect_status 'verify unknown --mode flag exits 1' 1
 run_install backup
 expect_status 'backup subcommand exits 2' 2
 
-run_install postgres-plan
-expect_status 'postgres-plan subcommand exits 2' 2
-
 run_install postgres-extensions apply
 expect_status 'postgres-extensions subcommand exits 2' 2
+# --- OPS-007 postgres-plan read-only plan validation ---
+expect_plan_partial() {
+  local name="$1"
+  if ! assert_no_mutation "${name}"; then
+    return
+  fi
+  if ! assert_no_canary "${name}"; then
+    return
+  fi
+  if [[ "${status}" -ne 0 ]]; then
+    fail "${name}: expected exit 0, got ${status}: ${output}"
+    return
+  fi
+  case "${output}" in
+    *'Inventory (read-only'*)
+      fail "${name}: must not call inventory"
+      return
+      ;;
+    *'result=ok'*)
+      fail "${name}: plan skips must not be result=ok"
+      return
+      ;;
+  esac
+  local missing=''
+  local keyword
+  for keyword in \
+    'postgres-plan (read-only; not Complete):' \
+    'config: path-ok (unread, not sourced)' \
+    'plan: path-ok (validated, not applied)' \
+    'package_resolution: skipped (no release manifest in this Partial)' \
+    'inventory: skipped (live cluster state not probed)' \
+    'backup_verification: skipped (backup evidence not checked)' \
+    'preload_merge: skipped (shared_preload_libraries not read)' \
+    'restart_approval: skipped (--approve-postgres-restart is apply-time)' \
+    'extension_ddl: skipped (CREATE EXTENSION not executed)' \
+    'verification: skipped (capability smoke checks deferred)' \
+    'result=partial'; do
+    case "${output}" in
+      *"${keyword}"*) ;;
+      *) missing="${missing} |${keyword}|" ;;
+    esac
+  done
+  if [[ -n "${missing}" ]]; then
+    fail "${name}: missing:${missing}: ${output}"
+    return
+  fi
+  pass "${name}"
+}
+
+plan_config="${tmpdir}/plan-config.env"
+printf 'unused-plan-config\n' >"${plan_config}"
+
+plan_apply_file="${tmpdir}/plan-apply.json"
+cat >"${plan_apply_file}" <<'PLAN'
+{
+  "policy": "apply-selected",
+  "selections": [
+    { "capability": "pg_stat_statements", "databases": ["app_production"] },
+    { "capability": "vector", "databases": ["search_production"] },
+    { "capability": "pg_partman", "databases": ["events_production"], "scheduler": "pg_cron" }
+  ]
+}
+PLAN
+
+plan_preserve_file="${tmpdir}/plan-preserve.json"
+cat >"${plan_preserve_file}" <<'PLAN'
+{
+  "policy": "preserve",
+  "selections": []
+}
+PLAN
+
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_apply_file}"
+expect_plan_partial 'postgres-plan apply-selected plan exits 0' \
+  'policy: apply-selected' \
+  'selection: pg_stat_statements databases=[app_production]' \
+  'selection: vector databases=[search_production]' \
+  'selection: pg_partman databases=[events_production] scheduler=pg_cron'
+
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_preserve_file}"
+expect_plan_partial 'postgres-plan preserve plan exits 0' \
+  'policy: preserve' \
+  'selection: (none)'
+
+# --- postgres-plan fail-closed: missing/invalid flags ---
+run_install postgres-plan
+expect_status 'postgres-plan missing flags exits 1' 1
+
+run_install postgres-plan --config "${plan_config}"
+expect_status 'postgres-plan missing --extension-plan exits 1' 1
+
+run_install postgres-plan --extension-plan "${plan_apply_file}"
+expect_status 'postgres-plan missing --config exits 1' 1
+
+run_install postgres-plan --config "${tmpdir}/missing.env" --extension-plan "${plan_apply_file}"
+expect_status 'postgres-plan --config missing path exits 1' 1
+
+run_install postgres-plan --config "${tmpdir}" --extension-plan "${plan_apply_file}"
+expect_status 'postgres-plan --config directory exits 1' 1
+
+run_install postgres-plan --config "${plan_config}" --extension-plan "${tmpdir}/missing.json"
+expect_status 'postgres-plan --extension-plan missing path exits 1' 1
+
+run_install postgres-plan --config "${plan_config}" --extension-plan "${tmpdir}"
+expect_status 'postgres-plan --extension-plan directory exits 1' 1
+
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_apply_file}" --mode existing-postgres
+expect_status 'postgres-plan unknown --mode flag exits 1' 1
+
+# --- postgres-plan fail-closed: invalid plans ---
+plan_bad_cap="${tmpdir}/plan-bad-cap.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"nope","databases":["x"]}]}' >"${plan_bad_cap}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_bad_cap}"
+expect_status 'postgres-plan unknown capability exits 1' 1
+
+plan_bad_policy="${tmpdir}/plan-bad-policy.json"
+printf '%s' '{"policy":"everything","selections":[]}' >"${plan_bad_policy}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_bad_policy}"
+expect_status 'postgres-plan invalid policy exits 1' 1
+
+plan_bad_db="${tmpdir}/plan-bad-db.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":["template1"]}]}' >"${plan_bad_db}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_bad_db}"
+expect_status 'postgres-plan protected database exits 1' 1
+
+plan_bad_name="${tmpdir}/plan-bad-name.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":["bad name"]}]}' >"${plan_bad_name}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_bad_name}"
+expect_status 'postgres-plan invalid database name exits 1' 1
+
+plan_empty_db="${tmpdir}/plan-empty-db.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":[]}]}' >"${plan_empty_db}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_empty_db}"
+expect_status 'postgres-plan empty databases exits 1' 1
+
+plan_sched_wrong="${tmpdir}/plan-sched-wrong.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":["a"],"scheduler":"pg_cron"}]}' >"${plan_sched_wrong}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_sched_wrong}"
+expect_status 'postgres-plan scheduler on non-pg_partman exits 1' 1
+
+plan_two_sched="${tmpdir}/plan-two-sched.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"pg_partman","databases":["a"],"scheduler":"pg_cron"},{"capability":"pg_partman","databases":["b"],"scheduler":"external"}]}' >"${plan_two_sched}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_two_sched}"
+expect_status 'postgres-plan two schedulers exits 1' 1
+
+plan_bad_json="${tmpdir}/plan-bad-json.json"
+printf '%s' '{"policy":"preserve","selections":[]' >"${plan_bad_json}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_bad_json}"
+expect_status 'postgres-plan malformed JSON exits 1' 1
+
+plan_unknown_key="${tmpdir}/plan-unknown-key.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"vector","databases":["a"],"extra":"x"}]}' >"${plan_unknown_key}"
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_unknown_key}"
+expect_status 'postgres-plan unknown selection key exits 1' 1
+
+# postgres-plan never sources --config: config marker must not be created
+rm -f "${sourced_marker}"
+cat >"${plan_config}" <<EOF
+echo CONFIG_SOURCED >"${sourced_marker}"
+echo "${REDGRES_INSTALLER_CANARY}"
+exit 99
+EOF
+run_install postgres-plan --config "${plan_config}" --extension-plan "${plan_apply_file}"
+expect_plan_partial 'postgres-plan never sources --config' 'policy: apply-selected'
+if [[ -e "${sourced_marker}" ]]; then
+  fail 'postgres-plan --config was sourced'
+else
+  pass 'postgres-plan --config was not sourced'
+fi
+printf 'unused-plan-config\n' >"${plan_config}"
+
 
 # --- OPS-005 update --dry-run skip matrix ---
 run_install update --non-interactive --dry-run --release "${config_file}"

@@ -112,6 +112,8 @@ sudo ./deploy/install.sh postgres-extensions apply --config /root/redgres/instal
 
 `postgres-plan` is read-only. The apply command refuses a required restart without `--approve-postgres-restart`; non-interactive mode also requires the reviewed plan digest so a changed file cannot be applied accidentally.
 
+**This Partial (OPS-007):** `deploy/install.sh postgres-plan --config PATH --extension-plan PATH` validates the plan JSON (policy, capability IDs from the initial registry below, explicit non-empty identifier-safe databases, optional `pg_partman`-only scheduler) and prints a plan preview plus a skip matrix (`result=partial`). It never resolves packages/preload/restart (no release manifest in this Partial), never sources `--config`, never mutates, and never touches `template1`. `postgres-extensions apply` and live install remain unimplemented (exit 2). Not Complete.
+
 ## 5. Initial capability registry
 
 The names below are candidate capabilities, not a promise that every combination is packaged or tested. A Redgres release manifest maps each supported capability and PostgreSQL major to exact package versions, checksums/repository origin, SQL extension versions and verification queries. Missing artifacts fail closed.

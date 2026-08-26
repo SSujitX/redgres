@@ -121,6 +121,7 @@ Redgres/
 │   │   ├── inventory.sh
 │   │   ├── verify.sh
 │   │   ├── release.sh
+│   │   ├── postgres_plan.sh   # OPS-007 read-only extension-plan validator (Partial)
 │   │   ├── checks.sh
 │   │   ├── logging.sh
 │   │   ├── secrets.sh
