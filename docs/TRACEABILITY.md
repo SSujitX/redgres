@@ -99,3 +99,7 @@ Independent UI reviewer **Approve Partial** on `1f76cf3`. Duplicate 202 poll mat
 ### PG-010 duplicate 202 security review (2026-08-26)
 
 Independent security reviewer **request changes / reject Complete** on `1f76cf3`. High: Compensator deleted any vault row for the new owner name, including another project's. Parent correction: `PrepareDuplicate` `409`s an existing vault `role_name` before enqueue; Compensator drops the clone first and deletes vault/role only if `OwnedDatabaseCount == 0`; `failQueuedDuplicate` skips compensation on created-nothing errors; Reconcile treats vault-only as `failed` without compensation. SQLite locks still do not serialize create/drop/truncate (Partial residual). Commands actually run: `go test -count=1 ./internal/postgresadmin ./internal/operations ./internal/httpapi` passed. Not live PG. Do not mark PG-010 Complete.
+
+### PG-010 duplicate 202 security re-review (2026-08-26)
+
+Independent security reviewer **Approve Partial / reject Complete** on `e2b78fb`. Prior High (Conflict compensation deleting another project's vault) is closed. Vault-only Reconcile Medium is closed. Remaining: SQLite `operation_locks` still do not serialize create/drop/truncate (unified locks deferred); Low leftover Duplicate **201** ticket path; Low empty worker audit `clientIP`. Not live PG. Do not mark PG-010 Complete.
