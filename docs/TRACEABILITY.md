@@ -135,3 +135,7 @@ Partial. `489175d` / `458a0f2`: `.github/workflows/ci.yml` `integration` job is 
 ### NFR-011 / OPS-006 four-cell GHA evidence review (2026-08-26)
 
 Independent evidence reviewer **Approve Partial / reject Complete** on `458a0f2`. Owned docs match the four-cell YAML. TRACEABILITY/TESTING/COMPATIBILITY stay Partial; §6 remains target `compatibility-*` names; §8 Hub snapshots are not a `RepoDigests` freeze; job names `integration (18-8.8)` not `compatibility-*`; no service `latest`, Redis 8.10, or PgBouncer image. GitHub four-cell unexecuted. Tests not re-run (parent-claimed). Do not mark OPS-006, NFR-011, or COMPATIBILITY.md §6 Complete.
+
+### NFR-011 / OPS-006 four-cell GHA verification (2026-08-26)
+
+Independent verifier **Approve Partial / reject Complete** on `458a0f2` (ancestor of `5dbfb9f` evidence pin; YAML/docs unchanged). Required `go test -count=1 ./internal/release ./integration` ok; `go test -count=1 ./...` ok; `go vet ./...` ok. Live `./integration` skipped. Four digest-pinned §8 cells match `LiveTest*`. Docs stay Partial. Residuals: GitHub four-cell unexecuted (no push); Hub snapshots ≠ `RepoDigests`; Redis provenance missing; Open/Ping/List/ListUsers only; no TLS/PgBouncer/backup/restore. Do not mark OPS-006, NFR-011, or COMPATIBILITY.md §6 Complete.
