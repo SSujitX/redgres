@@ -101,6 +101,7 @@ script_dir="$(builtin cd -- "${entrypoint_dir}" && builtin pwd -P)" || redgres_b
 
 source_files=(
   "${script_dir}/lib/common.sh"
+  "${script_dir}/lib/config.sh"
   "${script_dir}/lib/inventory.sh"
   "${script_dir}/lib/verify.sh"
   "${script_dir}/lib/release.sh"
@@ -674,10 +675,10 @@ if [[ -n "${extension_plan}" ]]; then
   redgres_plan_validate "${extension_plan}"
 fi
 
-# OPS-001: --config is optional on the main path, but when supplied it must be
-# an existing regular file (same rule as the subcommands); never source it.
+# OPS-001: --config is optional on the main path. When supplied, parse only the
+# documented lifecycle keys as inert data; never source, eval, or export it.
 if [[ -n "${config_path}" ]]; then
-  redgres_require_trusted_unread_file '--config' "${config_path}"
+  redgres_config_validate_lifecycle "${config_path}"
 fi
 
 print_stages

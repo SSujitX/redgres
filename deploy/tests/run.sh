@@ -44,6 +44,13 @@ bootstrap_helper_dir="${tmpdir}/bootstrap-helpers"
 bootstrap_helper_log="${tmpdir}/bootstrap-helper.log"
 source_tree_marker="${tmpdir}/source-tree-sourced"
 config_file="${tmpdir}/install.env"
+startup_env_file="${tmpdir}/startup.env"
+unknown_config_file="${tmpdir}/unknown-install.env"
+duplicate_config_file="${tmpdir}/duplicate-install.env"
+malformed_config_file="${tmpdir}/malformed-install.env"
+literal_config_file="${tmpdir}/literal-install.env"
+oversized_config_file="${tmpdir}/oversized-install.env"
+nul_config_file="${tmpdir}/nul-install.env"
 plan_file="${tmpdir}/postgres-extensions.json"
 sourced_marker="${tmpdir}/config-sourced"
 mkdir -p "${stub_dir}" "${detect_dir}" "${unsafe_dir}" "${bootstrap_helper_dir}"
@@ -62,11 +69,27 @@ trap cleanup EXIT
 # Canary must never appear in installer output (env is not a log dump).
 export REDGRES_INSTALLER_CANARY='rg-canary-do-not-print-7f2c'
 
-cat >"${config_file}" <<EOF
+cat >"${startup_env_file}" <<EOF
 echo CONFIG_SOURCED >"${sourced_marker}"
 echo "${REDGRES_INSTALLER_CANARY}"
 exit 99
 EOF
+
+cat >"${config_file}" <<'EOF'
+# Installer lifecycle values are data, not shell.
+POSTGRES_MODE=fresh
+POSTGRES_MAJOR=18
+PGBOUNCER_MODE=disabled
+POSTGRES_EXTENSION_POLICY=preserve
+POSTGRES_EXTENSION_PLAN_FILE=
+EOF
+
+printf '%s\n' "UNSUPPORTED_KEY=${REDGRES_INSTALLER_CANARY}" >"${unknown_config_file}"
+printf '%s\n' 'POSTGRES_MODE=fresh' 'POSTGRES_MODE=existing' >"${duplicate_config_file}"
+printf '%s\n' 'export POSTGRES_MODE=fresh' >"${malformed_config_file}"
+printf '%s\n' "POSTGRES_EXTENSION_PLAN_FILE=\$(printf owned >'${sourced_marker}')" >"${literal_config_file}"
+/usr/bin/head -c 65537 /dev/zero | /usr/bin/tr '\000' 'A' >"${oversized_config_file}"
+printf 'POSTGRES_MODE=fresh\000' >"${nul_config_file}"
 
 printf '%s\n' '{"policy":"preserve","selections":[]}' >"${plan_file}"
 
@@ -466,7 +489,7 @@ set +e
 output="$(
   builtin cd -- "${deploy_dir}/.." &&
     PATH="${bootstrap_helper_dir}:${installer_path}" \
-    BASH_ENV="${config_file}" \
+    BASH_ENV="${startup_env_file}" \
     ./deploy/install.sh --help
   2>&1
 )"
@@ -650,6 +673,72 @@ expect_status_and_stages 'main dry-run valid --config exits 0' \
   'postgres: skipped (fresh-postgres)' \
   'redis: skipped (fresh)' \
   'pgbouncer: skipped (disabled)'
+
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --config "${unknown_config_file}"
+expect_status 'main dry-run rejects unknown config key' 1
+
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --config "${duplicate_config_file}"
+expect_status 'main dry-run rejects duplicate config key' 1
+
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --config "${malformed_config_file}"
+expect_status 'main dry-run rejects shell-style config syntax' 1
+
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --config "${literal_config_file}"
+expect_status 'main dry-run treats config command substitution as literal data' 0
+
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --config "${oversized_config_file}"
+expect_status 'main dry-run rejects oversized config' 1
+
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --config "${nul_config_file}"
+expect_status 'main dry-run rejects config containing NUL' 1
 
 run_install \
   --non-interactive \
