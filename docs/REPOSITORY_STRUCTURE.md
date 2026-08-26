@@ -118,6 +118,7 @@ Redgres/
 │   ├── update.sh
 │   ├── lib/
 │   │   ├── common.sh
+│   │   ├── config.sh          # OPS-001 lifecycle config syntax parser (Partial)
 │   │   ├── inventory.sh
 │   │   ├── verify.sh
 │   │   ├── release.sh
