@@ -178,7 +178,12 @@ Independent verifier **Approve Partial / reject Complete** on `7e7605f` (ancesto
 
 ### REDIS-004 Permission presets heading hierarchy (2026-08-26)
 
-Partial. Isolated `feat/redis-004-presets-hierarchy` from `ae6ea1a`. Render groups all `queue-worker` rows under one `h2` with resolved kinds as `h3` then `.rule-list` (unlabeled kinds have no `h3`). Leave/abort: blocked GET `/api/v1/redis/presets` while **Loading presets.** (`role="status"`), navigate to Documentation, no catalog after leave, `AbortError` + `unhandledrejection` empty after `release()`. HTTP/API unchanged. Commits `cce16a0` / `63df159`. Writer-claimed `npm --prefix web run test:run` 398 passed; `npm --prefix web run build` succeeded. Not Playwright, not live Redis, not COMPATIBILITY.md §6. Do not mark REDIS-004, NFR-012, PLAT-001, PLAT-004, OPS-006, NFR-011, PG-010/011, or OPS-004 Complete.
+Partial. Isolated `feat/redis-004-presets-hierarchy` from `ae6ea1a`. Render groups all `queue-worker` rows under one `h2` with resolved kinds as `h3` then `.rule-list` (unlabeled kinds have no `h3`). Leave/abort: blocked GET `/api/v1/redis/presets` while **Loading presets.** (`role="status"`), navigate to Documentation, no catalog after leave, `AbortError` + `unhandledrejection` empty after `release()`. HTTP/API unchanged. Commits `cce16a0` / `63df159`. Parent `npm --prefix web run test:run` 398 passed on `b7f9e74`. Writer-claimed `npm --prefix web run build` succeeded. Not Playwright, not live Redis, not COMPATIBILITY.md §6. Do not mark REDIS-004, NFR-012, PLAT-001, PLAT-004, OPS-006, NFR-011, PG-010/011, or OPS-004 Complete.
+
+### REDIS-004 Permission presets heading hierarchy UI review (2026-08-26)
+
+Independent UI reviewer **Approve Partial / reject Complete** on `b7f9e74` (UI sources `cce16a0` / `63df159`). No Critical/High/Medium. One Queue/worker `h2` with kind `h3`s, Redis rail, no primary action, abort-on-leave, `.preset-queue` token spacing. Required viewports **not inspected**. Residual Lows: sibling `h2` flush; `.preset-queue` class not asserted. Tests not re-run (parent-claimed 398 passed). Do not mark REDIS-004 or NFR-012 Complete.
+
 
 
 
