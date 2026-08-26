@@ -184,6 +184,11 @@ Partial. Isolated `feat/redis-004-presets-hierarchy` from `ae6ea1a`. Render grou
 
 Independent UI reviewer **Approve Partial / reject Complete** on `b7f9e74` (UI sources `cce16a0` / `63df159`). No Critical/High/Medium. One Queue/worker `h2` with kind `h3`s, Redis rail, no primary action, abort-on-leave, `.preset-queue` token spacing. Required viewports **not inspected**. Residual Lows: sibling `h2` flush; `.preset-queue` class not asserted. Tests not re-run (parent-claimed 398 passed). Do not mark REDIS-004 or NFR-012 Complete.
 
+### REDIS-004 Permission presets heading hierarchy evidence review (2026-08-26)
+
+Independent evidence reviewer **Approve Partial / reject Complete** on `b7f9e74`. UX and UI_DESIGN_SYSTEM match one Queue/worker `h2` plus kind `h3`s. `docs/API.md` untouched. TRACEABILITY stays Partial. Writer did not edit `package.json` / lockfile / `ci.yml`. No §6 / four-cell / OPS-006 / NFR-011 / PLAT Complete over-claim. Tests not re-run (parent-claimed 398 passed). Residuals: unlabeled queue kinds untested; no Playwright; no live Redis. Do not mark REDIS-004 or NFR-012 Complete.
+
+
 
 
 
