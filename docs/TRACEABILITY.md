@@ -107,3 +107,7 @@ Independent security reviewer **Approve Partial / reject Complete** on `e2b78fb`
 ### PG-010 duplicate 202 nav Create consume (2026-08-26)
 
 Independent verifier **reject Complete / do not Approve Partial** on `1078922`: required `npm --prefix web run test:run` failed twice on `does not open Create from nav while duplicate 202 poll is in flight` (isolated re-run passed). Nav `postgres-create` during poll only skipped opening while `duplicating`; `createOpened` was not set, so after poll the pending effect opened Create. Parent consumes the nav intent while `duplicating` so Create does not deferred-open after poll (`a0f2fdd`). Commands actually run: `npm --prefix web run test:run` passed twice (374 passed / 374). Not Playwright, not live PG. Do not mark PG-010 Complete.
+
+### PG-010 duplicate 202 nav Create consume verification (2026-08-26)
+
+Independent verifier **Approve Partial / reject Complete** on `23bc808`. Required `go test -count=1 ./internal/httpapi ./internal/postgresadmin ./internal/operations ./cmd/redgres` passed. `npm --prefix web run test:run` 374 passed / 374. Nav `postgres-create` during a Duplicate 202 poll is consumed and does not open Create after the poll. Prior High remains closed. Residuals: SQLite `operation_locks` still do not serialize create/drop/truncate; leftover Duplicate 201 ticket UI path; worker success audit `clientIP` is empty. Not Playwright, not live PG 17/18, not COMPATIBILITY.md §6, not `go test ./...` / `-race`. Do not mark PG-010, PG-011, or OPS-004 Complete.
