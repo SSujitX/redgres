@@ -16,7 +16,7 @@ This slice persists **only** `postgres.database.duplicate`. Other action names m
 ### HTTP
 
 - Duplicate **target** after enqueue is **always 202** `{ "operation": { "id", "status": "queued" }, "request_id" }`. Never wait for TEMPLATE. Never return a credential on that POST.
-- Current implemented duplicate remains **201 in-request** until backend-integration writers change the handler.
+- Implemented duplicate POST is **202 after InsertQueued**. Worker `postgresadmin.RunQueuedDuplicates` runs under `operations.MaxRuntime` (15m). `cmd/redgres` Open → `Reconcile(live Probe, Compensator)` → 1s `ListQueued` poller.
 - Persist intended `result_json` `{database,owner,source}` at `queued`. GET still omits `result` unless `succeeded`.
 - After `succeeded`, the operator uses existing Reveal. GET operations never includes passwords or credential URLs.
 - `GET /api/v1/operations/{id}` is session + `platform.read`, no CSRF. No collection GET, no cancel endpoint. Invalid id → 400; missing → 404; SQLite down → 503. `Cache-Control: no-store`.
@@ -50,7 +50,7 @@ Allow-list `resource_kind`: `postgres.database`, `postgres.role`, `redis.user`.
 
 1. `running` → `interrupted`
 2. Resume `compensating` (compensation only). Non-nil `Compensator` drops leftover clone/role/vault **before** terminal + lock release. Compensator error → `indeterminate` with `KeepLocks` (locks kept). Nil Compensator keeps fail-and-release (allowed only before 202).
-3. For each `interrupted` duplicate, a `Probe` inspects cluster+vault. Live SQL is a later writer; this slice may use a nil Probe.
+3. For each `interrupted` duplicate, a live `Probe` inspects clone/role/vault existence (`SavedRoleNames`, no decrypt).
 4. Probe: nothing created → `failed`; clone+role+vault complete → `succeeded`; partial → `compensating` then Compensator; cannot tell → `indeterminate`
 5. `queued` stays queued. `ListQueued` is the dispatcher seam (1s in-process poller after Open + live Reconcile).
 6. Prune terminal rows
@@ -63,7 +63,7 @@ Forbidden in SQLite `result_json` / `error_json` and in GET JSON: password, cred
 
 ## Consequences
 
-- GET can exist before duplicate becomes 202.
-- Crash during TEMPLATE cannot safely retry CREATE DATABASE; interrupted work is inspected, not blindly retried.
+- GET existed before duplicate became 202.
+- Duplicate POST is 202 after enqueue. Crash during TEMPLATE cannot safely retry CREATE DATABASE; interrupted work is inspected, not blindly retried.
 - Multi-instance HA still requires a future ADR (leases/heartbeats).
 - Audit `postgres.database.duplicate` stays in the worker (backend-integration), fail-closed after cluster+vault. Optional metadata key `operation_id`. Audit failure after worker success keeps `succeeded` and does not compensate a complete clone.
