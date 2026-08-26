@@ -123,3 +123,7 @@ Independent security reviewer **Approve Partial / reject Complete** on `857a42d`
 ### OPS-006 Redis Open INFO evidence review (2026-08-26)
 
 Independent evidence reviewer **Approve Partial / reject Complete** on `857a42d`. Owned docs match the runtime guard. TRACEABILITY/CONFIGURATION/ARCHITECTURE/TESTING/COMPATIBILITY stay Partial; §6/§8 not over-claimed; PR template Redis 8.2/8.8; GHA first cell digest-pinned 18.6×8.8.2 plus expected env; `.env.example` EXPECTED_SERIES commented. Tests not re-run (parent-claimed). Residual: UI/installer expose of choices, four-cell, live Docker, Hub digest pull freeze. Do not mark OPS-006, NFR-011, or COMPATIBILITY.md §6 Complete.
+
+### OPS-006 Redis Open INFO verification (2026-08-26)
+
+Independent verifier **Approve Partial / reject Complete** on `74d52e4` (ancestor of `811310c` evidence pin; Go sources unchanged). Required `go test -count=1 ./internal/release ./internal/config ./internal/redisadmin ./internal/postgresadmin ./integration ./cmd/redgres` ok; `go test -count=1 ./...` ok; `go vet ./...` ok. Live `./integration` skipped. Docs stay Partial. Residuals: no four-cell GHA, no PgBouncer image/TLS, no §6, no category expansion, `maxACLUsers` 500, canceled-context test uses connection-refused, emit-time `@` check implicit. Do not mark OPS-006, NFR-011, or COMPATIBILITY.md §6 Complete.
