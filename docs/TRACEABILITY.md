@@ -95,3 +95,7 @@ Partial. `5e56db6` (`impl/duplicate-202`) changes POST `/api/v1/postgres/databas
 ### PG-010 duplicate 202 UI review (2026-08-26)
 
 Independent UI reviewer **Approve Partial** on `1f76cf3`. Duplicate 202 poll matches the frozen contract (no ticket, no auto-Reveal, Create stays 201+ticket). Viewports not inspected. Two Mediums fixed on `984de4f`: nav `postgres-create` no longer opens Create while `duplicating`; thrown operations GET clears in-page progress. Parent independently re-ran `npm --prefix web run test:run` (374 passed). Not Playwright. Do not mark PG-010 Complete.
+
+### PG-010 duplicate 202 security review (2026-08-26)
+
+Independent security reviewer **request changes / reject Complete** on `1f76cf3`. High: Compensator deleted any vault row for the new owner name, including another project's. Parent correction: `PrepareDuplicate` `409`s an existing vault `role_name` before enqueue; Compensator drops the clone first and deletes vault/role only if `OwnedDatabaseCount == 0`; `failQueuedDuplicate` skips compensation on created-nothing errors; Reconcile treats vault-only as `failed` without compensation. SQLite locks still do not serialize create/drop/truncate (Partial residual). Commands actually run: `go test -count=1 ./internal/postgresadmin ./internal/operations ./internal/httpapi` passed. Not live PG. Do not mark PG-010 Complete.
