@@ -121,6 +121,7 @@ Redgres/
 │   │   ├── inventory.sh
 │   │   ├── verify.sh
 │   │   ├── release.sh
+│   │   ├── backup.sh          # OPS-004 backup dry-run skip matrix (Partial)
 │   │   ├── postgres_plan.sh   # OPS-007 read-only extension-plan validator (Partial)
 │   │   ├── checks.sh
 │   │   ├── logging.sh

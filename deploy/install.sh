@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fail-closed installer dispatcher. OPS-001 / OPS-002 / OPS-003 / OPS-005 / OPS-006 Partial: no host mutation.
+# Fail-closed installer dispatcher. OPS-001 / OPS-002 / OPS-003 / OPS-004 / OPS-005 / OPS-006 / OPS-007 Partial: no host mutation.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,6 +13,8 @@ source "${script_dir}/lib/verify.sh"
 source "${script_dir}/lib/release.sh"
 # shellcheck disable=SC1091
 source "${script_dir}/lib/postgres_plan.sh"
+# shellcheck disable=SC1091
+source "${script_dir}/lib/backup.sh"
 
 usage() {
   cat <<'EOF'
@@ -26,6 +28,7 @@ Usage:
   deploy/install.sh verify --non-interactive --dry-run --config PATH
   deploy/install.sh update --non-interactive --dry-run --release PATH
   deploy/install.sh rollback --non-interactive --dry-run --to VERSION
+  deploy/install.sh backup --non-interactive --dry-run --config PATH
   deploy/install.sh postgres-plan --config PATH --extension-plan PATH
 
 This Partial prints the planned stage list on --dry-run and inventories PATH
@@ -37,11 +40,15 @@ postgres-plan --config PATH --extension-plan PATH is a read-only extension-plan
 validator: it checks policy, capability IDs, explicit databases, and scheduler
 rules, then prints a plan preview and skip matrix (result=partial). It never
 sources --config, never mutates, and never resolves packages/preload/restart.
+backup --non-interactive --dry-run --config PATH prints a skip matrix
+(result=partial); it does not invoke pg_dump/pg_restore, Redis BGSAVE/LASTSAVE,
+SQLite backup, checksums, pruning, or off-host copy. Live backup/restore is
+installer-recovery.
 It does not install packages, pull images, write systemd, open a firewall, or
 change DNS/Cloudflare. It does not start servers, source --config, call curl,
 or run SQL SHOW / Redis INFO.
 
-Exit 0: --help, valid --non-interactive --dry-run plan, skip matrix, or valid postgres-plan
+Exit 0: --help, valid --non-interactive --dry-run plan, skip matrix, valid postgres-plan, or backup skip matrix
 Exit 1: unsupported, incomplete, missing, unparseable, mismatched selection, or invalid extension plan
 Exit 2: mutation install, live verify/update/rollback, or other subcommand not implemented
 
@@ -230,8 +237,55 @@ if [[ "${1:-}" == "rollback" ]]; then
   exit 0
 fi
 
-if [[ "${1:-}" == "backup" || "${1:-}" == "postgres-extensions" ]]; then
+if [[ "${1:-}" == "postgres-extensions" ]]; then
   redgres_not_implemented "subcommand ${1} is not implemented"
+fi
+
+# OPS-004 backup: fail-closed dry-run skip matrix. Never sources --config,
+# never invokes pg_dump/pg_restore/BGSAVE/SQLite backup, never mutates (Partial).
+if [[ "${1:-}" == "backup" ]]; then
+  shift
+  backup_dry_run=0
+  backup_non_interactive=0
+  backup_config_path=''
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --non-interactive)
+        backup_non_interactive=1
+        shift
+        ;;
+      --dry-run)
+        backup_dry_run=1
+        shift
+        ;;
+      --config)
+        [[ $# -ge 2 ]] || redgres_die "missing value for --config"
+        backup_config_path="$2"
+        shift 2
+        ;;
+      -*)
+        redgres_die "unknown flag: $1"
+        ;;
+      *)
+        redgres_die "unknown argument: $1"
+        ;;
+    esac
+  done
+  if [[ "${backup_non_interactive}" -ne 1 ]]; then
+    redgres_die "--non-interactive is required"
+  fi
+  if [[ -z "${backup_config_path}" ]]; then
+    redgres_die "--config is required"
+  fi
+  # Existence only. Never source, eval, or cat the file; never print contents.
+  if [[ ! -f "${backup_config_path}" ]]; then
+    redgres_die "--config must be an existing regular file"
+  fi
+  if [[ "${backup_dry_run}" -ne 1 ]]; then
+    redgres_not_implemented "backup without --dry-run is not implemented"
+  fi
+  redgres_backup_dry_run
+  exit 0
 fi
 
 # OPS-007 postgres-plan: read-only extension-plan validation. Never sources
