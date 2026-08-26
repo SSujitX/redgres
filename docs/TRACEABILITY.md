@@ -119,3 +119,7 @@ Partial. `internal/release` is the only Go allow-list (PostgreSQL majors 17|18, 
 ### OPS-006 Redis Open INFO security review (2026-08-26)
 
 Independent security reviewer **Approve Partial / reject Complete** on `857a42d`. No Critical/High/Medium. Expected-series cannot widen support; configured Open fail-closes on INFO identity failures without leaking URL/password; Create/PATCH never emit `+@category` grants. Residual Lows: canceled-context test uses connection-refused rather than a hang; emit-time `@` check is implicit in the frozen allow-list. Not §6. Do not mark OPS-006 or NFR-011 Complete.
+
+### OPS-006 Redis Open INFO evidence review (2026-08-26)
+
+Independent evidence reviewer **Approve Partial / reject Complete** on `857a42d`. Owned docs match the runtime guard. TRACEABILITY/CONFIGURATION/ARCHITECTURE/TESTING/COMPATIBILITY stay Partial; §6/§8 not over-claimed; PR template Redis 8.2/8.8; GHA first cell digest-pinned 18.6×8.8.2 plus expected env; `.env.example` EXPECTED_SERIES commented. Tests not re-run (parent-claimed). Residual: UI/installer expose of choices, four-cell, live Docker, Hub digest pull freeze. Do not mark OPS-006, NFR-011, or COMPATIBILITY.md §6 Complete.
