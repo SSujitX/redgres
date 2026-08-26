@@ -437,7 +437,8 @@
     box-shadow: inset 0 0 0 2px var(--redis);
   }
 
-  .drawer-toggle {
+  .drawer-toggle,
+  .icon-button.drawer-toggle {
     display: none;
   }
 }
@@ -447,7 +448,8 @@
     display: flex;
   }
 
-  .drawer-toggle {
+  .drawer-toggle,
+  .icon-button.drawer-toggle {
     display: none;
   }
 }
