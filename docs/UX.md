@@ -77,6 +77,15 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 - Actor, action, target, outcome, request ID, source address, and timestamp are sanitized at render time: bidirectional and other format/control characters become U+FFFD, then the visible value is isolated LTR. The stored row is unchanged. Homoglyphs are not detected.
 - Below 768px each event is a labeled label/value list. At 768px and above, a bounded table with a sticky header owns horizontal/vertical scroll so the viewport does not scroll sideways. Audit uses neutral ink, not a PostgreSQL or Redis service rail.
 
+## System
+
+- Authenticated `GET /api/v1/status` on mount and Refresh (no polling, no CSRF, no query). Same five independent cards and states as Overview: Redgres state, PostgreSQL direct, PgBouncer, Redis, and tool links. States are Reachable, Unavailable, and **Not configured**. `not_implemented` paints **Not connected**. Development default for PgBouncer is **Not configured**, not “Not connected”. One component failure does not blank the other cards.
+- Does not fetch `GET /api/v1/redis/status`. Redis metrics stay Overview-only. Tool-link `<a href>`s stay Overview-only from GET `/session`; System paints the tool_links **state** card only.
+- Does not paint host, port, DSN, password, token, SQL, driver text, raw errors, version, uptime, URLs, or `request_id` as operator copy. There is no release/version line: GET `/status` and GET `/session` have no such field.
+- Login never fetches `/status`. HTTP 401 uses “Your session has expired. Sign in again to continue.” Envelope or network failure uses “Component status is unavailable. Try again.” Loading copy is “Loading component status.”
+- State stays in memory only (no `localStorage` / `sessionStorage` / `location.search`). Refresh aborts an in-flight request and refetches. The System header is neutral (no PostgreSQL/Redis page-header rail); PostgreSQL and Redis service rails stay on the matching status cards only.
+- Residual: footer aggregate health, release line, Documentation corpus.
+
 ## Credential ticket
 
 - Opens only from successful create/rotate/reveal response.
