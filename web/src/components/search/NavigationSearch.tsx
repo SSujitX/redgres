@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { errorMessage, fetchSearch, type SearchGroup } from "../../api/search";
-import { filterNav, type SectionId } from "../../nav";
+import { filterDocs, filterNav, type SectionId } from "../../nav";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
 import { displayText } from "../../text/displayText";
 
@@ -10,6 +10,7 @@ type NavigationSearchProps = {
   onSelect: (id: SectionId) => void;
   onSelectDatabase: (name: string) => void;
   onSelectAclUser: (name: string) => void;
+  onSelectArticle: (id: string) => void;
   restoreFocusRef: RefObject<HTMLButtonElement | null>;
 };
 
@@ -70,6 +71,7 @@ export default function NavigationSearch({
   onSelect,
   onSelectDatabase,
   onSelectAclUser,
+  onSelectArticle,
   restoreFocusRef,
 }: NavigationSearchProps) {
   const [query, setQuery] = useState("");
@@ -151,7 +153,8 @@ export default function NavigationSearch({
   const runes = queryRuneCount(trimmed);
   const tooLong = runes > maxQueryRunes;
   const navResults = tooLong ? [] : filterNav(query).filter((entry) => entry.group !== "Documentation");
-  const docResults = tooLong ? [] : filterNav(query).filter((entry) => entry.group === "Documentation");
+  const docNavHits = tooLong ? [] : filterNav(query).filter((entry) => entry.group === "Documentation");
+  const docArticleHits = tooLong ? [] : filterDocs(query);
   const postgres = groupById(groups, "postgres_databases");
   const postgresHits = (postgres?.hits ?? []).filter(
     (hit) => hit.type === "postgres_database" && typeof hit.label === "string" && hit.label !== "",
@@ -160,7 +163,7 @@ export default function NavigationSearch({
   const redisHits = (redis?.hits ?? []).filter(
     (hit) => hit.type === "redis_acl_user" && typeof hit.label === "string" && hit.label !== "",
   );
-  const pageCount = navResults.length + docResults.length;
+  const pageCount = navResults.length + docNavHits.length + docArticleHits.length;
   const countText = resultCountText(pageCount, postgresHits.length, redisHits.length, trimmed === "", tooLong);
   const statusText =
     searching && pageCount + postgresHits.length + redisHits.length === 0
@@ -181,6 +184,11 @@ export default function NavigationSearch({
 
   function activateSection(id: SectionId) {
     onSelect(id);
+    onClose();
+  }
+
+  function activateArticle(id: string) {
+    onSelectArticle(id);
     onClose();
   }
 
@@ -342,9 +350,9 @@ export default function NavigationSearch({
             </section>
             <section className="search-group" aria-label="Documentation">
               <p className="nav-group-label">Documentation</p>
-              {docResults.length > 0 ? (
+              {docNavHits.length > 0 || docArticleHits.length > 0 ? (
                 <ul className="search-results">
-                  {docResults.map((entry) => (
+                  {docNavHits.map((entry) => (
                     <li key={entry.id}>
                       <button
                         type="button"
@@ -354,6 +362,19 @@ export default function NavigationSearch({
                       >
                         <span>{entry.label}</span>
                         <span className="nav-result-group">{entry.group}</span>
+                      </button>
+                    </li>
+                  ))}
+                  {docArticleHits.map((hit) => (
+                    <li key={hit.id}>
+                      <button
+                        type="button"
+                        className="nav-result"
+                        data-search-result=""
+                        onClick={() => activateArticle(hit.id)}
+                      >
+                        <span>{hit.title}</span>
+                        <span className="nav-result-group">Documentation</span>
                       </button>
                     </li>
                   ))}

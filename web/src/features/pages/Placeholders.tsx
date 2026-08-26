@@ -1,5 +1,6 @@
-import { sectionTitle, type SectionId } from "../../nav";
+import type { SectionId } from "../../nav";
 import AuditPage from "../audit/AuditPage";
+import DocsPage from "../docs/DocsPage";
 import OverviewPage from "../overview/OverviewPage";
 import DatabasesPage from "../postgres/DatabasesPage";
 import SecurityOverview from "../postgres/SecurityOverview";
@@ -12,7 +13,10 @@ type PageProps = {
   csrf?: string;
   focusDatabase?: string | null;
   focusUsername?: string | null;
+  focusArticle?: string | null;
   focusNonce?: number;
+  onSelectArticle?: (id: string) => void;
+  onBackToDocs?: () => void;
 };
 
 export function SectionPage({
@@ -20,9 +24,11 @@ export function SectionPage({
   csrf = "",
   focusDatabase = null,
   focusUsername = null,
+  focusArticle = null,
   focusNonce = 0,
+  onSelectArticle = () => {},
+  onBackToDocs = () => {},
 }: PageProps) {
-  const title = sectionTitle(section);
   if (section === "overview") {
     return <OverviewPage />;
   }
@@ -58,17 +64,17 @@ export function SectionPage({
     return <SystemPage />;
   }
 
-  const adapter =
-    section.startsWith("postgres") || section.startsWith("redis")
-      ? "This adapter is not available yet."
-      : "This view is not available yet.";
+  if (section === "docs") {
+    return (
+      <DocsPage
+        focusArticle={focusArticle}
+        focusNonce={focusNonce}
+        onSelectArticle={onSelectArticle}
+        onBack={onBackToDocs}
+      />
+    );
+  }
 
-  return (
-    <article>
-      <header className="page-header">
-        <h1>{title}</h1>
-        <p>{adapter}</p>
-      </header>
-    </article>
-  );
+  const exhaustive: never = section;
+  return exhaustive;
 }

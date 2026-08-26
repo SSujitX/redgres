@@ -580,3 +580,28 @@ input:focus-visible {
 .shell-banner {
   margin: var(--space-3);
 }
+
+.doc-article {
+  max-width: 42rem;
+}
+
+.doc-article h1 {
+  margin: var(--space-3) 0;
+}
+
+.doc-article h2 {
+  font-size: 1rem;
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.doc-article p,
+.doc-article ul {
+  margin: 0 0 var(--space-3);
+}
+
+.doc-article ul {
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}

@@ -12363,7 +12363,8 @@ describe("System status page", () => {
       within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Documentation" }),
     );
     expect(await screen.findByRole("heading", { name: "Documentation" })).toBeInTheDocument();
-    expect(screen.getByText("This view is not available yet.")).toBeInTheDocument();
+    expect(screen.queryByText("This view is not available yet.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Using search" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "System" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Redgres state: Not configured")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("PgBouncer: Not configured")).not.toBeInTheDocument();
@@ -12505,6 +12506,238 @@ describe("System status page", () => {
     expect(header?.querySelector(".service-rail-redis")).toBeNull();
     expect(await screen.findByLabelText("PostgreSQL direct: Not configured")).toHaveClass("status-card-postgres");
     expect(screen.getByLabelText("Redis: Not configured")).toHaveClass("status-card-redis");
+  });
+});
+
+describe("Documentation catalog", () => {
+  const articleTitles = [
+    "Using search",
+    "PostgreSQL databases",
+    "Redis ACL users",
+    "Passwords and tickets",
+  ] as const;
+
+  function goToDocs() {
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Documentation" }),
+    );
+  }
+
+  async function landOnShell() {
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+  }
+
+  function expectLanding() {
+    expect(screen.getByRole("heading", { name: "Documentation" })).toBeInTheDocument();
+    expect(screen.queryByText("This view is not available yet.")).not.toBeInTheDocument();
+    for (const title of articleTitles) {
+      expect(screen.getByRole("button", { name: title })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("button", { name: "Back to documentation" })).not.toBeInTheDocument();
+  }
+
+  function expectNoCanary(root: HTMLElement = document.body) {
+    expect(root.textContent).not.toMatch(/canary-secret/);
+  }
+
+  function expectNoArticlePersistence() {
+    expect(window.location.hash).toBe("");
+    expect(window.location.search).not.toMatch(/docs|article|focus/i);
+    for (const store of [window.localStorage, window.sessionStorage]) {
+      for (let i = 0; i < store.length; i += 1) {
+        const key = store.key(i) ?? "";
+        const value = store.getItem(key) ?? "";
+        expect(`${key}=${value}`).not.toMatch(
+          /using-search|postgres-databases|redis-acl-users|credentials|focusArticle/,
+        );
+      }
+    }
+  }
+
+  it("replaces the Documentation placeholder with a catalog heading", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "docs-heading".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnShell();
+    goToDocs();
+    expectLanding();
+    const header = screen.getByRole("heading", { name: "Documentation" }).closest("header");
+    expect(header).toHaveClass("page-header");
+    expect(header).not.toHaveClass("page-header-redis");
+    expect(header?.querySelector(".service-rail-postgres")).toBeNull();
+    expect(header?.querySelector(".service-rail-redis")).toBeNull();
+  });
+
+  it("opens an article from the landing and returns with Back to documentation", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "docs-open".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnShell();
+    goToDocs();
+    fireEvent.click(screen.getByRole("button", { name: "Using search" }));
+    expect(await screen.findByRole("heading", { name: "Using search" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back to documentation" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to documentation" }));
+    expect(screen.queryByRole("heading", { name: "Using search" })).not.toBeInTheDocument();
+    expectLanding();
+  });
+
+  it("returns a Documentation article hit from a unique keyword and still GETs /search", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "docs-palette".padEnd(64, "0") });
+      }
+      if (isSearchUrl(url)) {
+        return postgresHitSearch({ password: "canary-secret" });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnShell();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), {
+      target: { value: "palette" },
+    });
+    const dialog = screen.getByRole("dialog", { name: "Search" });
+    const docsGroup = within(dialog).getByRole("region", { name: "Documentation" });
+    const navGroup = within(dialog).getByRole("region", { name: "Navigation" });
+    expect(await within(docsGroup).findByRole("button", { name: /Using search/ })).toBeInTheDocument();
+    expect(within(navGroup).queryByRole("button", { name: /Using search/ })).not.toBeInTheDocument();
+    expectNoCanary(dialog);
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => String(call[0]) === "/api/v1/search?q=palette")).toBe(true);
+    });
+    const searchCall = fetch.mock.calls.find((call) => String(call[0]) === "/api/v1/search?q=palette");
+    const method = searchCall?.[1]?.method;
+    expect(method === undefined || method === "GET").toBe(true);
+    fireEvent.click(within(docsGroup).getByRole("button", { name: /Using search/ }));
+    expect(await screen.findByRole("heading", { name: "Using search" })).toBeInTheDocument();
+    expectNoCanary();
+  });
+
+  it("opens the Documentation landing from the documentation nav hit, not an article", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "docs-nav-hit".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnShell();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), {
+      target: { value: "documentation" },
+    });
+    const dialog = screen.getByRole("dialog", { name: "Search" });
+    const docsGroup = within(dialog).getByRole("region", { name: "Documentation" });
+    expect(within(docsGroup).getByRole("button", { name: /^Documentation/ })).toBeInTheDocument();
+    expect(within(docsGroup).queryByRole("button", { name: /Using search/ })).not.toBeInTheDocument();
+    expect(within(docsGroup).queryByRole("button", { name: /Passwords and tickets/ })).not.toBeInTheDocument();
+    fireEvent.click(within(docsGroup).getByRole("button", { name: /^Documentation/ }));
+    expectLanding();
+  });
+
+  it("does not send mutations when searching drop or truncate from Documentation", async () => {
+    const fetch = stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "docs-drop".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnShell();
+    goToDocs();
+    expectLanding();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), { target: { value: "drop" } });
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => String(call[0]) === "/api/v1/search?q=drop")).toBe(true);
+    });
+    fireEvent.change(screen.getByLabelText("Search pages, databases, and ACL users"), {
+      target: { value: "truncate" },
+    });
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => String(call[0]) === "/api/v1/search?q=truncate")).toBe(true);
+    });
+    expect(
+      fetch.mock.calls.every((call) => {
+        const method = call[1]?.method;
+        const url = String(call[0]);
+        return (method === undefined || method === "GET") && !/drop|truncate/i.test(url.split("?")[0] ?? "");
+      }),
+    ).toBe(true);
+  });
+
+  it("never writes article focus to storage or the location URL", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "docs-persist".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnShell();
+    goToDocs();
+    for (const title of articleTitles) {
+      fireEvent.click(screen.getByRole("button", { name: title }));
+      expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();
+      expectNoCanary();
+      expectNoArticlePersistence();
+      fireEvent.click(screen.getByRole("button", { name: "Back to documentation" }));
+      expectLanding();
+      expectNoArticlePersistence();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Passwords and tickets" }));
+    expect(await screen.findByRole("heading", { name: "Passwords and tickets" })).toBeInTheDocument();
+    expectNoCanary();
+    expectNoArticlePersistence();
+  });
+
+  it("does not render the catalog on login", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(401, { error: { code: "unauthorized", message: "Authentication required" } });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    for (const title of articleTitles) {
+      expect(screen.queryByRole("heading", { name: title })).not.toBeInTheDocument();
+      expect(screen.queryByText(title)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole("heading", { name: "Documentation" })).not.toBeInTheDocument();
+  });
+
+  it("opens the landing from Help and sidebar Documentation even when an article is open", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "docs-help".padEnd(64, "0") });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnShell();
+    goToDocs();
+    fireEvent.click(screen.getByRole("button", { name: "PostgreSQL databases" }));
+    expect(await screen.findByRole("heading", { name: "PostgreSQL databases" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    expect(screen.queryByRole("heading", { name: "PostgreSQL databases" })).not.toBeInTheDocument();
+    expectLanding();
+    fireEvent.click(screen.getByRole("button", { name: "Redis ACL users" }));
+    expect(await screen.findByRole("heading", { name: "Redis ACL users" })).toBeInTheDocument();
+    goToDocs();
+    expect(screen.queryByRole("heading", { name: "Redis ACL users" })).not.toBeInTheDocument();
+    expectLanding();
   });
 });
 

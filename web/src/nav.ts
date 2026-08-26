@@ -1,3 +1,12 @@
+import { docArticles, lookupDoc, type DocArticle } from "./features/docs/catalog";
+
+export type { DocArticle };
+
+export type DocSearchHit = {
+  id: string;
+  title: string;
+};
+
 export type SectionId =
   | "overview"
   | "postgres"
@@ -70,6 +79,23 @@ export function filterNav(query: string): NavEntry[] {
       entry.group.toLowerCase().includes(q),
   );
 }
+
+export function filterDocs(query: string): DocSearchHit[] {
+  const q = query.trim().toLowerCase();
+  if (q.length < 1) {
+    return [];
+  }
+  return docArticles
+    .filter((article) => {
+      if (article.title.toLowerCase().includes(q)) {
+        return true;
+      }
+      return article.keywords.some((keyword) => keyword.toLowerCase().includes(q));
+    })
+    .map((article) => ({ id: article.id, title: article.title }));
+}
+
+export { lookupDoc };
 
 export function sectionTitle(id: SectionId): string {
   return navEntries.find((entry) => entry.id === id)?.label ?? "Overview";

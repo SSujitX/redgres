@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { navEntries, visibleNavEntries, type SectionId } from "../../nav";
+import { lookupDoc, navEntries, visibleNavEntries, type SectionId } from "../../nav";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
 import type { ToolLinks } from "../../api/auth";
 import Icon from "../icons";
@@ -24,6 +24,7 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
   const [searchOpen, setSearchOpen] = useState(false);
   const [focusDatabase, setFocusDatabase] = useState<string | null>(null);
   const [focusUsername, setFocusUsername] = useState<string | null>(null);
+  const [focusArticle, setFocusArticle] = useState<string | null>(null);
   const [focusNonce, setFocusNonce] = useState(0);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
@@ -73,6 +74,7 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
   }, [ownerOpen]);
 
   function go(id: SectionId) {
+    setFocusArticle(null);
     if (id !== "postgres") {
       setFocusDatabase(null);
     }
@@ -95,6 +97,22 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
     setFocusUsername(name);
     setFocusNonce((n) => n + 1);
     go("redis");
+  }
+
+  function selectArticle(id: string) {
+    const article = lookupDoc(id);
+    if (!article) {
+      go("docs");
+      return;
+    }
+    setFocusDatabase(null);
+    setFocusUsername(null);
+    setFocusArticle(article.id);
+    setFocusNonce((n) => n + 1);
+    setSection("docs");
+    setDrawerOpen(false);
+    setSearchOpen(false);
+    setOwnerOpen(false);
   }
 
   function openSearch() {
@@ -207,7 +225,10 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
                 csrf={csrf}
                 focusDatabase={focusDatabase}
                 focusUsername={focusUsername}
+                focusArticle={focusArticle}
                 focusNonce={focusNonce}
+                onSelectArticle={selectArticle}
+                onBackToDocs={() => go("docs")}
               />
             )}
           </main>
@@ -238,6 +259,7 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
         onSelect={go}
         onSelectDatabase={selectDatabase}
         onSelectAclUser={selectAclUser}
+        onSelectArticle={selectArticle}
         restoreFocusRef={searchButtonRef}
       />
     </div>
