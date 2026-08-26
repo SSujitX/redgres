@@ -248,6 +248,10 @@ fi
 # Live apply without --dry-run is not implemented (exit 2).
 if [[ "${1:-}" == "postgres-extensions" ]]; then
   shift
+  if [[ "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
   if [[ "${1:-}" == "apply" ]]; then
     shift
   else
@@ -537,6 +541,17 @@ fi
 
 if [[ "${dry_run}" -ne 1 ]]; then
   redgres_not_implemented "install mutation is not implemented"
+fi
+
+# OPS-007: when an optional extension plan is supplied, validate it exactly
+# like postgres-plan (policy, capability registry, explicit non-empty
+# identifier-safe databases, pg_cron one control db, one scheduler identity).
+# It is never applied during --dry-run; package/preload/restart stay skipped.
+if [[ -n "${extension_plan}" ]]; then
+  if [[ ! -f "${extension_plan}" ]]; then
+    redgres_die "--extension-plan must be an existing regular file"
+  fi
+  redgres_plan_validate "${extension_plan}"
 fi
 
 print_stages

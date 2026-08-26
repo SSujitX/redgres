@@ -58,7 +58,7 @@ echo "${REDGRES_INSTALLER_CANARY}"
 exit 99
 EOF
 
-printf '%s\n' '{"not":"parsed"}' >"${plan_file}"
+printf '%s\n' '{"policy":"preserve","selections":[]}' >"${plan_file}"
 
 STUB_NAMES='apt-get apt dnf yum docker dockerd systemctl ufw cloudflared certbot curl wget tar initdb pg_dropcluster pg_createcluster'
 
@@ -460,6 +460,67 @@ expect_status_and_stages 'dry-run fresh-postgres combo prints 13 stages' \
   'redis: skipped (fresh)' \
   'pgbouncer: skipped (disabled)'
 
+# --- OPS-007 main dry-run validates an optional extension plan ---
+plan_valid_apply="${tmpdir}/plan-valid-apply.json"
+cat >"${plan_valid_apply}" <<'PLAN'
+{
+  "policy": "apply-selected",
+  "selections": [
+    { "capability": "pg_stat_statements", "databases": ["app_production"] },
+    { "capability": "vector", "databases": ["search_production"] }
+  ]
+}
+PLAN
+
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --extension-plan "${plan_valid_apply}"
+expect_status_and_stages 'main dry-run valid extension plan exits 0' \
+  'postgres: skipped (fresh-postgres)' \
+  'redis: skipped (fresh)' \
+  'pgbouncer: skipped (disabled)'
+
+plan_invalid_cap="${tmpdir}/plan-invalid-cap.json"
+printf '%s' '{"policy":"apply-selected","selections":[{"capability":"nope","databases":["x"]}]}' >"${plan_invalid_cap}"
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --extension-plan "${plan_invalid_cap}"
+expect_status 'main dry-run invalid extension plan exits 1' 1
+
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --extension-plan "${tmpdir}/missing-plan.json"
+expect_status 'main dry-run missing extension plan path exits 1' 1
+
+run_install \
+  --non-interactive \
+  --dry-run \
+  --mode fresh-postgres \
+  --postgres-version 18 \
+  --redis-mode fresh \
+  --redis-version 8.8 \
+  --pgbouncer-mode disabled \
+  --extension-plan "${tmpdir}"
+expect_status 'main dry-run extension plan directory exits 1' 1
+
 # --- fail-closed: unknown flag ---
 run_install --non-interactive --dry-run --mode existing-postgres --redis-mode existing --pgbouncer-mode existing --unknown-flag
 expect_status 'unknown flag exits 1' 1
@@ -659,6 +720,21 @@ expect_status 'postgres-extensions apply unknown --mode flag exits 1' 1
 
 run_install postgres-extensions apply --help
 expect_status 'postgres-extensions apply --help exits 0' 0
+
+run_install postgres-extensions --help
+expect_status 'postgres-extensions --help exits 0' 0
+
+run_install postgres-extensions apply --non-interactive --dry-run --config
+expect_status 'postgres-extensions apply missing --config value exits 1' 1
+
+run_install postgres-extensions apply --non-interactive --dry-run --config "${plan_config}" --extension-plan
+expect_status 'postgres-extensions apply missing --extension-plan value exits 1' 1
+
+run_install postgres-extensions apply --non-interactive --dry-run --config "${plan_config}" --extension-plan "${plan_apply_file}" extra
+expect_status 'postgres-extensions apply bare positional exits 1' 1
+
+run_install postgres-extensions apply --non-interactive --dry-run --config "${tmpdir}" --extension-plan "${plan_apply_file}"
+expect_status 'postgres-extensions apply --config directory exits 1' 1
 
 # --- OPS-004 backup --dry-run skip matrix ---
 expect_backup_partial() {
