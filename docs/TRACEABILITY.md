@@ -200,6 +200,10 @@ Partial. Authenticated Overview mounts GET `/api/v1/audit?limit=8` (session cook
 
 Independent UI reviewer **Approve Partial / reject Complete** on `9a32115` (UI sources `c5f1eb1` / `4155bb8`). No Critical/High/Medium. Compact Recent audit `h2`, When/Action/Target/Outcome, `displayText` + bidi, empty-target Not recorded, status-envelope independence, Audit page unprefixed first GET, shared tokens, 4-column grid from 768px in CSS. Required viewports **not inspected**. Residual Lows: unnamed compact list; recent-audit can load while `/status` is in flight; extra JSON keys remain in memory. Tests not re-run by reviewer (parent-claimed 413 passed). Do not mark PLAT-001, PLAT-003, or NFR-012 Complete.
 
+### PLAT-001 Overview recent audit security review (2026-08-26)
+
+Independent security reviewer **Approve Partial / reject Complete** on `9a32115` (implementation `c5f1eb1` / `4155bb8`). No Critical/High/Medium. Compact GET runs only after authenticated shell; no CSRF; login never probes `/audit`; paint is When/Action/Target/Outcome through `displayText` plus bidi isolate; extra keys not rendered; Audit page first GET stays unprefixed. Residual Lows: extra JSON keys remain in React memory; 503/`errorMessage` copy is not bidi-stripped; synthetic `/status` 401 vs `/audit` 200 can paint one frame. Tests not re-run (parent-claimed 413 passed). Do not mark PLAT-001, PLAT-003, or NFR-012 Complete.
+
 
 
 
