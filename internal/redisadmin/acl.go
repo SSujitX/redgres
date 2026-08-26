@@ -61,6 +61,12 @@ func parseACLLine(line string) (User, bool) {
 			u.Enabled = false
 		case f == "nopass":
 			continue
+		// Redis 8.2/8.8 ACL LIST adds sanitize-payload to every user and keeps
+		// resetchannels/resetkeys/nocommands after idempotent resets. None of
+		// them change key/command/channel fidelity for exact +cmd allow-lists,
+		// so they must not degrade preset inference to custom/limited.
+		case f == "sanitize-payload" || f == "resetchannels" || f == "resetkeys" || f == "nocommands":
+			continue
 		case strings.HasPrefix(f, "#") || strings.HasPrefix(f, "!") || strings.HasPrefix(f, ">"):
 			continue
 		case f == "allkeys":

@@ -86,6 +86,55 @@ func TestParseACLStripsHashAndPlaintextCanary(t *testing.T) {
 	assertNoACLSecret(t, u.Username+u.KeyPattern+u.Preset+strings.Join(u.Commands, ",")+strings.Join(u.Categories, ","))
 }
 
+// realRedisACLLine builds the ACL LIST line shape Redis 8.2.9 / 8.8.2 emits
+// for a Redgres-created user (sanitize-payload + resetchannels tokens).
+func realRedisACLLine(username, pattern string, cmds []string) string {
+	fields := []string{
+		"user", username, "on", "sanitize-payload",
+		"#fcf730b6d95236ecd3c9fc2d92d7b6b2bb061514961aec041d6c7a7192f592e4",
+		"~" + pattern, "resetchannels", "-@all",
+	}
+	for _, c := range cmds {
+		fields = append(fields, "+"+c)
+	}
+	return strings.Join(fields, " ")
+}
+
+func TestParseACLLineRealRedisTokensAreBenign(t *testing.T) {
+	// Real Redis lines must still infer the exact named preset.
+	ro := realRedisACLLine("project_a", "project_a:*", inspectReadOnly)
+	u, ok := parseACLLine(ro)
+	if !ok {
+		t.Fatalf("read-only line did not parse: %s", ro)
+	}
+	if u.Preset != PresetReadOnly || u.RuleFidelity != RuleExact {
+		t.Fatalf("read-only labels = %+v", u)
+	}
+	if !u.Enabled || u.KeyPattern != "project_a:*" {
+		t.Fatalf("read-only = %+v", u)
+	}
+
+	crw := realRedisACLLine("project_b", "project_b:*", inspectCacheReadWrite)
+	u, ok = parseACLLine(crw)
+	if !ok {
+		t.Fatalf("cache-read-write line did not parse: %s", crw)
+	}
+	if u.Preset != PresetCacheReadWrite || u.RuleFidelity != RuleExact {
+		t.Fatalf("cache-read-write labels = %+v", u)
+	}
+
+	// A PATCH-shaped line additionally carries resetkeys/nocommands.
+	q := strings.Replace(realRedisACLLine("project_c", "project_c:*", inspectQueueLists),
+		"resetchannels ", "resetkeys nocommands resetchannels ", 1)
+	u, ok = parseACLLine(q)
+	if !ok {
+		t.Fatalf("queue line did not parse: %s", q)
+	}
+	if u.Preset != PresetQueueWorker || u.QueueKind != QueueLists || u.RuleFidelity != RuleExact {
+		t.Fatalf("queue labels = %+v", u)
+	}
+}
+
 func TestParseACLCategoryOnlyIsCustomLimited(t *testing.T) {
 	u, ok := parseACLLine("user reader on ~cache:* +@read")
 	if !ok {
