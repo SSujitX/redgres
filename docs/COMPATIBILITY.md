@@ -109,7 +109,7 @@ Discovery that an upstream version exists is not enough to claim support.
 
 ## 8. Local skippable live-test pins (not §6 evidence)
 
-This section freezes artifacts for **skippable** local live tests when Docker is available. It does **not** make any version production-supported. It does **not** pass §6 (four jobs, PgBouncer, TLS, backup, restore). [TESTING.md](TESTING.md) already treats skippable live tests as distinct from that matrix. Redis CI matrix jobs stay blocked until `redis-ui` has Git provenance.
+This section freezes artifacts for **skippable** local live tests when Docker is available. It does **not** make any version production-supported. It does **not** pass §6 (four jobs, PgBouncer, TLS, backup, restore). [TESTING.md](TESTING.md) already treats skippable live tests as distinct from that matrix. Redis CI matrix jobs stay blocked until `redis-ui` has Git provenance. The disposable GHA `integration` job consumes all four Hub index snapshot pins (`18.6`×`8.8.2`, `18.6`×`8.2.9`, `17.11`×`8.8.2`, `17.11`×`8.2.9`). That YAML is not §6, not production support, and not a `RepoDigests` freeze.
 
 First cell (local defaults: PostgreSQL 18 × Redis 8.8):
 
