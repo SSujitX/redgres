@@ -86,7 +86,7 @@ Small screen (< 768)
 - Small layouts replace the persistent sidebar with a modal navigation drawer triggered from the topbar. The drawer traps focus, closes on route selection/Escape, restores focus, and never leaves the document scroll-locked.
 - Group navigation by operator intent: Overview; PostgreSQL; Redis ACL; Audit; System; Documentation. Nested items appear only for the active service and do not create a permanently deep tree.
 - The paired service rail runs beside PostgreSQL and Redis navigation. The active page uses the relevant engine color plus text/shape; other global pages use neutral ink.
-- The footer shows Redgres release and compact aggregate health. It must not expose hostnames, usernames, or infrastructure detail before the owner opens System.
+- The expanded desktop sidebar is viewport-sticky, scrolls internally when necessary, and keeps its compact aggregate-health footer within the initial desktop viewport. The health state comes from the shell-owned status request. The medium rail and small drawer omit the footer and show the same labeled state in the topbar; at the smallest viewport the visible copy collapses to the mark while its accessible label remains. The release line remains residual until an HTTP contract supplies release identity. No shell-health surface exposes hostnames, usernames, URLs, DSNs, or infrastructure detail.
 - Sidebar collapse preference is non-sensitive and may persist. Navigation state must never persist credentials or credential-bearing URLs.
 
 ### Topbar
@@ -94,7 +94,7 @@ Small screen (< 768)
 - Sticky within the application shell, 56–64px high, with an opaque background and bottom rule.
 - Left/center: breadcrumb or current service context, then global search on layouts with room.
 - Right: help/documentation, compact dependency health indicator, and the authenticated owner menu in the top-right corner. The owner menu contains session-safe actions such as account/security context and Log out; it never displays downstream administrator credentials.
-- On small screens, show icon controls for menu, search, and owner. Search opens as a full-width sheet/dialog rather than shrinking into an unusable field.
+- On small screens, show icon controls for menu, search, and owner; hide the redundant Help control while Documentation remains available through the drawer. Search opens as a full-width sheet/dialog rather than shrinking into an unusable field.
 - Primary page actions belong in the page header, not the global topbar, so Create database cannot be mistaken for Create Redis ACL user.
 
 ### Global search / command palette

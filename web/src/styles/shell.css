@@ -79,6 +79,14 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  min-width: 0;
+}
+
+.health-mark {
+  flex: 0 0 auto;
+  min-width: 1rem;
+  text-align: center;
+  font-weight: 700;
 }
 
 .aggregate-health-loading {
@@ -126,6 +134,34 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.topbar-health {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 479px) {
+  .topbar {
+    gap: var(--space-2);
+  }
+
+  .topbar-health .aggregate-health {
+    width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .topbar-health .aggregate-health-copy {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
 }
 
 .owner-menu {
@@ -417,7 +453,7 @@
     padding: 0;
   }
 
-  .help-button {
+  .icon-button.help-button {
     display: none;
   }
 }
@@ -432,13 +468,16 @@
   }
 
   .brand-name,
-  .nav-group-label,
-  .sidebar-footer {
+  .nav-group-label {
     position: absolute;
     width: 1px;
     height: 1px;
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
+  }
+
+  .sidebar-footer {
+    display: none;
   }
 
   .nav-item {
@@ -495,10 +534,19 @@
 @media (min-width: 1024px) {
   .app-sidebar {
     display: flex;
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    height: 100vh;
+    overflow-y: auto;
   }
 
   .drawer-toggle,
   .icon-button.drawer-toggle {
+    display: none;
+  }
+
+  .topbar-health {
     display: none;
   }
 }

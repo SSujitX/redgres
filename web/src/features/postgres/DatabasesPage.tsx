@@ -150,6 +150,7 @@ type DatabasesPageProps = {
   focusDatabase?: string | null;
   focusNonce?: number;
   openCreate?: boolean;
+  onCreateIntentConsumed?: () => void;
 };
 
 export default function DatabasesPage({
@@ -157,6 +158,7 @@ export default function DatabasesPage({
   focusDatabase = null,
   focusNonce = 0,
   openCreate = false,
+  onCreateIntentConsumed,
 }: DatabasesPageProps) {
   const [items, setItems] = useState<DatabaseListItem[] | null>(null);
   const [truncated, setTruncated] = useState(false);
@@ -188,6 +190,7 @@ export default function DatabasesPage({
   const duplicateAbort = useRef<AbortController | null>(null);
   const listAbort = useRef<AbortController | null>(null);
   const createOpened = useRef(false);
+  const createButtonRef = useRef<HTMLButtonElement | null>(null);
   const [tables, setTables] = useState<TableItem[] | null>(null);
   const [tablesError, setTablesError] = useState("");
   const [tablesTruncated, setTablesTruncated] = useState(false);
@@ -282,13 +285,20 @@ export default function DatabasesPage({
     }
     if (duplicating) {
       createOpened.current = true;
+      onCreateIntentConsumed?.();
+      return;
+    }
+    if (ticket !== null || listError !== "") {
+      createOpened.current = true;
+      onCreateIntentConsumed?.();
       return;
     }
     if (items !== null && listError === "" && ticket === null) {
       setCreateOpen(true);
       createOpened.current = true;
+      onCreateIntentConsumed?.();
     }
-  }, [openCreate, items, listError, ticket, duplicating]);
+  }, [openCreate, items, listError, ticket, duplicating, onCreateIntentConsumed]);
 
   useEffect(() => {
     if (!selectedTable) {
@@ -1295,6 +1305,7 @@ export default function DatabasesPage({
           <h1>Databases</h1>
           {showCreate ? (
             <button
+              ref={createButtonRef}
               type="button"
               className="primary-button"
               disabled={createDisabled}
@@ -1332,6 +1343,7 @@ export default function DatabasesPage({
         <CreateDatabaseForm
           error={createError}
           submitting={creating}
+          restoreFocusRef={createButtonRef}
           onCancel={() => {
             if (creating) {
               return;

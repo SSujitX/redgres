@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { lookupDoc, navEntries, visibleNavEntries, type SectionId } from "../../nav";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
 import type { ToolLinks } from "../../api/auth";
+import { errorMessage, fetchStatus, isStatusPayload, type StatusComponent } from "../../api/status";
 import Icon from "../icons";
 import NavigationSearch from "../search/NavigationSearch";
-import OverviewPage, { type AggregateHealthState } from "../../features/overview/OverviewPage";
+import OverviewPage from "../../features/overview/OverviewPage";
+import DatabasesPage from "../../features/postgres/DatabasesPage";
 import { SectionPage } from "../../features/pages/Placeholders";
 
 type AppShellProps = {
@@ -16,6 +18,11 @@ type AppShellProps = {
 };
 
 const NAV_GROUPS = ["Overview", "PostgreSQL", "Redis ACL", "Audit", "System", "Documentation"];
+const sessionExpired = "Your session has expired. Sign in again to continue.";
+const statusUnavailable = "Component status is unavailable. Try again.";
+const HEALTH_COMPONENT_IDS: StatusComponent["id"][] = ["redgres_state", "postgres_direct", "pgbouncer", "redis"];
+
+type AggregateHealthState = "loading" | "healthy" | "degraded" | "unavailable";
 
 export default function AppShell({ username, csrf, toolLinks, onLogout, loggingOut }: AppShellProps) {
   const [section, setSection] = useState<SectionId>("overview");
@@ -26,14 +33,62 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
   const [focusUsername, setFocusUsername] = useState<string | null>(null);
   const [focusArticle, setFocusArticle] = useState<string | null>(null);
   const [focusNonce, setFocusNonce] = useState(0);
-  const [aggregateHealth, setAggregateHealth] = useState<AggregateHealthState>("loading");
+  const [postgresCreateIntent, setPostgresCreateIntent] = useState(false);
+  const [statusComponents, setStatusComponents] = useState<StatusComponent[] | null>(null);
+  const [statusError, setStatusError] = useState("");
+  const [statusLoading, setStatusLoading] = useState(true);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const ownerMenuRef = useRef<HTMLDivElement>(null);
   const logoutItemRef = useRef<HTMLButtonElement>(null);
+  const statusAbortRef = useRef<AbortController | null>(null);
 
   useFocusTrap(drawerRef, drawerOpen, menuButtonRef);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    statusAbortRef.current = controller;
+    void loadStatus(controller);
+    return () => controller.abort();
+  }, []);
+
+  async function loadStatus(controller: AbortController) {
+    setStatusLoading(true);
+    setStatusError("");
+    setStatusComponents(null);
+    try {
+      const result = await fetchStatus({ signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (result.status === 200 && isStatusPayload(result.body)) {
+        setStatusComponents(result.body.components);
+        return;
+      }
+      if (result.status === 401) {
+        setStatusError(sessionExpired);
+        return;
+      }
+      setStatusError(errorMessage(result.body, statusUnavailable));
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      setStatusError(statusUnavailable);
+    } finally {
+      if (!controller.signal.aborted) {
+        setStatusLoading(false);
+      }
+    }
+  }
+
+  function refreshStatus() {
+    statusAbortRef.current?.abort();
+    const controller = new AbortController();
+    statusAbortRef.current = controller;
+    void loadStatus(controller);
+  }
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -75,14 +130,16 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
   }, [ownerOpen]);
 
   function go(id: SectionId) {
+    const nextSection = id === "postgres-create" ? "postgres" : id;
+    setPostgresCreateIntent(id === "postgres-create");
     setFocusArticle(null);
-    if (id !== "postgres") {
+    if (nextSection !== "postgres") {
       setFocusDatabase(null);
     }
-    if (id !== "redis") {
+    if (nextSection !== "redis") {
       setFocusUsername(null);
     }
-    setSection(id);
+    setSection(nextSection);
     setDrawerOpen(false);
     setSearchOpen(false);
     setOwnerOpen(false);
@@ -122,6 +179,8 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
     setSearchOpen(true);
   }
 
+  const aggregateHealth = aggregateHealthState(statusComponents, statusError, statusLoading);
+
   const nav = <PrimaryNav section={section} onSelect={go} />;
 
   return (
@@ -159,6 +218,9 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
               <span className="button-label">Menu</span>
             </button>
             <p className="topbar-context">{sectionTitleSafe(section)}</p>
+            <div className="topbar-health">
+              <AggregateHealth state={aggregateHealth} />
+            </div>
             <button
               ref={searchButtonRef}
               type="button"
@@ -217,7 +279,18 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
               <OverviewPage
                 toolLinks={toolLinks}
                 onNavigate={go}
-                onAggregateHealthChange={setAggregateHealth}
+                statusComponents={statusComponents}
+                statusError={statusError}
+                statusLoading={statusLoading}
+                onRefreshStatus={refreshStatus}
+              />
+            ) : section === "postgres" ? (
+              <DatabasesPage
+                csrf={csrf}
+                focusDatabase={focusDatabase}
+                focusNonce={focusNonce}
+                openCreate={postgresCreateIntent}
+                onCreateIntentConsumed={() => setPostgresCreateIntent(false)}
               />
             ) : (
               <SectionPage
@@ -266,6 +339,25 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
   );
 }
 
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+function aggregateHealthState(
+  components: StatusComponent[] | null,
+  error: string,
+  loading: boolean,
+): AggregateHealthState {
+  if (loading && components === null && error === "") {
+    return "loading";
+  }
+  if (error !== "" || components === null || components.length === 0) {
+    return "unavailable";
+  }
+  const byId = new Map(components.map((component) => [component.id, component]));
+  return HEALTH_COMPONENT_IDS.every((id) => byId.get(id)?.state === "ok") ? "healthy" : "degraded";
+}
+
 function AggregateHealth({ state }: { state: AggregateHealthState }) {
   const copy =
     state === "healthy"
@@ -276,6 +368,7 @@ function AggregateHealth({ state }: { state: AggregateHealthState }) {
           ? "Health unavailable"
           : "Checking health";
   const showWarning = state === "degraded" || state === "unavailable";
+  const mark = state === "healthy" ? "✓" : state === "loading" ? "…" : "!";
   return (
     <span
       className={`aggregate-health aggregate-health-${state}`}
@@ -283,12 +376,10 @@ function AggregateHealth({ state }: { state: AggregateHealthState }) {
       aria-atomic="true"
       aria-label={`Aggregate health: ${copy}`}
     >
-      {showWarning ? (
-        <span className="warning-mark" aria-hidden="true">
-          !
-        </span>
-      ) : null}
-      {copy}
+      <span className={showWarning ? "warning-mark health-mark" : "health-mark"} aria-hidden="true">
+        {mark}
+      </span>
+      <span className="aggregate-health-copy">{copy}</span>
     </span>
   );
 }

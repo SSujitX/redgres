@@ -883,7 +883,7 @@ function isSearchUrl(url: string): boolean {
 function disconnectedStatus() {
   return jsonResponse(200, {
     components: [
-      { id: "redgres_state", state: "not_configured" },
+      { id: "redgres_state", state: "ok" },
       { id: "postgres_direct", state: "not_configured" },
       { id: "pgbouncer", state: "not_configured" },
       { id: "redis", state: "not_configured" },
@@ -972,7 +972,7 @@ function toolLinksOkStatus() {
       { id: "redis", state: "not_configured" },
       { id: "tool_links", state: "ok" },
     ],
-    request_id: "toollinksok0000000000000000000000",
+    request_id: "abcdefabcdefabcdefabcdefabcdefab",
   });
 }
 
@@ -7676,7 +7676,7 @@ describe("App session and login", () => {
             { id: "redis", state: "ok" },
             { id: "tool_links", state: "not_configured" },
           ],
-          request_id: "pgbouncerok0000000000000000000000",
+          request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
         });
       }
       return unknownApi(url);
@@ -7706,7 +7706,7 @@ describe("App session and login", () => {
             { id: "redis", state: "ok" },
             { id: "tool_links", state: "not_configured" },
           ],
-          request_id: "pgbouncerunavail0000000000000000",
+          request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2",
         });
       }
       return unknownApi(url);
@@ -7770,13 +7770,158 @@ describe("App session and login", () => {
       if (url === "/api/v1/postgres/databases") {
         return jsonResponse(200, { databases: [], truncated: false });
       }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "ok" },
+            { id: "pgbouncer", state: "not_configured" },
+            { id: "redis", state: "not_configured" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3",
+        });
+      }
       return unknownApi(url);
     });
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
-    const quickCreate = screen.getByRole("region", { name: "Quick create" });
+    const quickCreate = await screen.findByRole("region", { name: "Quick create" });
     fireEvent.click(within(quickCreate).getByRole("button", { name: "Create database" }));
     expect(await screen.findByRole("dialog", { name: "Create database" })).toBeInTheDocument();
+  });
+
+  it("consumes quick create, closes by keyboard, restores Databases focus, and reopens", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "quick-create-focus".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "ok" },
+            { id: "pgbouncer", state: "not_configured" },
+            { id: "redis", state: "not_configured" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa4",
+        });
+      }
+      if (url === "/api/v1/postgres/databases") {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const quickCreate = await screen.findByRole("region", { name: "Quick create" });
+    fireEvent.click(within(quickCreate).getByRole("button", { name: "Create database" }));
+    const firstDialog = await screen.findByRole("dialog", { name: "Create database" });
+    expect(screen.getByText("PostgreSQL · Databases")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Databases" })).toHaveAttribute("aria-current", "page");
+    fireEvent.keyDown(firstDialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Create database" })).not.toBeInTheDocument();
+    const header = screen.getByRole("heading", { name: "Databases" }).closest("header");
+    const createButton = within(header as HTMLElement).getByRole("button", { name: "Create database" });
+    expect(createButton).toHaveFocus();
+    fireEvent.click(createButton);
+    const reopened = await screen.findByRole("dialog", { name: "Create database" });
+    expect(within(reopened).getByLabelText("Database name")).toHaveFocus();
+    fireEvent.keyDown(reopened, { key: "Escape" });
+    expect(createButton).toHaveFocus();
+  });
+
+  it("does not reopen a consumed quick-create intent after navigation during database loading", async () => {
+    let releaseFirstList: () => void = () => {};
+    const blockedList = new Promise<void>((resolve) => {
+      releaseFirstList = resolve;
+    });
+    let listCalls = 0;
+    stubFetch(async (url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "quick-create-loading".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "ok" },
+            { id: "pgbouncer", state: "not_configured" },
+            { id: "redis", state: "not_configured" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5",
+        });
+      }
+      if (url === "/api/v1/postgres/databases") {
+        listCalls += 1;
+        if (listCalls === 1) {
+          await blockedList;
+        }
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    const quickCreate = await screen.findByRole("region", { name: "Quick create" });
+    fireEvent.click(within(quickCreate).getByRole("button", { name: "Create database" }));
+    expect(await screen.findByRole("heading", { name: "Databases" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Create database" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    releaseFirstList();
+    fireEvent.click(screen.getByRole("button", { name: "Databases" }));
+    expect(await screen.findByRole("heading", { name: "Databases" })).toBeInTheDocument();
+    expect(
+      await within(screen.getByRole("main")).findByRole("button", { name: "Create database" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Create database" })).not.toBeInTheDocument();
+  });
+
+  it("keeps shell health loading across navigation and resolves both responsive indicators", async () => {
+    let releaseStatus: () => void = () => {};
+    const blockedStatus = new Promise<void>((resolve) => {
+      releaseStatus = resolve;
+    });
+    let statusSignal: AbortSignal | undefined;
+    const fetch = stubFetch(async (url, init) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "shell-health-nav".padEnd(64, "0") });
+      }
+      if (isStatusUrl(url)) {
+        statusSignal = init?.signal ?? undefined;
+        await blockedStatus;
+        return jsonResponse(200, {
+          components: [
+            { id: "redgres_state", state: "ok" },
+            { id: "postgres_direct", state: "ok" },
+            { id: "pgbouncer", state: "ok" },
+            { id: "redis", state: "ok" },
+            { id: "tool_links", state: "not_configured" },
+          ],
+          request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6",
+        });
+      }
+      if (url === "/api/v1/postgres/databases") {
+        return jsonResponse(200, { databases: [], truncated: false });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument();
+    const sidebar = await screen.findByRole("complementary", { name: "Redgres" });
+    const topbar = document.querySelector<HTMLElement>(".topbar");
+    expect(topbar).not.toBeNull();
+    expect(within(sidebar).getByLabelText("Aggregate health: Checking health")).toBeInTheDocument();
+    expect(within(topbar as HTMLElement).getByLabelText("Aggregate health: Checking health")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Quick create" })).not.toBeInTheDocument();
+    fireEvent.click(within(sidebar).getByRole("button", { name: "Databases" }));
+    expect(await screen.findByRole("heading", { name: "Databases" })).toBeInTheDocument();
+    expect(statusSignal?.aborted).toBe(false);
+    releaseStatus();
+    expect(await within(sidebar).findByLabelText("Aggregate health: Healthy")).toBeInTheDocument();
+    expect(within(topbar as HTMLElement).getByLabelText("Aggregate health: Healthy")).toBeInTheDocument();
+    expect(fetch.mock.calls.filter((call) => isStatusUrl(String(call[0])))).toHaveLength(1);
   });
 
   it("shows mixed Overview status without blanking Redis", async () => {
@@ -7818,7 +7963,8 @@ describe("App session and login", () => {
       return unknownApi(url);
     });
     render(<App />);
-    const aggregate = await screen.findByLabelText("Aggregate health: Degraded");
+    const sidebar = await screen.findByRole("complementary", { name: "Redgres" });
+    const aggregate = await within(sidebar).findByLabelText("Aggregate health: Degraded");
     expect(aggregate).toHaveTextContent("Degraded");
     expect(aggregate).toHaveClass("aggregate-health-degraded");
     expect(aggregate).not.toHaveTextContent(/host|dsn|url/i);
@@ -7838,15 +7984,19 @@ describe("App session and login", () => {
             { id: "redis", state: "ok" },
             { id: "tool_links", state: "not_configured" },
           ],
+          request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7",
         });
       }
       return unknownApi(url);
     });
     render(<App />);
-    expect(await screen.findByLabelText("Aggregate health: Healthy")).toHaveClass("aggregate-health-healthy");
+    const sidebar = await screen.findByRole("complementary", { name: "Redgres" });
+    expect(await within(sidebar).findByLabelText("Aggregate health: Healthy")).toHaveClass(
+      "aggregate-health-healthy",
+    );
   });
 
-  it("treats an empty component list as unavailable aggregate health", async () => {
+  it("rejects an empty status envelope without painting cards or recent audit", async () => {
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "footer-empty".padEnd(64, "0") });
@@ -7857,9 +8007,14 @@ describe("App session and login", () => {
       return unknownApi(url);
     });
     render(<App />);
-    expect(await screen.findByLabelText("Aggregate health: Health unavailable")).toHaveClass(
+    const sidebar = await screen.findByRole("complementary", { name: "Redgres" });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Component status is unavailable. Try again.");
+    expect(await within(sidebar).findByLabelText("Aggregate health: Health unavailable")).toHaveClass(
       "aggregate-health-unavailable",
     );
+    expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent audit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Quick create" })).not.toBeInTheDocument();
   });
 
   it("shows a session-expired Overview alert without status cards", async () => {
@@ -7878,7 +8033,8 @@ describe("App session and login", () => {
     expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Aggregate health: Health unavailable")).toBeInTheDocument();
+    const sidebar = screen.getByRole("complementary", { name: "Redgres" });
+    expect(within(sidebar).getByLabelText("Aggregate health: Health unavailable")).toBeInTheDocument();
   });
 
   it("shows a generic Overview alert when status fetch throws", async () => {
@@ -7897,7 +8053,7 @@ describe("App session and login", () => {
     expect(screen.queryByRole("heading", { name: "Redis" })).not.toBeInTheDocument();
   });
 
-  it("renders Redis as Unavailable when the status payload omits it", async () => {
+  it("rejects a status payload that omits Redis", async () => {
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-d".padEnd(64, "0") });
@@ -7916,9 +8072,9 @@ describe("App session and login", () => {
       return unknownApi(url);
     });
     render(<App />);
-    expect(await screen.findByLabelText("Redis: Unavailable")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Redis" })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Redis: Reachable")).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Component status is unavailable. Try again.");
+    expect(screen.queryByRole("heading", { name: "Redis" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent audit" })).not.toBeInTheDocument();
   });
 
   it("shows Overview loading status then replaces it with cards", async () => {
@@ -7952,11 +8108,12 @@ describe("App session and login", () => {
     });
     render(<App />);
     expect(await screen.findByText("Loading component status.")).toHaveAttribute("role", "status");
-    expect(screen.getByLabelText("Aggregate health: Checking health")).toBeInTheDocument();
+    const sidebar = screen.getByRole("complementary", { name: "Redgres" });
+    expect(within(sidebar).getByLabelText("Aggregate health: Checking health")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
     release();
     expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
-    expect(screen.getByLabelText("Aggregate health: Degraded")).toBeInTheDocument();
+    expect(within(sidebar).getByLabelText("Aggregate health: Degraded")).toBeInTheDocument();
     expect(screen.queryByText("Loading component status.")).not.toBeInTheDocument();
   });
 
@@ -8665,7 +8822,7 @@ describe("App session and login", () => {
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
   });
 
-  it("treats an unknown Overview state as Unavailable", async () => {
+  it("rejects an unknown Overview component state as a malformed envelope", async () => {
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "status-h".padEnd(64, "0") });
@@ -8685,10 +8842,10 @@ describe("App session and login", () => {
       return unknownApi(url);
     });
     render(<App />);
-    expect(await screen.findByLabelText("Redgres state: Unavailable")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Redgres state: Reachable")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "PgBouncer" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Component status is unavailable. Try again.");
+    expect(screen.queryByLabelText("Redgres state: Unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "PgBouncer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent audit" })).not.toBeInTheDocument();
   });
 
   it("does not paint PostgreSQL unavailable with Redis identity red", async () => {
@@ -8865,7 +9022,7 @@ describe("App session and login", () => {
             { id: "redgres_state", state: "ok" },
             { id: "postgres_direct", state: "ok" },
             { id: "pgbouncer", state: "not_configured" },
-            { id: "redis", state: "unavailable" },
+            { id: "redis", state: "unavailable", reason: "unreachable" },
             { id: "tool_links", state: "not_configured" },
           ],
           request_id: "44444444444444444444444444444444",
@@ -8896,7 +9053,7 @@ describe("App session and login", () => {
             { id: "redgres_state", state: "ok" },
             { id: "postgres_direct", state: "ok" },
             { id: "pgbouncer", state: "not_configured" },
-            { id: "redis", state: "unavailable" },
+            { id: "redis", state: "unavailable", reason: "unreachable" },
             { id: "tool_links", state: "not_configured" },
           ],
           request_id: "55555555555555555555555555555555",
@@ -8925,7 +9082,7 @@ describe("App session and login", () => {
             { id: "redgres_state", state: "ok" },
             { id: "postgres_direct", state: "ok" },
             { id: "pgbouncer", state: "not_configured" },
-            { id: "redis", state: "unavailable" },
+            { id: "redis", state: "unavailable", reason: "unreachable" },
             { id: "tool_links", state: "not_configured" },
           ],
           request_id: "66666666666666666666666666666666",
@@ -12778,7 +12935,7 @@ describe("System status page", () => {
     expect(screen.queryByLabelText("PgBouncer: Not connected")).not.toBeInTheDocument();
     const cards = [...document.querySelectorAll(".status-card")];
     expect(cards.map((card) => card.getAttribute("aria-label"))).toEqual([
-      "Redgres state: Not configured",
+      "Redgres state: Reachable",
       "PostgreSQL direct: Not configured",
       "PgBouncer: Not configured",
       "Redis: Not configured",
@@ -12904,7 +13061,7 @@ describe("System status page", () => {
     const searchBefore = window.location.search;
     goToSystem();
     expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
-    expect(await screen.findByLabelText("Redgres state: Not configured")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
     expect(localSet).not.toHaveBeenCalled();
     expect(window.location.search).toBe(searchBefore);
     expect(window.location.search).not.toContain("status");
@@ -12952,7 +13109,7 @@ describe("System status page", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Loading component status.");
     expect(screen.queryByRole("heading", { name: "Redgres state" })).not.toBeInTheDocument();
     release();
-    expect(await screen.findByLabelText("Redgres state: Not configured")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
     expect(screen.queryByText("Loading component status.")).not.toBeInTheDocument();
   });
 
@@ -13059,7 +13216,8 @@ describe("System status page", () => {
     await landOnOverview();
     goToSystem();
     expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
-    expect(await screen.findByLabelText("Redgres state: Reachable")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Component status is unavailable. Try again.");
+    expect(screen.queryByLabelText("Redgres state: Reachable")).not.toBeInTheDocument();
     const body = document.body.textContent ?? "";
     expect(body).not.toContain("status-canary-host.example");
     expect(body).not.toContain("65531");
@@ -13100,7 +13258,7 @@ describe("System status page", () => {
     expect(redisStatusCalls(fetch).length).toBe(redisBeforeRefresh);
   });
 
-  it("paints not_implemented as Not connected on System", async () => {
+  it("rejects component-invalid states on System", async () => {
     stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "system-nimpl".padEnd(64, "0") });
@@ -13114,7 +13272,7 @@ describe("System status page", () => {
             { id: "redis", state: "not_implemented" },
             { id: "tool_links", state: "not_configured" },
           ],
-          request_id: "systemnotimplemented00000000000001",
+          request_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa8",
         });
       }
       return unknownApi(url);
@@ -13123,10 +13281,10 @@ describe("System status page", () => {
     await landOnOverview();
     goToSystem();
     expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
-    expect(await screen.findByLabelText("PgBouncer: Not connected")).toBeInTheDocument();
-    expect(screen.getByLabelText("Redis: Not connected")).toBeInTheDocument();
-    expect(screen.getByLabelText("Redgres state: Reachable")).toBeInTheDocument();
-    expect(screen.queryByLabelText("PgBouncer: Not configured")).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Component status is unavailable. Try again.");
+    expect(screen.queryByLabelText("PgBouncer: Not connected")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Redis: Not connected")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Redgres state: Reachable")).not.toBeInTheDocument();
   });
 
   it("uses a neutral System header without PostgreSQL or Redis service rails", async () => {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchAuditEvents, type AuditEvent } from "../../api/audit";
 import { fetchRedisStatus, type RedisStatusMetrics, type RedisStatusPayload } from "../../api/redis";
-import { errorMessage, fetchStatus, type StatusComponent } from "../../api/status";
+import { errorMessage, type StatusComponent } from "../../api/status";
 import type { ToolLinks } from "../../api/auth";
 import { displayText } from "../../text/displayText";
 import type { SectionId } from "../../nav";
@@ -22,10 +22,6 @@ const CARDS: CardSpec[] = [
 
 type Tone = "ok" | "unavailable" | "warning";
 
-export type AggregateHealthState = "loading" | "healthy" | "degraded" | "unavailable";
-
-const HEALTH_COMPONENT_IDS = ["redgres_state", "postgres_direct", "pgbouncer", "redis"];
-
 type RedisDetail =
   | { kind: "none" }
   | { kind: "not_configured" }
@@ -33,7 +29,6 @@ type RedisDetail =
   | { kind: "degraded"; reasonCopy: string | null };
 
 const sessionExpired = "Your session has expired. Sign in again to continue.";
-const statusUnavailable = "Component status is unavailable. Try again.";
 const storageUnavailable = "Control-plane storage is unavailable";
 const auditUnavailable = "Audit history is unavailable. Try again.";
 
@@ -160,19 +155,9 @@ function formatMemory(used: number, max: number): string {
 function indexById(components: StatusComponent[]): Map<string, StatusComponent> {
   const out = new Map<string, StatusComponent>();
   for (const item of components) {
-    if (typeof item.id === "string" && item.id !== "") {
-      out.set(item.id, item);
-    }
+    out.set(item.id, item);
   }
   return out;
-}
-
-function aggregateHealth(components: StatusComponent[]): AggregateHealthState {
-  if (components.length === 0) {
-    return "unavailable";
-  }
-  const byId = indexById(components);
-  return HEALTH_COMPONENT_IDS.every((id) => byId.get(id)?.state === "ok") ? "healthy" : "degraded";
 }
 
 function IsolatedText({ value, identifier }: { value: string; identifier?: boolean }) {
@@ -315,16 +300,19 @@ function RedisMetrics({
 export default function OverviewPage({
   toolLinks = {},
   onNavigate,
-  onAggregateHealthChange,
+  statusComponents = null,
+  statusError = "",
+  statusLoading = true,
+  onRefreshStatus,
 }: {
   toolLinks?: ToolLinks;
   onNavigate?: (section: SectionId) => void;
-  onAggregateHealthChange?: (state: AggregateHealthState) => void;
+  statusComponents?: StatusComponent[] | null;
+  statusError?: string;
+  statusLoading?: boolean;
+  onRefreshStatus?: () => void;
 }) {
-  const [components, setComponents] = useState<StatusComponent[] | null>(null);
   const [redisDetail, setRedisDetail] = useState<RedisDetail>({ kind: "none" });
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[] | null>(null);
   const [auditError, setAuditError] = useState("");
   const [auditLoading, setAuditLoading] = useState(true);
@@ -333,7 +321,7 @@ export default function OverviewPage({
   useEffect(() => {
     const controller = new AbortController();
     abortRef.current = controller;
-    void load(controller);
+    void loadSupplementary(controller);
     return () => {
       controller.abort();
     };
@@ -374,76 +362,39 @@ export default function OverviewPage({
     }
   }
 
-  async function load(controller: AbortController) {
-    onAggregateHealthChange?.("loading");
-    setLoading(true);
-    setError("");
-    setComponents(null);
+  async function loadSupplementary(controller: AbortController) {
     setRedisDetail({ kind: "none" });
     void loadAudit(controller);
-    const statusOutcome = fetchStatus({ signal: controller.signal }).then(
-      (result) => ({ kind: "ok" as const, result }),
-      (err: unknown) => ({ kind: "throw" as const, err }),
-    );
-    const redisOutcome = fetchRedisStatus({ signal: controller.signal }).then(
-      (result) => ({ kind: "ok" as const, result }),
-      (err: unknown) => ({ kind: "throw" as const, err }),
-    );
     try {
-      const [status, redis] = await Promise.all([statusOutcome, redisOutcome]);
+      const redis = await fetchRedisStatus({ signal: controller.signal });
       if (controller.signal.aborted) {
         return;
       }
-      if (status.kind === "throw") {
-        if (isAbortError(status.err)) {
-          return;
-        }
-        onAggregateHealthChange?.("unavailable");
-        setError(statusUnavailable);
+      if (redis.status === 200 && typeof redis.body.state === "string") {
+        setRedisDetail(parseRedisDetail(redis.body));
         return;
       }
-      if (status.result.status === 200 && Array.isArray(status.result.body.components)) {
-        onAggregateHealthChange?.(aggregateHealth(status.result.body.components));
-        setComponents(status.result.body.components);
-        setError("");
-        if (redis.kind === "throw") {
-          if (isAbortError(redis.err)) {
-            return;
-          }
-          setRedisDetail({ kind: "degraded", reasonCopy: null });
-          return;
-        }
-        if (redis.result.status === 200 && typeof redis.result.body.state === "string") {
-          setRedisDetail(parseRedisDetail(redis.result.body));
-          return;
-        }
-        setRedisDetail({ kind: "degraded", reasonCopy: null });
+      setRedisDetail({ kind: "degraded", reasonCopy: null });
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) {
         return;
       }
-      if (status.result.status === 401) {
-        onAggregateHealthChange?.("unavailable");
-        setError(sessionExpired);
-        return;
-      }
-      onAggregateHealthChange?.("unavailable");
-      setError(errorMessage(status.result.body, statusUnavailable));
-    } finally {
-      if (!controller.signal.aborted) {
-        setLoading(false);
-      }
+      setRedisDetail({ kind: "degraded", reasonCopy: null });
     }
   }
 
   function refresh() {
+    onRefreshStatus?.();
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    void load(controller);
+    void loadSupplementary(controller);
   }
 
-  const byId = components ? indexById(components) : new Map<string, StatusComponent>();
-  const showCards = !error && components !== null;
-  const showRecentAudit = !error;
+  const byId = statusComponents ? indexById(statusComponents) : new Map<string, StatusComponent>();
+  const showCards = !statusError && statusComponents !== null;
+  const showRecentAudit = !statusError;
+  const showQuickCreate = showCards && byId.get("postgres_direct")?.state === "ok";
 
   return (
     <article>
@@ -454,18 +405,18 @@ export default function OverviewPage({
           Refresh
         </button>
       </header>
-      {error ? (
+      {statusError ? (
         <p className="form-warning" role="alert">
-          {error}
+          {statusError}
         </p>
       ) : null}
-      {loading && components === null && !error ? (
+      {statusLoading && statusComponents === null && !statusError ? (
         <p className="muted-copy" role="status">
           Loading component status.
         </p>
       ) : null}
       {showCards ? (
-        <ul className="status-cards" aria-busy={loading ? "true" : "false"}>
+        <ul className="status-cards" aria-busy={statusLoading ? "true" : "false"}>
           {CARDS.map((card) => {
             const found = byId.get(card.id);
             const { text, tone } = presentation(found?.state);
@@ -496,7 +447,7 @@ export default function OverviewPage({
           })}
         </ul>
       ) : null}
-      {onNavigate ? (
+      {onNavigate && showQuickCreate ? (
         <section className="overview-quick-create" aria-labelledby="overview-quick-create-title">
           <div>
             <h2 id="overview-quick-create-title">Quick create</h2>

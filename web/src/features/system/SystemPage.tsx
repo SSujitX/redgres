@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { errorMessage, fetchStatus, type StatusComponent } from "../../api/status";
+import { errorMessage, fetchStatus, isStatusPayload, type StatusComponent } from "../../api/status";
 
 type CardSpec = {
   id: string;
@@ -42,9 +42,7 @@ function presentation(state: string | undefined): { text: string; tone: Tone } {
 function indexById(components: StatusComponent[]): Map<string, StatusComponent> {
   const out = new Map<string, StatusComponent>();
   for (const item of components) {
-    if (typeof item.id === "string" && item.id !== "") {
-      out.set(item.id, item);
-    }
+    out.set(item.id, item);
   }
   return out;
 }
@@ -73,7 +71,7 @@ export default function SystemPage() {
       if (controller.signal.aborted) {
         return;
       }
-      if (result.status === 200 && Array.isArray(result.body.components)) {
+      if (result.status === 200 && isStatusPayload(result.body)) {
         setComponents(result.body.components);
         setError("");
         return;

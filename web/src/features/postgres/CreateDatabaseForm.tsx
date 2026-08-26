@@ -1,4 +1,4 @@
-import { FormEvent, useId, useRef, useState } from "react";
+import { FormEvent, useId, useRef, useState, type RefObject } from "react";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
 
 type CreateDatabaseFormProps = {
@@ -6,6 +6,7 @@ type CreateDatabaseFormProps = {
   submitting: boolean;
   onCancel: () => void;
   onSubmit: (database: string, owner: string) => void;
+  restoreFocusRef?: RefObject<HTMLElement | null>;
 };
 
 const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -19,7 +20,13 @@ function suggestedOwner(database: string): string {
   return database !== "" && identifierPattern.test(database) ? `app_${database}` : "";
 }
 
-export default function CreateDatabaseForm({ error, submitting, onCancel, onSubmit }: CreateDatabaseFormProps) {
+export default function CreateDatabaseForm({
+  error,
+  submitting,
+  onCancel,
+  onSubmit,
+  restoreFocusRef,
+}: CreateDatabaseFormProps) {
   const [database, setDatabase] = useState("");
   const [owner, setOwner] = useState("");
   const ownerEdited = useRef(false);
@@ -27,7 +34,7 @@ export default function CreateDatabaseForm({ error, submitting, onCancel, onSubm
   const titleId = useId();
   const errorId = useId();
   const helperId = useId();
-  useFocusTrap(dialogRef, true);
+  useFocusTrap(dialogRef, true, restoreFocusRef);
 
   const canSubmit = isValidIdentifier(database) && isValidIdentifier(owner) && !submitting;
 
@@ -55,6 +62,12 @@ export default function CreateDatabaseForm({ error, submitting, onCancel, onSubm
         aria-modal="true"
         aria-labelledby={titleId}
         aria-busy={submitting}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !submitting) {
+            event.stopPropagation();
+            onCancel();
+          }
+        }}
       >
         <h2 id={titleId}>Create database</h2>
         <form onSubmit={handleSubmit} autoComplete="off">

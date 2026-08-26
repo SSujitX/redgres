@@ -179,6 +179,32 @@ test.describe("responsive navigation", () => {
     expect(width).toBeGreaterThanOrEqual(256);
     expect(width).toBeLessThanOrEqual(280);
   });
+
+  test("aggregate health moves between the desktop footer and responsive topbar", async ({ shellPage }) => {
+    const sidebarHealth = shellPage.locator(".app-sidebar").getByLabel("Aggregate health: Degraded");
+    const topbarHealth = shellPage.locator(".topbar-health").getByLabel("Aggregate health: Degraded");
+
+    await shellPage.setViewportSize({ width: 1280, height: 800 });
+    await expect(sidebarHealth).toBeVisible();
+    await expect(topbarHealth).not.toBeVisible();
+    const desktopHealthBox = await sidebarHealth.boundingBox();
+    expect(desktopHealthBox).not.toBeNull();
+    expect(desktopHealthBox?.y).toBeGreaterThanOrEqual(0);
+    expect((desktopHealthBox?.y ?? 800) + (desktopHealthBox?.height ?? 1)).toBeLessThanOrEqual(800);
+
+    await shellPage.setViewportSize({ width: 768, height: 1024 });
+    await expect(sidebarHealth).not.toBeVisible();
+    await expect(topbarHealth).toBeVisible();
+
+    await shellPage.setViewportSize({ width: 360, height: 800 });
+    await expect(sidebarHealth).not.toBeVisible();
+    await expect(topbarHealth).toBeVisible();
+    await expect(topbarHealth).toHaveAttribute("aria-label", "Aggregate health: Degraded");
+    await expect(shellPage.locator(".help-button")).not.toBeVisible();
+    await expect(shellPage.locator(".topbar-context")).toBeVisible();
+    await expect(shellPage.getByRole("button", { name: "Search" })).toBeVisible();
+    await expect(shellPage.getByRole("button", { name: "owner" })).toBeVisible();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -247,10 +273,11 @@ test.describe("global search", () => {
     await shellPage.keyboard.press("Control+k");
 
     // Search dialog should appear
+    const searchDialog = shellPage.getByRole("dialog", { name: "Search" });
     const searchInput = shellPage.locator(".search-input");
     await expect(searchInput).toBeVisible({ timeout: 5_000 });
     await expect(searchInput).toBeFocused();
-    await expect(shellPage.getByRole("status")).toBeAttached();
+    await expect(searchDialog.getByRole("status")).toBeAttached();
 
     // Close with Escape
     await shellPage.keyboard.press("Escape");
@@ -364,6 +391,22 @@ test.describe("page navigation", () => {
     // Context should update
     const context = shellPage.locator(".topbar-context");
     await expect(context).toHaveText("PostgreSQL · Databases");
+  });
+
+  test("Overview quick create opens the existing Databases dialog and restores focus", async ({ shellPage }) => {
+    await shellPage.setViewportSize({ width: 1280, height: 800 });
+    const quickCreate = shellPage.getByRole("region", { name: "Quick create" });
+    await quickCreate.getByRole("button", { name: "Create database" }).click();
+
+    const dialog = shellPage.getByRole("dialog", { name: "Create database" });
+    await expect(dialog).toBeVisible();
+    await expect(shellPage.locator(".topbar-context")).toHaveText("PostgreSQL · Databases");
+    await expect(dialog.getByLabel("Database name")).toBeFocused();
+
+    await dialog.press("Escape");
+    await expect(dialog).not.toBeVisible();
+    const header = shellPage.getByRole("main").locator(".page-header");
+    await expect(header.getByRole("button", { name: "Create database" })).toBeFocused();
   });
 });
 
