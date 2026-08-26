@@ -16,7 +16,7 @@ Describe the outcome and affected PRD requirement IDs.
 - [ ] Frontend tests/build
 - [ ] UI viewport/zoom/keyboard review and `redgres-ui-reviewer` evidence (if applicable)
 - [ ] Applicable PostgreSQL 17/18 matrix jobs, with detected full versions/artifacts
-- [ ] Applicable Redis 8.2/8.10 matrix jobs, with detected full versions/image digests
+- [ ] Applicable Redis 8.2/8.8 matrix jobs, with detected full versions/image digests
 - [ ] Version selection/detection and unsupported-version rejection (if applicable)
 - [ ] New/changed dependency APIs and version-sensitive claims verified against pinned source or official primary documentation
 - [ ] Dependencies/toolchains use latest stable compatible reviewed versions with exact pins; release/security notes and migration impact recorded
