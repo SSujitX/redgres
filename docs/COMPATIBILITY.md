@@ -121,7 +121,7 @@ First cell (local defaults: PostgreSQL 18 × Redis 8.8):
 
 Sources (retrieved 2026-08-26): PostgreSQL 18.6 news and [release notes](https://www.postgresql.org/docs/release/18.6/); [Docker Official Image `postgres`](https://hub.docker.com/_/postgres); Redis 8.8 [release notes](https://github.com/redis/redis/blob/8.8/00-RELEASENOTES) (8.8.2 SECURITY, 2026-08-17); [Docker Official Image `redis`](https://hub.docker.com/_/redis). PgBouncer publishes [source/tarballs](https://www.pgbouncer.org/downloads/) and distro packages, not a Docker Official Image (`library/pgbouncer` 404). For the disposable console probe the community `edoburu/pgbouncer:1.22.1-p0` image (PgBouncer 1.22.1 stable) was pulled on 2026-08-26; its `RepoDigests` is pull evidence (below), unlike the Hub index snapshots. This is disposable-test-only; production PgBouncer remains host-native ([ADR-002](decisions/ADR-002-hybrid-deployment.md)).
 
-Official `postgres` and `redis` images do **not** start TLS by default. A plaintext loopback cell cannot satisfy §6 TLS/authentication.
+Official `postgres` and `redis` images do **not** start TLS by default. A plaintext loopback cell cannot satisfy §6 TLS/authentication. A local-only skippable TLS probe (`TestLivePostgresTLSVerifyFull`, `TestLiveRedisTLSFailClosed`; `REDGRES_TEST_TLS_POSTGRES_PORT`/`_CA` + `REDGRES_TEST_TLS_REDIS_URL_FILE`) runs a TLS PostgreSQL (self-signed CA generated in-container via an initdb script) and a TLS-only Redis (self-signed) to verify `verify-full` with the CA succeeds and untrusted TLS fails closed; it is not part of the four-cell CI job and is not §6.
 
 Hub tags are mutable. The Hub v2 index digest snapshot from 2026-08-26 is **not** pull evidence:
 
