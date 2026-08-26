@@ -338,3 +338,82 @@ func TestLiveRedisQueueWorkerStreamsWorkload(t *testing.T) {
 		t.Fatal("cross-prefix XAdd allowed")
 	}
 }
+
+// TestLiveRedisQueueWorkerListsWorkload runs a representative Lists queue
+// workload (REDIS-004) against real Redis within the queue-worker/lists key
+// prefix and asserts cross-prefix denial.
+func TestLiveRedisQueueWorkerListsWorkload(t *testing.T) {
+	svc, addr := openLiveRedis(t)
+	const name = "redgres_it_ql"
+	res := createLiveRedisUser(t, svc, name, "redgres:q", redisadmin.PresetQueueWorker, redisadmin.QueueLists, nil)
+	if res.User.Preset != redisadmin.PresetQueueWorker || res.User.QueueKind != redisadmin.QueueLists {
+		t.Fatalf("queue worker = %+v", res.User)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), behaviorTimeout)
+	defer cancel()
+	client := liveRedisClient(t, addr, name, res.Password)
+	if err := client.Ping(ctx).Err(); err != nil {
+		t.Fatalf("user ping: %v", err)
+	}
+	if n, err := client.LPush(ctx, "redgres:q:jobs", "a", "b", "c").Result(); err != nil || n != 3 {
+		t.Fatalf("LPush n=%d err=%v", n, err)
+	}
+	if n, err := client.RPush(ctx, "redgres:q:jobs", "d").Result(); err != nil || n != 4 {
+		t.Fatalf("RPush n=%d err=%v", n, err)
+	}
+	if v, err := client.RPopLPush(ctx, "redgres:q:jobs", "redgres:q:done").Result(); err != nil || v != "d" {
+		t.Fatalf("RPopLPush = %q err %v", v, err)
+	}
+	if n, err := client.LLen(ctx, "redgres:q:jobs").Result(); err != nil || n != 3 {
+		t.Fatalf("LLen n=%d err=%v", n, err)
+	}
+	vals, err := client.LRange(ctx, "redgres:q:jobs", 0, -1).Result()
+	if err != nil || len(vals) != 3 {
+		t.Fatalf("LRange = %v err %v", vals, err)
+	}
+	if v, err := client.LPop(ctx, "redgres:q:jobs").Result(); err != nil || v != "c" {
+		t.Fatalf("LPop = %q err %v", v, err)
+	}
+	if _, err := client.LPush(ctx, "other:queue", "x").Result(); err == nil {
+		t.Fatal("cross-prefix LPush allowed")
+	}
+}
+
+// TestLiveRedisQueueWorkerSortedSetsWorkload runs a representative Sorted
+// Sets queue workload (REDIS-004) against real Redis within the
+// queue-worker/sorted-sets key prefix and asserts cross-prefix denial.
+func TestLiveRedisQueueWorkerSortedSetsWorkload(t *testing.T) {
+	svc, addr := openLiveRedis(t)
+	const name = "redgres_it_qz"
+	res := createLiveRedisUser(t, svc, name, "redgres:q", redisadmin.PresetQueueWorker, redisadmin.QueueSortedSets, nil)
+	if res.User.Preset != redisadmin.PresetQueueWorker || res.User.QueueKind != redisadmin.QueueSortedSets {
+		t.Fatalf("queue worker = %+v", res.User)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), behaviorTimeout)
+	defer cancel()
+	client := liveRedisClient(t, addr, name, res.Password)
+	if err := client.Ping(ctx).Err(); err != nil {
+		t.Fatalf("user ping: %v", err)
+	}
+	if n, err := client.ZAdd(ctx, "redgres:q:rank",
+		redis.Z{Score: 1, Member: "job1"}, redis.Z{Score: 2, Member: "job2"}, redis.Z{Score: 3, Member: "job3"}).Result(); err != nil || n != 3 {
+		t.Fatalf("ZAdd n=%d err=%v", n, err)
+	}
+	if n, err := client.ZCard(ctx, "redgres:q:rank").Result(); err != nil || n != 3 {
+		t.Fatalf("ZCard n=%d err=%v", n, err)
+	}
+	if s, err := client.ZScore(ctx, "redgres:q:rank", "job2").Result(); err != nil || s != 2 {
+		t.Fatalf("ZScore = %v err %v", s, err)
+	}
+	vals, err := client.ZRange(ctx, "redgres:q:rank", 0, -1).Result()
+	if err != nil || len(vals) != 3 || vals[0] != "job1" {
+		t.Fatalf("ZRange = %v err %v", vals, err)
+	}
+	popped, err := client.ZPopMin(ctx, "redgres:q:rank").Result()
+	if err != nil || len(popped) != 1 || popped[0].Member != "job1" {
+		t.Fatalf("ZPopMin = %v err %v", popped, err)
+	}
+	if _, err := client.ZAdd(ctx, "other:rank", redis.Z{Score: 1, Member: "x"}).Result(); err == nil {
+		t.Fatal("cross-prefix ZAdd allowed")
+	}
+}
