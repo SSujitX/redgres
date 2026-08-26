@@ -5,6 +5,13 @@ import (
 	"errors"
 )
 
+func (s *Service) SystemIdentifier(ctx context.Context) (string, error) {
+	if s == nil || s.catalog == nil {
+		return "", ErrUnavailable
+	}
+	return s.catalog.SystemIdentifier(ctx)
+}
+
 func formatOperatorDropDatabase(database string) (string, error) {
 	quotedDB, err := QuoteIdentifier(database)
 	if err != nil {

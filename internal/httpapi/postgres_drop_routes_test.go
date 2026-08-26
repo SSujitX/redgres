@@ -6,19 +6,24 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/SSujitX/redgres/internal/audit"
+	"github.com/SSujitX/redgres/internal/backup"
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
 )
 
 const (
-	postgresDropPath   = "/api/v1/postgres/databases/project_a"
-	postgresDropCanary = "wrong-canary-password"
+	postgresDropPath     = "/api/v1/postgres/databases/project_a"
+	postgresDropCanary   = "wrong-canary-password"
+	dropGateSystemID     = "7439123456789012345"
+	dropGateBackupSetID  = "0123456789abcdef0123456789abcdef"
+	dropGateArtifactHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 )
 
 func dropCatalog() *postgresadmin.MemoryCatalog {
@@ -37,10 +42,56 @@ func dropService(cat *postgresadmin.MemoryCatalog) *postgresadmin.Service {
 
 func dropServer(t *testing.T, cat *postgresadmin.MemoryCatalog, enabled bool) *Server {
 	t.Helper()
+	if cat.SystemIdentifierValue == "" && cat.SystemIdentifierErr == nil {
+		cat.SystemIdentifierValue = dropGateSystemID
+	}
 	srv := testServerWithPostgres(t, dropService(cat))
 	srv.cfg.FeaturePostgresDrop = enabled
 	srv.cfg.FeaturePostgresTruncate = true
+	srv.cfg.BackupCatalogDir = writeDropCurrentJSON(t, allowDropManifest(dropGateSystemID, "project_a", "postgres", "missing_db"))
 	return srv
+}
+
+func allowDropManifest(sysID string, databases ...string) backup.Manifest {
+	now := time.Now().UTC()
+	completed := now.Add(-time.Hour)
+	artifacts := make([]backup.Artifact, 0, len(databases))
+	for _, name := range databases {
+		artifacts = append(artifacts, backup.Artifact{
+			Kind:      backup.ArtifactKindPostgresDatabase,
+			Name:      name,
+			SHA256:    dropGateArtifactHash,
+			SizeBytes: 0,
+			Path:      "artifacts/" + name + ".dump",
+		})
+	}
+	return backup.Manifest{
+		SchemaVersion: backup.SchemaVersion,
+		BackupSetID:   dropGateBackupSetID,
+		CompletedAt:   completed,
+		Cluster:       backup.ClusterIdentity{SystemIdentifier: sysID},
+		Artifacts:     artifacts,
+		OffHost:       backup.OffHost{Completed: true, CopiedAt: completed.Add(time.Minute)},
+		Restore: backup.RestoreEvidence{
+			Isolated:    true,
+			Outcome:     backup.RestoreOutcomeSucceeded,
+			BackupSetID: dropGateBackupSetID,
+			CompletedAt: now.Add(-24 * time.Hour),
+		},
+	}
+}
+
+func writeDropCurrentJSON(t *testing.T, manifest backup.Manifest) string {
+	t.Helper()
+	dir := t.TempDir()
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "current.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func dropJSON(database, password string) string {
@@ -651,5 +702,172 @@ func TestPostgresDropMethodsAndGetStill200(t *testing.T) {
 	}
 	if cat.DropCalls != 1 {
 		t.Fatalf("DELETE must drop: %d", cat.DropCalls)
+	}
+}
+
+func TestPostgresDropUnsetCatalog503NoDrop(t *testing.T) {
+	cat := dropCatalog()
+	srv := dropServer(t, cat, true)
+	srv.cfg.BackupCatalogDir = ""
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodDelete, postgresDropPath, cookie, csrf, dropJSON("project_a", ownerPassword)))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeDependencyUnavailable || body.Error.Message != postgresDropCatalogMessage {
+		t.Fatalf("error = %#v", body.Error)
+	}
+	if strings.Contains(rec.Body.String(), "BackupCatalog") || strings.Contains(rec.Body.String(), "current.json") {
+		t.Fatalf("503 echoed catalog path: %s", rec.Body.String())
+	}
+	if cat.DropCalls != 0 || cat.TerminateCalls != 0 || cat.DropDatabaseCalls != 0 {
+		t.Fatalf("DROP SQL on unset catalog: drop=%d terminate=%d compensate=%d", cat.DropCalls, cat.TerminateCalls, cat.DropDatabaseCalls)
+	}
+}
+
+func TestPostgresDropMissingCatalogFile503NoPath(t *testing.T) {
+	cat := dropCatalog()
+	srv := dropServer(t, cat, true)
+	canary := filepath.Join(t.TempDir(), "canary-secret-catalog")
+	if err := os.MkdirAll(canary, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	srv.cfg.BackupCatalogDir = canary
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodDelete, postgresDropPath, cookie, csrf, dropJSON("project_a", ownerPassword)))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != CodeDependencyUnavailable || body.Error.Message != postgresDropCatalogMessage {
+		t.Fatalf("error = %#v", body.Error)
+	}
+	if strings.Contains(rec.Body.String(), canary) || strings.Contains(rec.Body.String(), "canary-secret") {
+		t.Fatalf("503 echoed path: %s", rec.Body.String())
+	}
+	if cat.DropCalls != 0 || cat.TerminateCalls != 0 {
+		t.Fatalf("DROP SQL on missing catalog: drop=%d terminate=%d", cat.DropCalls, cat.TerminateCalls)
+	}
+}
+
+func TestPostgresDropEvaluateDeny403NoDrop(t *testing.T) {
+	cases := []struct {
+		name   string
+		reason string
+		mutate func(backup.Manifest) backup.Manifest
+		sysID  string
+	}{
+		{
+			name:   "stale backup",
+			reason: "Backup is older than 24 hours.",
+			mutate: func(m backup.Manifest) backup.Manifest {
+				m.CompletedAt = time.Now().UTC().Add(-25 * time.Hour)
+				m.OffHost.CopiedAt = m.CompletedAt.Add(time.Minute)
+				return m
+			},
+		},
+		{
+			name:   "cluster mismatch",
+			reason: "Backup cluster identity does not match.",
+			sysID:  "9999999999999999999",
+		},
+		{
+			name:   "no matching artifact",
+			reason: "Backup has no matching PostgreSQL artifact.",
+			mutate: func(m backup.Manifest) backup.Manifest {
+				return allowDropManifest(dropGateSystemID, "other_db")
+			},
+		},
+		{
+			name:   "off-host incomplete",
+			reason: "Off-host copy is incomplete.",
+			mutate: func(m backup.Manifest) backup.Manifest {
+				m.OffHost.Completed = false
+				return m
+			},
+		},
+		{
+			name:   "restore stale",
+			reason: "Restore evidence is missing or stale.",
+			mutate: func(m backup.Manifest) backup.Manifest {
+				m.Restore.CompletedAt = time.Now().UTC().Add(-31 * 24 * time.Hour)
+				return m
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cat := dropCatalog()
+			srv := dropServer(t, cat, true)
+			manifest := allowDropManifest(dropGateSystemID, "project_a")
+			if tc.mutate != nil {
+				manifest = tc.mutate(manifest)
+			}
+			if tc.sysID != "" {
+				cat.SystemIdentifierValue = tc.sysID
+			}
+			srv.cfg.BackupCatalogDir = writeDropCurrentJSON(t, manifest)
+			seedOwner(t, srv)
+			h := srv.Handler()
+			cookie, csrf := login(t, h)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, authed(http.MethodDelete, postgresDropPath, cookie, csrf, dropJSON("project_a", ownerPassword)))
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+			}
+			var body errorBody
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Error.Code != CodeForbidden || body.Error.Message != tc.reason {
+				t.Fatalf("error = %#v, want %q", body.Error, tc.reason)
+			}
+			if strings.Contains(rec.Body.String(), srv.cfg.BackupCatalogDir) || strings.Contains(rec.Body.String(), "current.json") {
+				t.Fatalf("403 echoed path: %s", rec.Body.String())
+			}
+			if cat.DropCalls != 0 || cat.TerminateCalls != 0 || cat.DropDatabaseCalls != 0 {
+				t.Fatalf("DROP SQL on deny: drop=%d terminate=%d compensate=%d", cat.DropCalls, cat.TerminateCalls, cat.DropDatabaseCalls)
+			}
+		})
+	}
+}
+
+func TestPostgresDropGateAllowExistingDropPath(t *testing.T) {
+	cat := dropCatalog()
+	cat.OwnedCount = 0
+	srv := dropServer(t, cat, true)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, csrf := login(t, h)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, authed(http.MethodDelete, postgresDropPath, cookie, csrf, dropJSON("project_a", ownerPassword)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["dropped"] != "project_a" || body["dropped_role"] != "app_project_a" {
+		t.Fatalf("body = %#v", body)
+	}
+	if cat.TerminateCalls != 1 || cat.DropCalls != 1 || cat.DropDatabaseCalls != 0 {
+		t.Fatalf("terminate=%d drop=%d compensate=%d", cat.TerminateCalls, cat.DropCalls, cat.DropDatabaseCalls)
+	}
+	if cat.LastDropSQL != `DROP DATABASE "project_a"` || strings.Contains(strings.ToUpper(cat.LastDropSQL), "FORCE") {
+		t.Fatalf("sql = %s", cat.LastDropSQL)
 	}
 }

@@ -529,8 +529,21 @@ func (c PoolCatalog) SavedRoleNames(ctx context.Context, roles []string) (map[st
 	return out, nil
 }
 
-func (c PoolCatalog) SystemIdentifier(_ context.Context) (string, error) {
-	return "", ErrUnavailable
+const systemIdentifierSQL = `SELECT system_identifier FROM pg_control_system()`
+
+func formatSystemIdentifier(id int64) string {
+	return strconv.FormatInt(id, 10)
+}
+
+func (c PoolCatalog) SystemIdentifier(ctx context.Context) (string, error) {
+	if c.pool == nil {
+		return "", ErrUnavailable
+	}
+	var id int64
+	if err := c.pool.QueryRow(ctx, systemIdentifierSQL).Scan(&id); err != nil {
+		return "", ErrUnavailable
+	}
+	return formatSystemIdentifier(id), nil
 }
 
 const encryptedPasswordSQL = `SELECT encrypted_password FROM public.project_credentials WHERE role_name = $1`
