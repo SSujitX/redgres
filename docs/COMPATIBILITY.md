@@ -109,7 +109,7 @@ Discovery that an upstream version exists is not enough to claim support.
 
 ## 8. Local skippable live-test pins (not §6 evidence)
 
-This section freezes artifacts for **skippable** local live tests when Docker is available. It does **not** make any version production-supported. It does **not** pass §6 (four jobs, PgBouncer, TLS, backup, restore). [TESTING.md](TESTING.md) already treats skippable live tests as distinct from that matrix. Redis CI matrix jobs stay blocked until `redis-ui` has Git provenance. The disposable GHA `integration` job consumes all four Hub index snapshot pins (`18.6`×`8.8.2`, `18.6`×`8.2.9`, `17.11`×`8.8.2`, `17.11`×`8.2.9`). That YAML is not §6, not production support, and not a `RepoDigests` freeze.
+This section freezes artifacts for **skippable** local live tests when Docker is available. It does **not** make any version production-supported. It does **not** pass §6 (four jobs, PgBouncer, TLS, backup, restore). [TESTING.md](TESTING.md) already treats skippable live tests as distinct from that matrix. Redis CI matrix jobs stay blocked until `redis-ui` has Git provenance. The disposable GHA `integration` job consumes all four Hub index snapshot pins (`18.6`×`8.8.2`, `18.6`×`8.2.9`, `17.11`×`8.8.2`, `17.11`×`8.2.9`). That YAML is not §6, not production support, and not a `RepoDigests` freeze. A local-only skippable PgBouncer console probe (`TestLivePgBouncerConsole`, enabled by `REDGRES_TEST_PGBOUNCER_PORT`) uses the container pin below; it is not part of the four-cell CI job.
 
 First cell (local defaults: PostgreSQL 18 × Redis 8.8):
 
@@ -117,9 +117,9 @@ First cell (local defaults: PostgreSQL 18 × Redis 8.8):
 |---|---|---|
 | PostgreSQL | `postgres:18.6` | `postgres:latest`, floating `postgres:18` |
 | Redis Open Source | `redis:8.8.2` | `redis:latest`, floating `redis:8.8` |
-| PgBouncer | omitted | any third-party Hub `pgbouncer` image |
+| PgBouncer (console probe) | `edoburu/pgbouncer:1.22.1-p0` | `edoburu/pgbouncer:latest`, any other third-party Hub `pgbouncer` image |
 
-Sources (retrieved 2026-08-26, no `docker pull` in that review): PostgreSQL 18.6 news and [release notes](https://www.postgresql.org/docs/release/18.6/); [Docker Official Image `postgres`](https://hub.docker.com/_/postgres); Redis 8.8 [release notes](https://github.com/redis/redis/blob/8.8/00-RELEASENOTES) (8.8.2 SECURITY, 2026-08-17); [Docker Official Image `redis`](https://hub.docker.com/_/redis). PgBouncer publishes [source/tarballs](https://www.pgbouncer.org/downloads/) and distro packages, not a Docker Official Image (`library/pgbouncer` 404). Production PgBouncer remains host-native ([ADR-002](decisions/ADR-002-hybrid-deployment.md)).
+Sources (retrieved 2026-08-26): PostgreSQL 18.6 news and [release notes](https://www.postgresql.org/docs/release/18.6/); [Docker Official Image `postgres`](https://hub.docker.com/_/postgres); Redis 8.8 [release notes](https://github.com/redis/redis/blob/8.8/00-RELEASENOTES) (8.8.2 SECURITY, 2026-08-17); [Docker Official Image `redis`](https://hub.docker.com/_/redis). PgBouncer publishes [source/tarballs](https://www.pgbouncer.org/downloads/) and distro packages, not a Docker Official Image (`library/pgbouncer` 404). For the disposable console probe the community `edoburu/pgbouncer:1.22.1-p0` image (PgBouncer 1.22.1 stable) was pulled on 2026-08-26; its `RepoDigests` is pull evidence (below), unlike the Hub index snapshots. This is disposable-test-only; production PgBouncer remains host-native ([ADR-002](decisions/ADR-002-hybrid-deployment.md)).
 
 Official `postgres` and `redis` images do **not** start TLS by default. A plaintext loopback cell cannot satisfy §6 TLS/authentication.
 
@@ -130,15 +130,21 @@ postgres:18.6@sha256:1957b2ff3137e4ef7f3bc813e74fff50b1e1ffddc85c8b9d6f14ade972b
 redis:8.8.2@sha256:c514823c0ec1a40764df434efc2dc4ab5ec669c71c1cb00e4f7b1a694cee9fc3
 ```
 
+PgBouncer container `RepoDigests` (pulled 2026-08-26; **pull evidence**, not a snapshot):
+
+```text
+edoburu/pgbouncer@sha256:7f39cf2f872c8d9a0bb0e6a5440c3bf5814036eccf284102870ab08e2603a2c7
+```
+
 Remaining matrix cells (skippable live-test pins only; not production support; not §6 Complete):
 
 | Service | Pin | Forbidden |
 |---|---|---|
 | PostgreSQL 17 | `postgres:17.11` | `postgres:latest`, floating `postgres:17` |
 | Redis Open Source 8.2 | `redis:8.2.9` | `redis:latest`, `redis:8.10.1`, floating `redis:8.2` |
-| PgBouncer | omitted | any third-party Hub `pgbouncer` image |
+| PgBouncer (console probe) | `edoburu/pgbouncer:1.22.1-p0` | `edoburu/pgbouncer:latest`, any other third-party Hub `pgbouncer` image |
 
-Sources (retrieved 2026-08-26, no `docker pull`): PostgreSQL 17.11 [news](https://www.postgresql.org/about/news/postgresql-186-1711-1615-1519-1424-and-19-beta-3-released-3365/) and [release notes](https://www.postgresql.org/docs/release/17.11/); [versioning](https://www.postgresql.org/support/versioning/); [Docker Official Image `postgres`](https://hub.docker.com/_/postgres). Redis 8.2 [00-RELEASENOTES](https://github.com/redis/redis/blob/8.2/00-RELEASENOTES) (8.2.9 SECURITY, 2026-08-17); [OSS version-mgmt](https://redis.io/docs/latest/operate/oss_and_stack/install/version-mgmt/) (Extended, EOL 2030-09-01); [Docker Official Image `redis`](https://hub.docker.com/_/redis). Hub `latest` remains grouped with **8.10.1**; do not add 8.10. PgBouncer: still no Official Image (`library/pgbouncer` 404).
+Sources (retrieved 2026-08-26): PostgreSQL 17.11 [news](https://www.postgresql.org/about/news/postgresql-186-1711-1615-1519-1424-and-19-beta-3-released-3365/) and [release notes](https://www.postgresql.org/docs/release/17.11/); [versioning](https://www.postgresql.org/support/versioning/); [Docker Official Image `postgres`](https://hub.docker.com/_/postgres). Redis 8.2 [00-RELEASENOTES](https://github.com/redis/redis/blob/8.2/00-RELEASENOTES) (8.2.9 SECURITY, 2026-08-17); [OSS version-mgmt](https://redis.io/docs/latest/operate/oss_and_stack/install/version-mgmt/) (Extended, EOL 2030-09-01); [Docker Official Image `redis`](https://hub.docker.com/_/redis). Hub `latest` remains grouped with **8.10.1**; do not add 8.10. PgBouncer: still no Official Image (`library/pgbouncer` 404); the same `edoburu/pgbouncer:1.22.1-p0` disposable console pin applies (RepoDigests above).
 
 Hub v2 index digest snapshot (same caveats as the first-cell snapshot; not pull evidence):
 
