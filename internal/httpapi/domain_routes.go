@@ -173,17 +173,23 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	secret, err := cloudflare.SecretForTunnel()
+	origin, err := cloudflare.OriginHTTPService(s.cfg.Address)
 	if err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, CodeInternal, "Internal server error")
 		return
 	}
-	tunnel, err := client.CreateTunnel(ctx, z.AccountID, "redgres-"+hostname, secret)
+	tunnel, err := client.CreateTunnel(ctx, z.AccountID, "redgres-"+hostname)
 	if err != nil {
 		s.writeCFError(w, r, err)
 		return
 	}
 	dep = deployment{AccountID: z.AccountID, ZoneID: z.ID, ZoneName: z.Name, TunnelID: tunnel.ID, Hostname: hostname}
+
+	if err := client.ConfigureIngress(ctx, z.AccountID, tunnel.ID, hostname, origin); err != nil {
+		compensate()
+		s.writeCFError(w, r, err)
+		return
+	}
 
 	rec, err := client.CreateRecord(ctx, z.ID, hostname, tunnel.ID+".cfargotunnel.com", true)
 	if err != nil {

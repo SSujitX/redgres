@@ -13,14 +13,16 @@ import (
 )
 
 type fakeCF struct {
-	zone      cloudflare.Zone
-	tunnels   map[string]cloudflare.Tunnel
-	records   map[string]cloudflare.Record
-	apps      map[string]cloudflare.AccessApp
-	deletedT  []string
-	deletedR  []string
-	deletedA  []string
-	verifyErr error
+	zone              cloudflare.Zone
+	tunnels           map[string]cloudflare.Tunnel
+	records           map[string]cloudflare.Record
+	apps              map[string]cloudflare.AccessApp
+	deletedT          []string
+	deletedR          []string
+	deletedA          []string
+	verifyErr         error
+	lastIngressHost   string
+	lastIngressOrigin string
 }
 
 func newFakeCF() *fakeCF {
@@ -39,10 +41,19 @@ func (f *fakeCF) DiscoverZone(_ context.Context, name string) (cloudflare.Zone, 
 	return f.zone, nil
 }
 
-func (f *fakeCF) CreateTunnel(_ context.Context, accountID, name, secret string) (cloudflare.Tunnel, error) {
+func (f *fakeCF) CreateTunnel(_ context.Context, accountID, name string) (cloudflare.Tunnel, error) {
 	t := cloudflare.Tunnel{ID: "tun-1", Name: name, Token: "fake-tunnel-token"}
 	f.tunnels[t.ID] = t
 	return t, nil
+}
+
+func (f *fakeCF) ConfigureIngress(_ context.Context, accountID, tunnelID, hostname, originHTTP string) error {
+	if _, ok := f.tunnels[tunnelID]; !ok {
+		return cloudflare.ErrNotFound
+	}
+	f.lastIngressHost = hostname
+	f.lastIngressOrigin = originHTTP
+	return nil
 }
 
 func (f *fakeCF) CreateRecord(_ context.Context, zoneID, name, content string, proxied bool) (cloudflare.Record, error) {
@@ -114,6 +125,7 @@ func newDomainServer(t *testing.T) (*Server, http.Handler, string, string, strin
 	tokenPath := filepath.Join(t.TempDir(), "cloudflare-token")
 	srv.cfg.CloudflareTokenFile = tokenPath
 	srv.cfg.TunnelTokenFile = filepath.Join(t.TempDir(), "tunnel-token")
+	srv.cfg.Address = "127.0.0.1:8790"
 	return srv, handler, cookie, csrf, tokenPath
 }
 
@@ -131,6 +143,9 @@ func auditRows(t *testing.T, srv *Server) []string {
 			t.Fatal(err)
 		}
 		out = append(out, action+"|"+outcome+"|"+metadata)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
 	}
 	return out
 }
@@ -199,6 +214,9 @@ func TestDomainApplyCreatesPersistsAndDoesNotAutoClose(t *testing.T) {
 	}
 	if _, ok := fake.apps["app-1"]; !ok {
 		t.Fatal("access app was not created")
+	}
+	if fake.lastIngressHost != "console.example.com" || fake.lastIngressOrigin != "http://127.0.0.1:8790" {
+		t.Fatalf("ingress host=%q origin=%q", fake.lastIngressHost, fake.lastIngressOrigin)
 	}
 
 	rec = serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
