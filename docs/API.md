@@ -64,7 +64,7 @@ Generic failure is `401` `unauthorized` with message `Invalid username or passwo
   "owner": {"username": "admin"},
   "csrf_token": "<rotated 64 hex>",
   "capabilities": [
-    "platform.read", "audit.read",
+    "platform.read", "platform.network", "audit.read",
     "postgres.read", "postgres.provision", "postgres.credentials", "postgres.destructive",
     "redis.read", "redis.provision", "redis.credentials", "redis.destructive"
   ],
@@ -252,6 +252,41 @@ The Go binary serves the embedded Vite build for non-API `GET` requests:
 - If embedded assets are absent (clean checkout before `npm run build`), non-API `GET` returns `503` `dependency_unavailable`. There is no directory listing and no empty 200.
 
 Search requires a normalized minimum query length, a strict maximum length/limit, request cancellation/timeouts, and stable grouped result types. It returns only fields already safe for authenticated inventory views, excludes protected/hidden targets and credential material, rate-limits abusive use, and never accepts an action/command to execute. Documentation/navigation entries may be client-side. PostgreSQL search hits use the same manageability policy as **GET `/api/v1/postgres/databases`**. Redis ACL search hits are the exception: they omit protected usernames that **GET `/api/v1/redis/users`** still lists.
+
+## Domain & Network endpoints (OPS-009 Partial, token-first)
+
+All require a session cookie and the `platform.network` capability; mutations also require `X-CSRF-Token` (origin + CSRF). The per-zone Cloudflare API token is pasted once and stored server-side at `REDGRES_CLOUDFLARE_TOKEN_FILE`; the one-time cloudflared tunnel token is stored at `REDGRES_TUNNEL_TOKEN_FILE`. Neither is ever returned by the API. Responses are `Cache-Control: no-store`.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/v1/domain` | Deployment status (`configured` false/true + `zone`/`hostname` when set) |
+| POST | `/api/v1/domain/token` | Paste Cloudflare API token → server-side 0600 file; `{ok:true}` |
+| POST | `/api/v1/domain/apply` | `{zone, hostname}` → discover zone, create tunnel + proxied CNAME + deny-by-default Access app, verify (API reflection), persist IDs + tunnel token, audit |
+| DELETE | `/api/v1/domain` | Delete exactly the persisted tunnel/record/Access app; clear state; remove the tunnel token file |
+
+**POST `/api/v1/domain/token`** body `{"token":"<per-zone token>"}`. Success `200` `{"ok":true,"request_id":"…"}`. The token is never echoed. Empty, whitespace, or >512-char token → `400` `validation_error`.
+
+**POST `/api/v1/domain/apply`** body `{"zone":"example.com","hostname":"console.example.com"}`. Success `200`:
+
+```json
+{
+  "zone": "example.com",
+  "hostname": "console.example.com",
+  "tunnel_id": "<cloudflare tunnel id>",
+  "bootstrap_still_open": true,
+  "access": "deny_by_default",
+  "request_id": "…"
+}
+```
+
+- `bootstrap_still_open: true` means the first-run bootstrap listener is **not** auto-closed on apply; it closes on its 30-minute hard cap or a later explicit "console reachable" confirm step.
+- `access: "deny_by_default"` means the Access app exists but has **no allow policy**; login through it fails until an identity policy is added.
+- Any failure after the tunnel is created compensates: the created Access app, DNS record, and tunnel are deleted in reverse creation order (same order as disconnect).
+- Re-apply while configured → `409` `conflict`.
+
+**DELETE `/api/v1/domain`** success `200` `{"ok":true,"request_id":"…"}`. No deployment → `404` `not_found`.
+
+Missing/invalid token or tunnel-token file config → `400` `validation_error`. Cloudflare auth failure → `403` `forbidden` (`Cloudflare token is unauthorized`). Cloudflare not-found → `404` `not_found`. Other Cloudflare failures → `503` `dependency_unavailable`. No response contains the token, the tunnel token, or a raw Cloudflare error body.
 
 ## PostgreSQL endpoints
 
