@@ -19,13 +19,14 @@ var errNoDeployment = errors.New("no domain deployment")
 // deployment is the persisted, non-secret record of what the wizard created so
 // disconnect can delete exactly those resources.
 type deployment struct {
-	AccountID   string   `json:"account_id"`
-	ZoneID      string   `json:"zone_id"`
-	ZoneName    string   `json:"zone_name"`
-	TunnelID    string   `json:"tunnel_id"`
-	AccessAppID string   `json:"access_app_id"`
-	Records     []record `json:"records"`
-	Hostname    string   `json:"hostname"`
+	AccountID      string   `json:"account_id"`
+	ZoneID         string   `json:"zone_id"`
+	ZoneName       string   `json:"zone_name"`
+	TunnelID       string   `json:"tunnel_id"`
+	AccessAppID    string   `json:"access_app_id"`
+	AccessPolicyID string   `json:"access_policy_id,omitempty"`
+	Records        []record `json:"records"`
+	Hostname       string   `json:"hostname"`
 }
 
 type record struct {
@@ -72,18 +73,32 @@ func (s *Server) handleDomainGet(w http.ResponseWriter, r *http.Request) {
 	dep, err := (domainStore{s.db}).Get(r.Context())
 	if err != nil {
 		if errors.Is(err, errNoDeployment) {
-			s.writeJSON(w, r, http.StatusOK, map[string]any{"configured": false, "request_id": requestID(r)})
+			s.writeJSON(w, r, http.StatusOK, map[string]any{
+				"configured":           false,
+				"bootstrap_still_open": s.bootstrapOpen(),
+				"request_id":           requestID(r),
+			})
 			return
 		}
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
+	access := "deny_by_default"
+	if dep.AccessPolicyID != "" {
+		access = "allow"
+	}
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
-		"configured": true,
-		"zone":       dep.ZoneName,
-		"hostname":   dep.Hostname,
-		"request_id": requestID(r),
+		"configured":           true,
+		"zone":                 dep.ZoneName,
+		"hostname":             dep.Hostname,
+		"access":               access,
+		"bootstrap_still_open": s.bootstrapOpen(),
+		"request_id":           requestID(r),
 	})
+}
+
+func (s *Server) bootstrapOpen() bool {
+	return s.bootstrapCloser != nil && s.bootstrapCloser.Open()
 }
 
 func (s *Server) handleDomainTokenSet(w http.ResponseWriter, r *http.Request) {
@@ -248,10 +263,147 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		"zone":                 z.Name,
 		"hostname":             hostname,
 		"tunnel_id":            tunnel.ID,
-		"bootstrap_still_open": true,
+		"bootstrap_still_open": s.bootstrapOpen(),
 		"access":               "deny_by_default",
 		"request_id":           requestID(r),
 	})
+}
+
+func (s *Server) handleDomainAccessPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.CloudflareTokenFile == "" {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Cloudflare token file is not configured")
+		return
+	}
+	store := domainStore{s.db}
+	dep, err := store.Get(r.Context())
+	if err != nil {
+		if errors.Is(err, errNoDeployment) {
+			s.writeError(w, r, http.StatusNotFound, CodeNotFound, "No domain configured")
+			return
+		}
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	if dep.AccessPolicyID != "" {
+		s.writeError(w, r, http.StatusConflict, CodeConflict, "An Access allow policy is already configured")
+		return
+	}
+	var body struct {
+		Emails []string `json:"emails"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		s.writeDecodeError(w, r, err)
+		return
+	}
+	emails, err := normalizeAccessEmails(body.Emails)
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, err.Error())
+		return
+	}
+	token, err := readTokenFile(s.cfg.CloudflareTokenFile)
+	if err != nil || token == "" {
+		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Cloudflare token is not configured")
+		return
+	}
+	client := s.cloudflareClient(token)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	policy, err := client.CreateAccessPolicy(ctx, dep.AccountID, dep.AccessAppID, emails)
+	if err != nil {
+		s.writeCFError(w, r, err)
+		return
+	}
+	if err := client.VerifyAccessPolicy(ctx, dep.AccountID, dep.AccessAppID, policy.ID); err != nil {
+		_ = client.DeleteAccessPolicy(ctx, dep.AccountID, dep.AccessAppID, policy.ID)
+		s.writeCFError(w, r, err)
+		return
+	}
+	dep.AccessPolicyID = policy.ID
+	if err := store.Save(ctx, dep); err != nil {
+		_ = client.DeleteAccessPolicy(ctx, dep.AccountID, dep.AccessAppID, policy.ID)
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	sess := sessionFrom(r)
+	if err := s.audit.Record(sess.Username, "domain.access.allow", dep.Hostname, "success", requestID(r), requestClientIP(r), map[string]any{"email_count": len(emails)}); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, map[string]any{
+		"ok":                   true,
+		"access":               "allow",
+		"bootstrap_still_open": s.bootstrapOpen(),
+		"request_id":           requestID(r),
+	})
+}
+
+func (s *Server) handleDomainConfirmReachable(w http.ResponseWriter, r *http.Request) {
+	store := domainStore{s.db}
+	dep, err := store.Get(r.Context())
+	if err != nil {
+		if errors.Is(err, errNoDeployment) {
+			s.writeError(w, r, http.StatusNotFound, CodeNotFound, "No domain configured")
+			return
+		}
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	if dep.AccessPolicyID == "" {
+		s.writeError(w, r, http.StatusConflict, CodeConflict, "Add an Access allow policy before closing bootstrap")
+		return
+	}
+	willClose := s.bootstrapCloser != nil && s.bootstrapCloser.Open()
+	sess := sessionFrom(r)
+	if err := s.audit.Record(sess.Username, "domain.confirm_reachable", dep.Hostname, "success", requestID(r), requestClientIP(r), map[string]any{"bootstrap_closed": willClose}); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	// Schedule graceful shutdown after audit so a rare audit failure does not
+	// close :8989 while returning 503. Shutdown waits for this handler to finish
+	// writing the body (force Close remains the hard-cap timer path).
+	if willClose {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_ = s.bootstrapCloser.Shutdown(ctx)
+		}()
+	}
+	s.writeJSON(w, r, http.StatusOK, map[string]any{
+		"ok":                   true,
+		"bootstrap_still_open": !willClose && s.bootstrapOpen(),
+		"bootstrap_closed":     willClose,
+		"request_id":           requestID(r),
+	})
+}
+
+func normalizeAccessEmails(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, errors.New("At least one email is required")
+	}
+	if len(raw) > 8 {
+		return nil, errors.New("At most 8 emails are allowed")
+	}
+	out := make([]string, 0, len(raw))
+	seen := map[string]struct{}{}
+	for _, item := range raw {
+		email := strings.TrimSpace(strings.ToLower(item))
+		if email == "" || len(email) > 254 || strings.ContainsAny(email, " \t\r\n") {
+			return nil, errors.New("Invalid email")
+		}
+		at := strings.IndexByte(email, '@')
+		if at < 1 || at == len(email)-1 || strings.Count(email, "@") != 1 {
+			return nil, errors.New("Invalid email")
+		}
+		if _, ok := seen[email]; ok {
+			continue
+		}
+		seen[email] = struct{}{}
+		out = append(out, email)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("At least one email is required")
+	}
+	return out, nil
 }
 
 func (s *Server) handleDomainDisconnect(w http.ResponseWriter, r *http.Request) {
@@ -275,6 +427,9 @@ func (s *Server) handleDomainDisconnect(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 
 	// Delete exactly the persisted resources, in reverse creation order.
+	if dep.AccessPolicyID != "" {
+		_ = client.DeleteAccessPolicy(ctx, dep.AccountID, dep.AccessAppID, dep.AccessPolicyID)
+	}
 	_ = client.DeleteAccessApp(ctx, dep.AccountID, dep.AccessAppID)
 	for _, rec := range dep.Records {
 		_ = client.DeleteRecord(ctx, dep.ZoneID, rec.ID)
