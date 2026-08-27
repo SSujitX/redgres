@@ -51,6 +51,12 @@ type AccessApp struct {
 	Domain string
 }
 
+// AccessPolicy is an allow policy attached to an Access application.
+type AccessPolicy struct {
+	ID   string
+	Name string
+}
+
 // Client is the Cloudflare operations the wizard needs. A fake implements this
 // for tests; HTTPClient implements it against the live API.
 type Client interface {
@@ -59,12 +65,15 @@ type Client interface {
 	ConfigureIngress(ctx context.Context, accountID, tunnelID, hostname, originHTTP string) error
 	CreateRecord(ctx context.Context, zoneID, name, content string, proxied bool) (Record, error)
 	CreateAccessApp(ctx context.Context, accountID, domain string) (AccessApp, error)
+	CreateAccessPolicy(ctx context.Context, accountID, appID string, emails []string) (AccessPolicy, error)
 	DeleteTunnel(ctx context.Context, accountID, tunnelID string) error
 	DeleteRecord(ctx context.Context, zoneID, recordID string) error
 	DeleteAccessApp(ctx context.Context, accountID, appID string) error
+	DeleteAccessPolicy(ctx context.Context, accountID, appID, policyID string) error
 	VerifyTunnel(ctx context.Context, accountID, tunnelID string) error
 	VerifyRecord(ctx context.Context, zoneID, recordID string) error
 	VerifyAccessApp(ctx context.Context, accountID, appID string) error
+	VerifyAccessPolicy(ctx context.Context, accountID, appID, policyID string) error
 }
 
 // APIError is a Cloudflare API error envelope.
@@ -285,10 +294,51 @@ func (c *HTTPClient) CreateAccessApp(ctx context.Context, accountID, domain stri
 	return AccessApp{ID: result.ID, Domain: result.Domain}, nil
 }
 
+// CreateAccessPolicy attaches an allow policy for exact emails to an Access app.
+// Primary source: POST /accounts/{account_id}/access/apps/{app_id}/policies
+func (c *HTTPClient) CreateAccessPolicy(ctx context.Context, accountID, appID string, emails []string) (AccessPolicy, error) {
+	include := make([]map[string]any, 0, len(emails))
+	for _, email := range emails {
+		email = strings.TrimSpace(strings.ToLower(email))
+		if email == "" {
+			continue
+		}
+		include = append(include, map[string]any{"email": map[string]string{"email": email}})
+	}
+	if len(include) == 0 {
+		return AccessPolicy{}, errors.New("access policy requires at least one email")
+	}
+	var result struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	body := map[string]any{
+		"name":       "Redgres allow",
+		"decision":   "allow",
+		"precedence": 1,
+		"include":    include,
+	}
+	path := "/accounts/" + accountID + "/access/apps/" + appID + "/policies"
+	if err := c.call(ctx, http.MethodPost, path, body, &result); err != nil {
+		return AccessPolicy{}, err
+	}
+	if result.ID == "" {
+		return AccessPolicy{}, errors.New("cloudflare access policy create returned empty id")
+	}
+	return AccessPolicy{ID: result.ID, Name: result.Name}, nil
+}
+
 // DeleteAccessApp deletes an Access application.
 func (c *HTTPClient) DeleteAccessApp(ctx context.Context, accountID, appID string) error {
 	var result any
 	return c.call(ctx, http.MethodDelete, "/accounts/"+accountID+"/access/apps/"+appID, nil, &result)
+}
+
+// DeleteAccessPolicy deletes an Access application policy.
+func (c *HTTPClient) DeleteAccessPolicy(ctx context.Context, accountID, appID, policyID string) error {
+	var result any
+	path := "/accounts/" + accountID + "/access/apps/" + appID + "/policies/" + policyID
+	return c.call(ctx, http.MethodDelete, path, nil, &result)
 }
 
 // VerifyAccessApp checks an Access application still exists.
@@ -297,4 +347,13 @@ func (c *HTTPClient) VerifyAccessApp(ctx context.Context, accountID, appID strin
 		ID string `json:"id"`
 	}
 	return c.call(ctx, http.MethodGet, "/accounts/"+accountID+"/access/apps/"+appID, nil, &result)
+}
+
+// VerifyAccessPolicy checks an Access application policy still exists.
+func (c *HTTPClient) VerifyAccessPolicy(ctx context.Context, accountID, appID, policyID string) error {
+	var result struct {
+		ID string `json:"id"`
+	}
+	path := "/accounts/" + accountID + "/access/apps/" + appID + "/policies/" + policyID
+	return c.call(ctx, http.MethodGet, path, nil, &result)
 }
