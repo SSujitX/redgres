@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/SSujitX/redgres/internal/audit"
+	"github.com/SSujitX/redgres/internal/cloudflare"
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/operations"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
@@ -41,6 +42,7 @@ type Server struct {
 	operations operations.Store
 	postgres   postgresadmin.Inventory
 	redis      redisHealth
+	cloudflare cloudflare.Client
 }
 
 func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger, postgres postgresadmin.Inventory, redis redisHealth) *Server {
@@ -79,6 +81,10 @@ func (s *Server) Handler() http.Handler {
 	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/status", s.handleStatus)
 	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/search", s.handleSearch)
 	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/operations/{id}", s.handleGetOperation)
+	r.With(s.requireSession, s.requireCapability("platform.network")).Get("/api/v1/domain", s.handleDomainGet)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/token", s.handleDomainTokenSet)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/apply", s.handleDomainApply)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Delete("/api/v1/domain", s.handleDomainDisconnect)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/status", s.handleRedisStatus)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/presets", s.handleRedisPresets)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/commands", s.handleRedisCommands)
