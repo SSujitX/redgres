@@ -19,12 +19,32 @@
 
 .brand {
   display: flex;
-  gap: var(--space-3);
   align-items: center;
+  min-height: 60px;
 }
 
-.brand-name {
-  font-weight: 650;
+.brand-logo {
+  display: block;
+  width: min(164px, 100%);
+  flex: 0 1 164px;
+}
+
+.brand-logo-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.brand-logo-dark {
+  display: none;
+}
+
+:root[data-theme="dark"] .brand-logo-light {
+  display: none;
+}
+
+:root[data-theme="dark"] .brand-logo-dark {
+  display: block;
 }
 
 .app-nav {
@@ -467,7 +487,16 @@
     z-index: 3;
   }
 
-  .brand-name,
+  .brand {
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .brand-logo {
+    width: 48px;
+    flex-basis: 48px;
+  }
+
   .nav-group-label {
     position: absolute;
     width: 1px;
