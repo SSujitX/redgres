@@ -255,6 +255,8 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 
 ## Domain & Network endpoints (OPS-009 Partial, token-first)
 
+UI: System → **Domain & Network** (`web/src/features/domain/DomainNetworkPage.tsx`) drives these endpoints (token paste, apply, status, disconnect). OAuth, Access allow policy, bootstrap close-on-reachable, and DB LE remain deferred.
+
 All require a session cookie and the `platform.network` capability; mutations also require `X-CSRF-Token` (origin + CSRF). The per-zone Cloudflare API token is pasted once and stored server-side at `REDGRES_CLOUDFLARE_TOKEN_FILE`; the one-time cloudflared tunnel token is stored at `REDGRES_TUNNEL_TOKEN_FILE`. Neither is ever returned by the API. Responses are `Cache-Control: no-store`.
 
 | Method | Path | Notes |
