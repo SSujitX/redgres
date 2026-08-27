@@ -1,6 +1,9 @@
 package bootstrap
 
 import (
+	"context"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"testing"
@@ -90,6 +93,86 @@ func TestCloseDropsActiveConnection(t *testing.T) {
 		t.Fatalf("Close blocked %v with an active connection", elapsed)
 	}
 	conn.Close()
+	assertRefused(t, addr)
+}
+
+func TestShutdownFinishesInFlightHandler(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+	l := New(h, "127.0.0.1:0", time.Minute)
+	if err := l.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	addr := l.Addr()
+
+	errCh := make(chan error, 1)
+	bodyCh := make(chan []byte, 1)
+	go func() {
+		resp, err := http.Get("http://" + addr + "/")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if resp.StatusCode != http.StatusOK {
+			errCh <- errors.New("unexpected status")
+			return
+		}
+		bodyCh <- b
+		errCh <- nil
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not start")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		done <- l.Shutdown(ctx)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("client: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("client did not finish")
+	}
+	select {
+	case body := <-bodyCh:
+		if string(body) != `{"ok":true}` {
+			t.Fatalf("body = %q", body)
+		}
+	default:
+		t.Fatal("missing body")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not finish")
+	}
 	assertRefused(t, addr)
 }
 

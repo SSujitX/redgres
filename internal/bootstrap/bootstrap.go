@@ -6,6 +6,7 @@
 package bootstrap
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -89,6 +90,13 @@ func (l *Listener) Addr() string {
 	return l.addr
 }
 
+// Open reports whether the bootstrap port is still accepting connections.
+func (l *Listener) Open() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return !l.closed && l.listener != nil
+}
+
 // Close force-closes the bootstrap listener and stops the timer. It is
 // idempotent and safe to call concurrently (including from the timer). It never
 // leaves the port open: it stops the timer, captures the listener, closes the
@@ -96,22 +104,44 @@ func (l *Listener) Addr() string {
 // even if Serve has not yet registered it.
 func (l *Listener) Close() error {
 	l.closeOnce.Do(func() {
-		l.mu.Lock()
-		if l.timer != nil {
-			l.timer.Stop()
-			l.timer = nil
-		}
-		ln := l.listener
-		l.listener = nil
-		l.closed = true
-		l.mu.Unlock()
-
-		if err := l.server.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			l.closeErr = err
-		}
-		if ln != nil {
-			_ = ln.Close()
-		}
+		l.finishClose(false, context.Background())
 	})
 	return l.closeErr
+}
+
+// Shutdown stops accepting new connections and waits for in-flight handlers to
+// finish (up to ctx), then closes the listener. Prefer this when closing from a
+// request served on this listener so the success body can flush. Idempotent with
+// Close (whichever runs first wins via closeOnce). The hard-cap timer still uses
+// force Close.
+func (l *Listener) Shutdown(ctx context.Context) error {
+	l.closeOnce.Do(func() {
+		l.finishClose(true, ctx)
+	})
+	return l.closeErr
+}
+
+func (l *Listener) finishClose(graceful bool, ctx context.Context) {
+	l.mu.Lock()
+	if l.timer != nil {
+		l.timer.Stop()
+		l.timer = nil
+	}
+	ln := l.listener
+	l.listener = nil
+	l.closed = true
+	l.mu.Unlock()
+
+	var err error
+	if graceful {
+		err = l.server.Shutdown(ctx)
+	} else {
+		err = l.server.Close()
+	}
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		l.closeErr = err
+	}
+	if ln != nil {
+		_ = ln.Close()
+	}
 }
