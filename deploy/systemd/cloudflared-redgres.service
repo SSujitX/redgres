@@ -1,0 +1,22 @@
+[Unit]
+Description=Cloudflare Tunnel connector for Redgres
+Documentation=https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel-api/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+# Token is injected via LoadCredential (never on argv, never in unit Environment=).
+# Path must match REDGRES_TUNNEL_TOKEN_FILE written by POST /api/v1/domain/apply.
+LoadCredential=TUNNEL_TOKEN:/var/lib/redgres/secrets/cloudflared-tunnel-token
+ExecStart=/usr/libexec/redgres/cloudflared-run.sh
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=0
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
