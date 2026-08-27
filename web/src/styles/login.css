@@ -13,10 +13,16 @@
 
 .login-identity {
   display: flex;
+  flex-direction: column;
   gap: var(--space-3);
   align-items: flex-start;
   width: 100%;
   max-width: 24rem;
+}
+
+.brand-logo-login {
+  width: min(20rem, 100%);
+  flex-basis: auto;
 }
 
 .login-tagline {
