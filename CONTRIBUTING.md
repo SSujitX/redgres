@@ -12,7 +12,9 @@ Redgres is currently specification-first. Contributions must preserve the migrat
 
 ## Local checks
 
-`.github/workflows/ci.yml` is authoritative. The `Makefile` mirrors it for Unix contributors; this workstation does not have `make`. From the repository root:
+GitHub Actions on push/PR runs [`.github/workflows/install.yml`](.github/workflows/install.yml) only (`bash deploy/tests/run.sh`). The full Wave 0 workflow ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) is kept as a backup and runs only via **workflow_dispatch** until restored to push/PR.
+
+The `Makefile` still mirrors the full local check set for Unix contributors; this workstation does not have `make`. From the repository root:
 
 ```text
 go mod verify
@@ -29,7 +31,7 @@ npx playwright install --with-deps chromium
 npm run test:e2e
 ```
 
-`go test -race`, linux/amd64 and linux/arm64 cross-compiles, `govulncheck`, and gitleaks run in CI. Frontend release evidence is the CI job on Node 24.19.0; a local Node 25.x run is development feedback only.
+`go test -race`, linux/amd64 and linux/arm64 cross-compiles, `govulncheck`, and gitleaks remain in `ci.yml` for manual runs / future restore. Frontend release evidence when CI is restored is the frontend job on Node 24.19.0; a local Node 25.x run is development feedback only.
 
 ## Definition of done
 
