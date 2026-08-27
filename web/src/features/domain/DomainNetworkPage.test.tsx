@@ -200,8 +200,10 @@ describe("DomainNetworkPage", () => {
     expect(await screen.findByRole("heading", { name: "Apply result" })).toBeInTheDocument();
     expect(screen.getByText("tun-1")).toBeInTheDocument();
     expect(screen.getByText(/not a secret token/i)).toBeInTheDocument();
-    expect(screen.getByText(/Deny by default/)).toBeInTheDocument();
-    expect(screen.getByText(/Still open/)).toBeInTheDocument();
+    const applyResult = screen.getByRole("heading", { name: "Apply result" }).closest("section");
+    expect(applyResult).not.toBeNull();
+    expect(within(applyResult as HTMLElement).getByText(/Deny by default/)).toBeInTheDocument();
+    expect(within(applyResult as HTMLElement).getByText(/Still open/)).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByText("Yes")).toBeInTheDocument();
     });
@@ -234,7 +236,10 @@ describe("DomainNetworkPage", () => {
 
     render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
     expect(await screen.findByText("Yes")).toBeInTheDocument();
-    expect(screen.getByText("redgres.example.com")).toBeInTheDocument();
+    const statusSection = screen.getByRole("heading", { name: "Status" }).closest("section");
+    expect(statusSection).not.toBeNull();
+    // Hostname appears in the fact list and again in the Access-allow copy.
+    expect(within(statusSection as HTMLElement).getAllByText("redgres.example.com").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByLabelText("API token")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Disconnect domain" }));
@@ -270,5 +275,64 @@ describe("DomainNetworkPage", () => {
     render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
     expect(await screen.findByRole("alert")).toHaveTextContent(/do not have permission/i);
     expect(screen.queryByLabelText("API token")).not.toBeInTheDocument();
+  });
+
+  it("adds Access allow policy then confirms reachable to close bootstrap", async () => {
+    let access = "deny_by_default";
+    let bootstrapOpen = true;
+    const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/domain" && (!init || !init.method || init.method === "GET")) {
+        return jsonResponse(200, {
+          configured: true,
+          zone: "example.com",
+          hostname: "redgres.example.com",
+          access,
+          bootstrap_still_open: bootstrapOpen,
+          request_id: "r1",
+        });
+      }
+      if (url === "/api/v1/domain/access-policy") {
+        expect(init?.method).toBe("POST");
+        expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("csrf".padEnd(64, "0"));
+        expect(JSON.parse(String(init?.body))).toEqual({ emails: ["owner@example.com"] });
+        access = "allow";
+        return jsonResponse(200, { ok: true, access: "allow", bootstrap_still_open: true, request_id: "r2" });
+      }
+      if (url === "/api/v1/domain/confirm-reachable") {
+        expect(init?.method).toBe("POST");
+        bootstrapOpen = false;
+        return jsonResponse(200, {
+          ok: true,
+          bootstrap_still_open: false,
+          bootstrap_closed: true,
+          request_id: "r3",
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
+    expect(await screen.findByRole("button", { name: "Add Access allow policy" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Console is reachable — close bootstrap" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Allowed email"), { target: { value: "owner@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Access allow policy" }));
+
+    expect(await screen.findByText("Allow policy configured")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Console is reachable — close bootstrap" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Allowed email")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Console is reachable — close bootstrap" }));
+    const dialog = await screen.findByRole("dialog", { name: "Close bootstrap listener" });
+    fireEvent.change(within(dialog).getByLabelText("Confirm hostname"), {
+      target: { value: "redgres.example.com" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close bootstrap" }));
+    await waitFor(() => {
+      expect(screen.getByText("Closed or not configured")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Console is reachable — close bootstrap" })).not.toBeInTheDocument();
   });
 });
