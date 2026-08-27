@@ -107,6 +107,9 @@ func TestSealAndVerifySQLiteRestoreSourceEnforcesSeals(t *testing.T) {
 	if seals&requiredSQLiteRestoreSeals != requiredSQLiteRestoreSeals {
 		t.Fatalf("seals = %#x, want %#x", seals, requiredSQLiteRestoreSeals)
 	}
+	if _, err := file.WriteAt([]byte("X"), 0); err == nil {
+		t.Fatal("sealed restore source accepted a write")
+	}
 	if err := file.Truncate(int64(len(content) + 1)); err == nil {
 		t.Fatal("sealed restore source accepted growth")
 	}
