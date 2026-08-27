@@ -1,38 +1,18 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="web/public/assets/redgres-logo-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="web/public/assets/redgres-logo-light.png">
-    <img src="web/public/assets/redgres-logo-light.png" width="520" alt="Redgres self-hosted PostgreSQL and Redis control plane">
-  </picture>
-</p>
+![Redgres self-hosted PostgreSQL and Redis control plane](web/public/assets/redgres-logo-light.png)
 
-<h1 align="center">Redgres</h1>
+**One secure control plane for PostgreSQL and Redis.**  
+Self-hosted database administration for a single PostgreSQL cluster and Redis instance.
 
-<p align="center">
-  <strong>One secure control plane for PostgreSQL and Redis.</strong><br>
-  Self-hosted database administration for a single PostgreSQL cluster and Redis instance.
-</p>
+![Redgres CI status](https://img.shields.io/github/actions/workflow/status/SSujitX/redgres/ci.yml?branch=master&style=flat-square&label=CI)![GitHub stars](https://img.shields.io/github/stars/SSujitX/redgres?style=flat-square&logo=github)![Project status: development partial](https://img.shields.io/badge/status-development--partial-f59e0b?style=flat-square)![Self-hosted software](https://img.shields.io/badge/deployment-self--hosted-2563eb?style=flat-square)![License pending](https://img.shields.io/badge/license-pending-6b7280?style=flat-square)
 
-<p align="center">
-  <a href="https://github.com/SSujitX/redgres/actions/workflows/ci.yml"><img alt="Redgres CI status" src="https://img.shields.io/github/actions/workflow/status/SSujitX/redgres/ci.yml?branch=master&style=flat-square&label=CI"></a>
-  <a href="https://github.com/SSujitX/redgres/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/SSujitX/redgres?style=flat-square&logo=github"></a>
-  <img alt="Project status: development partial" src="https://img.shields.io/badge/status-development--partial-f59e0b?style=flat-square">
-  <img alt="Self-hosted software" src="https://img.shields.io/badge/deployment-self--hosted-2563eb?style=flat-square">
-  <img alt="License pending" src="https://img.shields.io/badge/license-pending-6b7280?style=flat-square">
-</p>
-
-<p align="center">
-  <img alt="Go 1.27.0" src="https://img.shields.io/badge/Go-1.27.0-00ADD8?style=for-the-badge&logo=go&logoColor=white">
-  <img alt="React 19.2.8" src="https://img.shields.io/badge/React-19.2.8-20232A?style=for-the-badge&logo=react&logoColor=61DAFB">
-  <img alt="TypeScript 7.0.2" src="https://img.shields.io/badge/TypeScript-7.0.2-3178C6?style=for-the-badge&logo=typescript&logoColor=white">
-  <img alt="PostgreSQL 17 and 18 compatibility targets" src="https://img.shields.io/badge/PostgreSQL-17%20%7C%2018-4169E1?style=for-the-badge&logo=postgresql&logoColor=white">
-  <img alt="Redis 8.2 and 8.8 compatibility targets" src="https://img.shields.io/badge/Redis-8.2%20%7C%208.8-DC382D?style=for-the-badge&logo=redis&logoColor=white">
-</p>
+![Go 1.27.0](https://img.shields.io/badge/Go-1.27.0-00ADD8?style=for-the-badge&logo=go&logoColor=white)![React 19.2.8](https://img.shields.io/badge/React-19.2.8-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)![TypeScript 7.0.2](https://img.shields.io/badge/TypeScript-7.0.2-3178C6?style=for-the-badge&logo=typescript&logoColor=white)![PostgreSQL 17 and 18 compatibility targets](https://img.shields.io/badge/PostgreSQL-17%20%7C%2018-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)![Redis 8.2 and 8.8 compatibility targets](https://img.shields.io/badge/Redis-8.2%20%7C%208.8-DC382D?style=for-the-badge&logo=redis&logoColor=white)
 
 Redgres is a self-hosted Go and React administration console for securely managing one PostgreSQL cluster and one Redis instance. It combines PostgreSQL project database provisioning, Redis ACL user management, credential-safe workflows, audit history, health monitoring, and protected links to expert tools in one operator-focused interface.
 
 > [!WARNING]
 > Redgres is under active development and is **not production accepted**. Do not retire an existing database console until the migration, recovery, compatibility, staging, and production gates are complete. See the evidence-backed [implementation matrix](docs/TRACEABILITY.md) and [acceptance checklist](docs/ACCEPTANCE_CHECKLIST.md).
+
+
 
 ## Features
 
@@ -45,7 +25,11 @@ Redgres is a self-hosted Go and React administration console for securely managi
 - Build one Go binary with the production frontend embedded.
 - Follow deterministic installer, backup, verification, update, and rollback contracts as they become accepted.
 
+
+
 ## Quick start: clone, build, and run Redgres
+
+
 
 ### Prerequisites
 
@@ -61,6 +45,8 @@ PostgreSQL and Redis are optional for interface development. Without service con
 git clone https://github.com/SSujitX/redgres.git
 cd redgres
 ```
+
+
 
 ### 2. Install frontend dependencies and build
 
@@ -86,9 +72,11 @@ Enter the owner password only at the secure interactive prompt. Do not place pas
 npm --prefix web run dev:full
 ```
 
-Open <http://127.0.0.1:8989>. Stop the development stack with `Ctrl+C`. A frontend rebuild briefly clears the embedded assets; refresh after Vite finishes.
+Open [http://127.0.0.1:8989](http://127.0.0.1:8989). Stop the development stack with `Ctrl+C`. A frontend rebuild briefly clears the embedded assets; refresh after Vite finishes.
 
 ## Development usage
+
+
 
 ### Frontend hot module replacement
 
@@ -107,7 +95,7 @@ Terminal 2:
 npm --prefix web run dev
 ```
 
-Open <http://127.0.0.1:5173>. Vite proxies `/api` requests to the local Go process.
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api` requests to the local Go process.
 
 ### Run tests and production builds
 
@@ -124,6 +112,8 @@ Browser tests require Playwright Chromium:
 npm --prefix web exec -- playwright install chromium
 npm --prefix web run test:e2e
 ```
+
+
 
 ## Product scope
 
@@ -145,6 +135,8 @@ Start with the [documentation index](docs/INDEX.md). Key references:
 - [Installer specification](docs/INSTALLER_SPEC.md)
 - [Backup and recovery](docs/BACKUP_RECOVERY.md)
 - [Contributing guide](CONTRIBUTING.md)
+
+
 
 ## Project status and license
 
