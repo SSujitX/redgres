@@ -1,0 +1,7 @@
+[Unit]
+Description=Restart Redgres cloudflared when the tunnel token file changes
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart cloudflared-redgres.service
