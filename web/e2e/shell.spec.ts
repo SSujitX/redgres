@@ -76,6 +76,7 @@ test.describe("responsive navigation", () => {
     await expect(nav.getByRole("button", { name: "ACL users" })).toBeVisible();
     await expect(nav.getByRole("button", { name: "Audit" })).toBeVisible();
     await expect(nav.getByRole("button", { name: "System" })).toBeVisible();
+    await expect(nav.getByRole("button", { name: "Domain & Network" })).toBeVisible();
     await expect(nav.getByRole("button", { name: "Documentation" })).toBeVisible();
 
     // Close menu button should be present
@@ -159,6 +160,7 @@ test.describe("responsive navigation", () => {
     await expect(nav.getByRole("button", { name: "ACL users" })).toBeVisible();
     await expect(nav.getByRole("button", { name: "Audit" })).toBeVisible();
     await expect(nav.getByRole("button", { name: "System" })).toBeVisible();
+    await expect(nav.getByRole("button", { name: "Domain & Network" })).toBeVisible();
     await expect(nav.getByRole("button", { name: "Documentation" })).toBeVisible();
 
     // The full wordmark should be visible without a separate text label.
@@ -369,6 +371,10 @@ test.describe("page navigation", () => {
     // Navigate to System
     await nav.getByRole("button", { name: "System" }).click();
     await expect(context).toHaveText("System");
+
+    // Navigate to Domain & Network
+    await nav.getByRole("button", { name: "Domain & Network" }).click();
+    await expect(context).toHaveText("System · Domain & Network");
 
     // Navigate to Documentation
     await nav.getByRole("button", { name: "Documentation" }).click();
