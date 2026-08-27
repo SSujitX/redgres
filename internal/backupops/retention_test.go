@@ -70,7 +70,7 @@ func TestApplyRetentionRemovesOldestBeyondKeep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	removed, err := ApplyRetention(context.Background(), root, keep)
+	removed, err := ApplyRetention(context.Background(), root, keep, "")
 	if err != nil {
 		t.Fatalf("ApplyRetention: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestApplyRetentionIgnoresProducerNamedSymlink(t *testing.T) {
 	createSnapshotDir(t, root, older, base)
 	createSnapshotDir(t, root, newer, base.Add(time.Hour))
 
-	removed, err := ApplyRetention(context.Background(), root, 1)
+	removed, err := ApplyRetention(context.Background(), root, 1, "")
 	if err != nil {
 		t.Fatalf("ApplyRetention: %v", err)
 	}
@@ -175,36 +175,95 @@ func TestApplyRetentionIgnoresProducerNamedSymlink(t *testing.T) {
 
 func TestApplyRetentionFailClosed(t *testing.T) {
 	t.Run("keep zero", func(t *testing.T) {
-		if _, err := ApplyRetention(context.Background(), t.TempDir(), 0); err == nil {
+		if _, err := ApplyRetention(context.Background(), t.TempDir(), 0, ""); err == nil {
 			t.Fatal("expected keep=0 rejection")
 		}
 	})
 	t.Run("keep negative", func(t *testing.T) {
-		if _, err := ApplyRetention(context.Background(), t.TempDir(), -3); err == nil {
+		if _, err := ApplyRetention(context.Background(), t.TempDir(), -3, ""); err == nil {
 			t.Fatal("expected negative keep rejection")
 		}
 	})
 	t.Run("empty root", func(t *testing.T) {
-		if _, err := ApplyRetention(context.Background(), "", 7); err == nil {
+		if _, err := ApplyRetention(context.Background(), "", 7, ""); err == nil {
 			t.Fatal("expected empty staging root rejection")
 		}
 	})
 	t.Run("relative root", func(t *testing.T) {
-		if _, err := ApplyRetention(context.Background(), "relative-staging-root", 7); err == nil {
+		if _, err := ApplyRetention(context.Background(), "relative-staging-root", 7, ""); err == nil {
 			t.Fatal("expected relative staging root rejection")
 		}
 	})
 	t.Run("missing root", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "missing")
-		if _, err := ApplyRetention(context.Background(), missing, 7); err == nil {
+		if _, err := ApplyRetention(context.Background(), missing, 7, ""); err == nil {
 			t.Fatal("expected missing staging root failure")
 		}
 	})
 	t.Run("canceled context", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		if _, err := ApplyRetention(ctx, t.TempDir(), 7); err == nil {
+		if _, err := ApplyRetention(ctx, t.TempDir(), 7, ""); err == nil {
 			t.Fatal("expected canceled context failure")
 		}
 	})
+}
+
+// TestApplyRetentionRootSwapFailsClosed ensures a staging root path swapped to
+// a symlink is never followed: retention fails closed and removes nothing from
+// the symlink target.
+func TestApplyRetentionRootSwapFailsClosed(t *testing.T) {
+	realRoot := t.TempDir()
+	base := time.Now().Add(-24 * time.Hour)
+	createSnapshotDir(t, realRoot, randomSnapshotName(t), base)
+	createSnapshotDir(t, realRoot, randomSnapshotName(t), base.Add(time.Hour))
+
+	// Move the real root aside and put a symlink in its place pointing at a
+	// directory that holds a real producer-named directory.
+	aside := realRoot + "-aside"
+	if err := os.Rename(realRoot, aside); err != nil {
+		t.Fatalf("rename root aside: %v", err)
+	}
+	target := t.TempDir()
+	targetSnapshot := randomSnapshotName(t)
+	createSnapshotDir(t, target, targetSnapshot, time.Now().Add(-time.Hour))
+
+	if err := os.Symlink(target, realRoot); err != nil {
+		_ = os.Rename(aside, realRoot)
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := ApplyRetention(context.Background(), realRoot, 1, ""); err == nil {
+		t.Fatal("expected root-swap rejection")
+	}
+	// The symlink target's producer directory must be untouched.
+	if info, err := os.Lstat(filepath.Join(target, targetSnapshot)); err != nil || !info.IsDir() {
+		t.Fatalf("symlink target directory changed: %v", err)
+	}
+}
+
+// TestApplyRetentionProtectsName ensures a protected name is never removed,
+// even when clock skew (a future-mtime sibling) would otherwise prune it.
+func TestApplyRetentionProtectsName(t *testing.T) {
+	root := t.TempDir()
+	base := time.Now().Add(-24 * time.Hour)
+
+	futureName := randomSnapshotName(t)
+	createSnapshotDir(t, root, futureName, time.Now().Add(24*time.Hour))
+	justCaptured := randomSnapshotName(t)
+	createSnapshotDir(t, root, justCaptured, base)
+
+	removed, err := ApplyRetention(context.Background(), root, 1, justCaptured)
+	if err != nil {
+		t.Fatalf("ApplyRetention: %v", err)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("removed = %v, want none (protected just-captured name)", removed)
+	}
+	if _, err := os.Lstat(filepath.Join(root, justCaptured)); err != nil {
+		t.Fatalf("protected just-captured snapshot removed: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, futureName)); err != nil {
+		t.Fatalf("newest snapshot removed: %v", err)
+	}
 }

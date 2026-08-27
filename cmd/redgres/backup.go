@@ -43,6 +43,14 @@ func runBackup(args []string) error {
 	} else if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return errors.New("backup: staging root must be a real directory")
 	}
+	if !filepath.IsAbs(*sqlitePath) {
+		return errors.New("backup: -sqlite-path must be an absolute path")
+	}
+	if info, err := os.Lstat(*sqlitePath); err != nil {
+		return errors.New("backup: sqlite database does not exist")
+	} else if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return errors.New("backup: sqlite database must be a regular file")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -58,7 +66,8 @@ func runBackup(args []string) error {
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	removed, err := backupops.ApplyRetention(ctx, *stagingRoot, *keep)
+	protectName := filepath.Base(filepath.Dir(result.Snapshot.Path))
+	removed, err := backupops.ApplyRetention(ctx, *stagingRoot, *keep, protectName)
 	if err != nil {
 		return fmt.Errorf("backup: apply retention: %w", err)
 	}
