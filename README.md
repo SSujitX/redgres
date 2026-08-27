@@ -1,7 +1,7 @@
 ![Redgres self-hosted PostgreSQL and Redis control plane](web/public/assets/redgres-logo-light.png)
 
 **One secure control plane for PostgreSQL and Redis.**  
-Self-hosted database administration for a single PostgreSQL cluster and Redis instance.
+Redgres is a Self-hosted database administration for a single PostgreSQL cluster and Redis instance.
 
 ![Redgres CI status](https://img.shields.io/github/actions/workflow/status/SSujitX/redgres/ci.yml?branch=master&style=flat-square&label=CI)![GitHub stars](https://img.shields.io/github/stars/SSujitX/redgres?style=flat-square&logo=github)![Project status: development partial](https://img.shields.io/badge/status-development--partial-f59e0b?style=flat-square)![Self-hosted software](https://img.shields.io/badge/deployment-self--hosted-2563eb?style=flat-square)![License pending](https://img.shields.io/badge/license-pending-6b7280?style=flat-square)
 
