@@ -119,6 +119,7 @@ func run(args []string) error {
 			_ = srv.Close()
 			return err
 		}
+		api.SetBootstrapCloser(bootstrapLn)
 		log.Info("bootstrap listening", slog.String("address", bootstrapLn.Addr()), slog.Duration("ttl", cfg.BootstrapTTL))
 	}
 
