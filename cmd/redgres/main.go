@@ -30,9 +30,16 @@ func main() {
 		}
 		return
 	}
+	if len(args) > 0 && args[0] == "backup" {
+		if err := runBackup(args[1:]); err != nil {
+			os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(args) > 0 && (args[0] == "serve" || args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
 		if args[0] != "serve" {
-			os.Stderr.WriteString("usage: redgres [serve | create-owner] [flags]\n")
+			os.Stderr.WriteString("usage: redgres [serve | create-owner | backup] [flags]\n")
 			os.Exit(2)
 		}
 		args = args[1:]
