@@ -34,6 +34,7 @@ For day-to-day Cursor commands, start at [../CURSOR_CODING.md](../CURSOR_CODING.
 - [DEPLOYMENT.md](DEPLOYMENT.md)
 - [INSTALLER_SPEC.md](INSTALLER_SPEC.md)
 - [INSTALL_WALKTHROUGH.md](INSTALL_WALKTHROUGH.md) — operator journey: install → bootstrap → domain & TLS.
+- [DOMAIN_WIZARD_SECURITY.md](DOMAIN_WIZARD_SECURITY.md) — pre-code security review for the Domain & Network wizard.
 - [BACKUP_RECOVERY.md](BACKUP_RECOVERY.md)
 - [OPERATIONS.md](OPERATIONS.md)
 - [TESTING.md](TESTING.md)
