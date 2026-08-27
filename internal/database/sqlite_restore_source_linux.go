@@ -40,7 +40,7 @@ func prepareSQLiteRestoreSource(ctx context.Context, _ string, pinned *os.File) 
 		return nil, err
 	}
 	return &sqliteRestoreSource{
-		uri:       fmt.Sprintf("file:/proc/self/fd/%d?mode=ro&immutable=1", sealed.Fd()),
+		uri:       fmt.Sprintf("file:/proc/self/fd/%d?mode=ro", sealed.Fd()),
 		size:      size,
 		digest:    digest,
 		closeFunc: sealed.Close,
