@@ -33,6 +33,7 @@ For day-to-day Cursor commands, start at [../CURSOR_CODING.md](../CURSOR_CODING.
 - [REPOSITORY_STRUCTURE.md](REPOSITORY_STRUCTURE.md)
 - [DEPLOYMENT.md](DEPLOYMENT.md)
 - [INSTALLER_SPEC.md](INSTALLER_SPEC.md)
+- [INSTALL_WALKTHROUGH.md](INSTALL_WALKTHROUGH.md) — operator journey: install → bootstrap → domain & TLS.
 - [BACKUP_RECOVERY.md](BACKUP_RECOVERY.md)
 - [OPERATIONS.md](OPERATIONS.md)
 - [TESTING.md](TESTING.md)
@@ -60,6 +61,7 @@ For day-to-day Cursor commands, start at [../CURSOR_CODING.md](../CURSOR_CODING.
 - [ADR-009: PostgreSQL adoption, extension enablement, and PgBouncer lifecycle](decisions/ADR-009-postgres-adoption-and-extensions.md)
 - [ADR-010: Durable operations ledger](decisions/ADR-010-durable-operations.md)
 - [ADR-011: DROP backup-gate catalog types](decisions/ADR-011-drop-backup-gate.md)
+- [ADR-012: Self-closing source-restricted UI bootstrap](decisions/ADR-012-ui-bootstrap.md)
 
 ## Status labels
 
