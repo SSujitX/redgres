@@ -108,7 +108,8 @@ Recommended:
 /etc/redgres/secrets/postgres-admin-password     root:root    0600
 /etc/redgres/secrets/legacy-vault-secret         root:root    0600
 /etc/redgres/secrets/redis-admin-url              root:root    0600
-/etc/redgres/secrets/cloudflared-tunnel-token     root:root    0600
+/var/lib/redgres/secrets/cloudflare-api-token     root:root    0600
+/var/lib/redgres/secrets/cloudflared-tunnel-token  root:root    0600
 /etc/redgres/secrets/cloudflare-oauth-token       root:root    0600
 /etc/redgres/secrets/certbot-dns-token            root:root    0600
 ```
