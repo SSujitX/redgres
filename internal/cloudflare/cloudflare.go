@@ -9,12 +9,11 @@ package cloudflare
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -56,7 +55,8 @@ type AccessApp struct {
 // for tests; HTTPClient implements it against the live API.
 type Client interface {
 	DiscoverZone(ctx context.Context, name string) (Zone, error)
-	CreateTunnel(ctx context.Context, accountID, name, secret string) (Tunnel, error)
+	CreateTunnel(ctx context.Context, accountID, name string) (Tunnel, error)
+	ConfigureIngress(ctx context.Context, accountID, tunnelID, hostname, originHTTP string) error
 	CreateRecord(ctx context.Context, zoneID, name, content string, proxied bool) (Record, error)
 	CreateAccessApp(ctx context.Context, accountID, domain string) (AccessApp, error)
 	DeleteTunnel(ctx context.Context, accountID, tunnelID string) error
@@ -173,18 +173,55 @@ func (c *HTTPClient) DiscoverZone(ctx context.Context, name string) (Zone, error
 	return Zone{}, ErrNotFound
 }
 
-// CreateTunnel creates a remotely-managed tunnel.
-func (c *HTTPClient) CreateTunnel(ctx context.Context, accountID, name, secret string) (Tunnel, error) {
+// CreateTunnel creates a remotely managed tunnel (config_src=cloudflare).
+// The one-time connector token is returned in result.token and must be stored
+// server-side for cloudflared (never returned to the browser).
+// Primary source: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel-api/
+func (c *HTTPClient) CreateTunnel(ctx context.Context, accountID, name string) (Tunnel, error) {
 	var result struct {
 		ID    string `json:"id"`
 		Name  string `json:"name"`
 		Token string `json:"token"`
 	}
-	body := map[string]string{"name": name, "tunnel_secret": secret}
+	body := map[string]string{"name": name, "config_src": "cloudflare"}
 	if err := c.call(ctx, http.MethodPost, "/accounts/"+accountID+"/cfd_tunnel", body, &result); err != nil {
 		return Tunnel{}, err
 	}
+	if result.ID == "" || result.Token == "" {
+		return Tunnel{}, errors.New("cloudflare tunnel create returned empty id or token")
+	}
 	return Tunnel{ID: result.ID, Name: result.Name, Token: result.Token}, nil
+}
+
+// ConfigureIngress sets remote tunnel ingress: hostname → originHTTP, plus the
+// required catch-all http_status:404 rule.
+// Primary source: PUT /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations
+func (c *HTTPClient) ConfigureIngress(ctx context.Context, accountID, tunnelID, hostname, originHTTP string) error {
+	hostname = strings.TrimSpace(strings.ToLower(hostname))
+	originHTTP = strings.TrimSpace(originHTTP)
+	if hostname == "" || !strings.HasPrefix(originHTTP, "http://") {
+		return errors.New("invalid tunnel ingress hostname or origin")
+	}
+	body := map[string]any{
+		"config": map[string]any{
+			"ingress": []map[string]any{
+				{"hostname": hostname, "service": originHTTP, "originRequest": map[string]any{}},
+				{"service": "http_status:404"},
+			},
+		},
+	}
+	var result any
+	return c.call(ctx, http.MethodPut, "/accounts/"+accountID+"/cfd_tunnel/"+tunnelID+"/configurations", body, &result)
+}
+
+// OriginHTTPService builds the local origin URL cloudflared dials on this host.
+// Always uses 127.0.0.1 with the port from REDGRES_ADDRESS (loopback UI bind).
+func OriginHTTPService(listenAddr string) (string, error) {
+	_, port, err := net.SplitHostPort(listenAddr)
+	if err != nil || port == "" {
+		return "", errors.New("invalid listen address for tunnel origin")
+	}
+	return "http://127.0.0.1:" + port, nil
 }
 
 // DeleteTunnel deletes a tunnel.
@@ -260,13 +297,4 @@ func (c *HTTPClient) VerifyAccessApp(ctx context.Context, accountID, appID strin
 		ID string `json:"id"`
 	}
 	return c.call(ctx, http.MethodGet, "/accounts/"+accountID+"/access/apps/"+appID, nil, &result)
-}
-
-// SecretForTunnel generates a base64-encoded 32-byte tunnel secret.
-func SecretForTunnel() (string, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(raw), nil
 }
