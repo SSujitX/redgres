@@ -27,7 +27,7 @@ const (
 type ctxSessionKey struct{}
 
 var defaultCapabilities = []string{
-	"platform.read", "audit.read",
+	"platform.read", "platform.network", "audit.read",
 	"postgres.read", "postgres.provision", "postgres.credentials", "postgres.destructive",
 	"redis.read", "redis.provision", "redis.credentials", "redis.destructive",
 }
