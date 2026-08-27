@@ -21,7 +21,7 @@ function runSetup(command, args, cwd) {
     cwd,
     stdio: "inherit",
     windowsHide: true,
-    shell: process.platform === "win32",
+    shell: false,
   });
   if (result.error) {
     console.error(`Unable to start ${command}: ${result.error.message}`);
