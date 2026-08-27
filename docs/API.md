@@ -261,12 +261,12 @@ All require a session cookie and the `platform.network` capability; mutations al
 |---|---|---|
 | GET | `/api/v1/domain` | Deployment status (`configured` false/true + `zone`/`hostname` when set) |
 | POST | `/api/v1/domain/token` | Paste Cloudflare API token → server-side 0600 file; `{ok:true}` |
-| POST | `/api/v1/domain/apply` | `{zone, hostname}` → discover zone, create tunnel + proxied CNAME + deny-by-default Access app, verify (API reflection), persist IDs + tunnel token, audit |
+| POST | `/api/v1/domain/apply` | `{zone, hostname}` → remote tunnel + ingress to loopback Redgres + proxied CNAME + deny-by-default Access app; persist IDs + tunnel token; audit |
 | DELETE | `/api/v1/domain` | Delete exactly the persisted tunnel/record/Access app; clear state; remove the tunnel token file |
 
 **POST `/api/v1/domain/token`** body `{"token":"<per-zone token>"}`. Success `200` `{"ok":true,"request_id":"…"}`. The token is never echoed. Empty, whitespace, or >512-char token → `400` `validation_error`.
 
-**POST `/api/v1/domain/apply`** body `{"zone":"example.com","hostname":"console.example.com"}`. Success `200`:
+**POST `/api/v1/domain/apply`** body `{"zone":"example.com","hostname":"redgres.example.com"}`. Creates a remotely managed tunnel (`config_src=cloudflare`), sets ingress `hostname` → `http://127.0.0.1:<REDGRES_ADDRESS port>`, creates the proxied CNAME, creates a deny-by-default Access app, verifies via API reflection, persists IDs + tunnel token. Success `200`:
 
 ```json
 {
