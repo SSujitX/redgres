@@ -9,7 +9,8 @@ const viewports = [
 
 async function waitForLogin(page: Page) {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Redgres" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Redgres" })).toBeAttached();
+    await expect(page.locator(".brand-logo-login .brand-logo-light")).toBeVisible();
   await expect(page.getByLabel("Username")).toBeVisible();
   await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Log in" })).toBeVisible();
