@@ -24,7 +24,7 @@ None of these may appear in SQLite control state, browser storage, logs, audit m
 |---|---|
 | OAuth/tunnel token theft from the browser | Tokens never persisted in browser storage; submitted once, held server-side only, never returned by the API; credential responses `no-store`; frontend memory cleared on dismiss/navigation. |
 | OAuth authorization-code interception / CSRF on callback | Bind an unguessable `state` to the owner session + PKCE; single-use code; validate the callback origin. |
-| OAuth redirect over a self-signed bootstrap host | Resolve before code (see open questions): the bootstrap `https://<VPS_IP>:8989` is self-signed, but Cloudflare requires a valid HTTPS redirect URI. |
+| OAuth redirect over a self-signed bootstrap host | Token-first bootstrap (locked #1): the per-zone API token creates the tunnel + valid-HTTPS domain first, then OAuth runs against `console.example.com`. |
 | Over-broad grant / cross-zone reach | Enforce the minimal-scope allow-list at authorization; document that OAuth scopes are account-wide across zones (the wizard still only *acts* on the declared zone). |
 | Zone guessing / touching other zones | Resolve the zone deterministically from explicit hostnames; never enumerate or guess; touch only the records it declares. |
 | Tunnel token exposure | Generated server-side; stored `0600`; injected to `cloudflared` via systemd `LoadCredential`, never unit text, env dumps, or shell history. |
@@ -35,13 +35,13 @@ None of these may appear in SQLite control state, browser storage, logs, audit m
 | Unauthorized domain change / disconnect | "Disconnect" revokes the Cloudflare grant and removes only records/tunnel the wizard created; it never sweeps the zone or touches unrelated records. |
 | Raw DB TLS downgrade | DB certs stay Let's Encrypt (publicly trusted); client guidance remains `verify-full` / Redis hostname verification — the wizard must not relax this. |
 
-## Open questions (resolve before code)
+## Locked decisions (2026-08-27)
 
-1. **OAuth redirect URI** — where does the callback land given the self-signed bootstrap host? Options: run the handshake after the tunneled domain exists (callback on `console.example.com`), or use a loopback redirect. Decide explicitly.
-2. **Tunnel scope name** — confirm `Cloudflare One Connectors` vs `Argo Tunnel (Legacy)` against Cloudflare's current API permission mapping.
-3. **Capability name** — add a dedicated capability (e.g. `platform.network`) for the wizard rather than reusing `platform.read`.
-4. **Disconnect semantics** — revoke-only, or revoke + delete only-wizard-created resources? (Recommend the latter, never a zone sweep.)
-5. **Bootstrap max lifetime** — pick a hard cap (e.g. 30–60 minutes) so `8989` can never remain open after an abandoned setup.
+1. **OAuth redirect URI** — token-first bootstrap, OAuth steady-state. The self-signed bootstrap host cannot be a valid OAuth callback, so the **first** tunnel is created with a **per-zone API token pasted once**, which brings up `console.example.com` (Universal SSL). OAuth "Connect" then runs against that valid-HTTPS domain and becomes the permanent credential.
+2. **Tunnel scope name** — use the modern **`Cloudflare One Connectors`** scope; fall back to `Argo Tunnel (Legacy)` only if Cloudflare's current API mapping requires it. Pin the exact name against Cloudflare docs at implementation and record it here.
+3. **Capability name** — `platform.network` (dedicated; owner holds it). Not `platform.read`.
+4. **Disconnect semantics** — revoke the grant **and** delete only the wizard's own tunnel, DNS records, and Access policy; never sweep the zone or touch unrelated records. Re-connectable.
+5. **Bootstrap max lifetime** — closes **immediately on success**; a **30-minute hard cap** is the failsafe that auto-closes even if the wizard is abandoned or errors (the operator can forget; the timer cannot).
 
 ## Implementation invariants
 

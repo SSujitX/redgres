@@ -13,7 +13,7 @@ One public GitHub repo with a single `sh` installer. Clone it on a fresh Ubuntu 
 | Question | Decision |
 |---|---|
 | UI reachability | Redgres UI: **bootstrap `IP:8989` (source-restricted, auto-closes after domain)** → then loopback + Tunnel + Access. pgAdmin/RedisInsight: loopback + tunnel only, never public. |
-| Domain/SSL driving | Runtime first-run **Domain & Network wizard** in the UI + manual-DNS fallback; **Cloudflare OAuth (self-created app, minimal scopes; per-zone API token as fallback)**. |
+| Domain/SSL driving | Runtime first-run **Domain & Network wizard** in the UI + manual-DNS fallback; **per-zone API token boots the first tunnel → Cloudflare OAuth steady-state (minimal scopes)**. |
 | pgAdmin | **Out of scope** for now (manual/expert tool). A domain is *reserved* but not provisioned. |
 | apt behavior | Install only **exact pinned packages**. No full-system `apt upgrade`, no unrelated `apt remove`. |
 | Deliverable | This walkthrough for review; canonical specs updated only after you correct it. |
@@ -116,7 +116,7 @@ UFW is default-deny. Public allows are SSH, raw database ports, and the **tempor
 | Direction | Ports | Notes |
 |---|---|---|
 | Public allow | 22, 5432, 6432, 6380 | SSH, PostgreSQL direct, PgBouncer, Redis TLS |
-| Temporary bootstrap | 8989 | Redgres UI only, source-restricted to the operator IP; auto-removed after domain + tunnel verified |
+| Temporary bootstrap | 8989 | Redgres UI only, source-restricted to the operator IP; auto-removed after domain + tunnel verified or a 30-minute hard cap |
 | Never opened (loopback) | 8790, pgAdmin, 5540 | Canonical UI origins bind `127.0.0.1`; pgAdmin/RedisInsight reachable only via tunnel |
 | Not opened (no listener) | 80, 443 | Browser HTTPS ends at Cloudflare's edge; the server has no inbound TLS listener for the UIs |
 
@@ -134,7 +134,7 @@ Right after install, the report gives you a **bootstrap URL**:
 https://<VPS_IP>:8989
 ```
 
-That bootstrap listener is **source-restricted to your current IP** and closes itself once the domain is connected. Log in with the owner password, and the UI pushes you into the **Domain & Network wizard** (Step 4).
+That bootstrap listener is **source-restricted to your current IP** and closes **immediately once the domain is connected**; a **30-minute hard cap** is the failsafe if you abandon setup. Log in with the owner password, and the UI pushes you into the **Domain & Network wizard** (Step 4).
 
 After the domain + tunnel + Access are verified live, Redgres **auto-rebinds to `127.0.0.1:8790` and removes the 8989 firewall rule** — the public port is gone. From then on you reach it at `https://console.example.com`.
 
@@ -142,7 +142,7 @@ pgAdmin and RedisInsight are **never** reachable by IP:port; they are loopback +
 
 ### How it closes — and how to get back in
 
-- **Closing** is two actions: remove the `8989` UFW rule **and** rebind Redgres from `0.0.0.0:8989` back to `127.0.0.1:8790`. After that, nothing on the server answers 8989 for anyone.
+- **Closing** is two actions: remove the `8989` UFW rule **and** rebind Redgres from `0.0.0.0:8989` back to `127.0.0.1:8790` — done **immediately on success**, with a **30-minute hard cap** as the failsafe if you abandon the wizard. After that, nothing on the server answers 8989 for anyone.
 - **Getting back in** (tunnel/Access broken): SSH into the server and re-run the bootstrap command, which re-opens `8989` **to your current IP only**, or use the SSH tunnel as the emergency path. You never need a permanently open UI port.
 - **Why source-restrict matters:** your server's IP is scanned continuously by internet bots (Shodan/masscan) regardless of whether anyone "knows" it. An open `0.0.0.0:8989` is discovered in minutes. Source-restricting to your IP makes "nobody else can reach it" literally true — not a guess.
 
@@ -155,17 +155,16 @@ Domain wiring happens **in the Redgres UI**, not on the `sh` command line: open 
 In the wizard, in order:
 
 1. Enter the hostnames you want (`console`, `db`, `redis`; optional `pgadmin`, `redis-insight`).
-2. Click **Connect Cloudflare** and approve the minimal scopes once.
-3. Redgres (server-side) creates the tunnel, the DNS records, the TLS certs, and the Access policy, then verifies them live.
-4. Bootstrap `8989` auto-closes; you now reach the UI at `https://console.example.com`.
+2. Paste a **per-zone Cloudflare API token once** → Redgres creates the tunnel + DNS + TLS + Access and brings up `console.example.com` (Universal SSL).
+3. Click **Connect Cloudflare** (OAuth, minimal scopes) on the now-live domain → Redgres swaps the one-time token for the permanent OAuth grant.
+4. Bootstrap `8989` auto-closes **immediately on success** (30-minute hard cap as failsafe); you now reach the UI at `https://console.example.com`.
 
-### Credential model: Cloudflare OAuth (self-created app, minimal scopes)
+### Credential model: token-first bootstrap → Cloudflare OAuth steady-state
 
-- You create the OAuth app yourself and grant **only the scopes Redgres needs**: `zone.read`, `dns.write`, `ssl-and-certificates.write`, `user-details.read`, `offline_access`, **Access: Apps and Policies** (Edit), and the **tunnel-management** scope (`Cloudflare One Connectors` / `Argo Tunnel (Legacy)`). **No** billing, `zone.write`, `zone-settings.write`, `zone-dns-settings.read`, or the rest of the Zero Trust surface. The wizard's **Connect Cloudflare** button opens the authorization flow; you approve once.
-- **Tunnel nuance:** the OAuth token *creates and manages* the tunnel and its DNS routes via the API; the `cloudflared` daemon on the server still connects with its own **tunnel token**, which Redgres also stores server-side only (never in the browser).
-- The issued OAuth tokens are stored **server-side only** (`/etc/redgres/secrets`, `0600`, systemd credential). They are **never persisted in browser storage** and **never returned** by the API.
-- They are **not** stored in the control-state SQLite. Encryption-at-rest on the same host (with the key beside it) only guards a stolen backup of the DB file — it does not protect against a live server compromise.
-- **Fallback without OAuth:** a per-zone Cloudflare API token (`zone.read`, `dns.write`, `ssl-and-certificates.write`, tunnel edit) works the same way server-side. OAuth is the default for the "connect account" flow; the token is the manual alternative.
+- **First connect (one-time):** paste a **per-zone Cloudflare API token** (`zone.read`, `dns.write`, `ssl-and-certificates.write`, tunnel edit). Redgres uses it to create the tunnel and bring `console.example.com` live with Universal SSL, then discards it.
+- **Steady state:** create the OAuth app yourself and grant **only the scopes Redgres needs**: `zone.read`, `dns.write`, `ssl-and-certificates.write`, `user-details.read`, `offline_access`, **Access: Apps and Policies** (Edit), and the **tunnel-management** scope (`Cloudflare One Connectors` / `Argo Tunnel (Legacy)`). **No** billing, `zone.write`, `zone-settings.write`, `zone-dns-settings.read`, or the rest of the Zero Trust surface. **Connect Cloudflare** runs on the live domain and swaps the one-time token for the permanent OAuth grant.
+- **Tunnel nuance:** the credential (token or OAuth) *creates and manages* the tunnel and its DNS routes via the API; the `cloudflared` daemon on the server still connects with its own **tunnel token**, which Redgres also stores server-side only (never in the browser).
+- All tokens (OAuth + tunnel) are stored **server-side only** (`/etc/redgres/secrets`, `0600`, systemd credential); **never persisted in browser storage**, **never returned** by the API, and **never in the control-state SQLite**. Encryption-at-rest on the same host (with the key beside it) only guards a stolen backup of the DB file — it does not protect against a live server compromise.
 
 > **Tradeoff (be aware):** Cloudflare OAuth scopes are **account-level permissions** — even a minimal app applies them to **every zone** in the account, not just the one domain. A Cloudflare [API token](https://developers.cloudflare.com/flagship/api-tokens/) can instead be scoped to a **single zone**, which OAuth cannot. For a single-domain account the difference is negligible and OAuth is fine; for a multi-domain account, OAuth is broader than a per-zone token even though Redgres only *acts* on the zone you point it at.
 
@@ -252,13 +251,13 @@ Mark each line right or wrong so I can fix the draft:
 5. UI HTTPS = Cloudflare Universal SSL + Tunnel; zone SSL/TLS mode **Full (strict)** (never Flexible). **Let's Encrypt/Certbot is only for raw DB ports**; DB clients use **`sslmode=verify-full`**.
 6. pgAdmin is out of scope for now.
 7. apt installs only pinned packages; no full-system upgrade/remove.
-8. Domain/SSL is a first-run **Domain & Network wizard** in the UI (server-side **Cloudflare OAuth**, minimal scopes; optional per-zone API token fallback); manual-DNS fallback for non-Cloudflare.
+8. Domain/SSL is a first-run **Domain & Network wizard**: per-zone API token boots the first tunnel → **Cloudflare OAuth steady-state** (minimal scopes); manual-DNS fallback for non-Cloudflare.
 9. Supported versions today: PostgreSQL 17/18, Redis 8.2/8.8, release-pinned PgBouncer.
 10. The live installer is **not implemented yet** — this is target documentation.
 11. The Redgres app is installed from a **verified release artifact** (tarball + `SHA256SUMS`), not the cloned `main` checkout.
 12. No `--release`/`-v` → installer auto-uses the **latest stable, tested** release, resolved to an exact version + checksum before installing; or you select a version interactively. Never a floating `latest`, never a prerelease.
 13. UFW: **22, 5432, 6432, 6380** public; **8989** temporary bootstrap (source-restricted, auto-closes); **8790/pgAdmin/5540** loopback-only; **80/443** not opened (HTTPS ends at Cloudflare's edge).
-14. Cloudflare credential is a **self-created OAuth app with minimal scopes**; tokens stored server-side only; never in browser storage; never in the control-state SQLite. (OAuth scopes are account-wide across all zones, unlike a per-zone API token.)
+14. Cloudflare credentials: **per-zone API token** (one-time bootstrap) → **self-created OAuth app** (minimal scopes, steady-state); all tokens server-side only; never browser/SQLite. (OAuth scopes are account-wide across all zones, unlike a per-zone API token.)
 
 ## 10. References
 
