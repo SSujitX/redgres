@@ -19,6 +19,8 @@ const (
 
 	DefaultAddress            = "127.0.0.1:8790"
 	DefaultDevelopmentBaseURL = "http://127.0.0.1:8790"
+	DefaultBootstrapAddress   = ""
+	DefaultBootstrapTTL       = 30 * time.Minute
 	DefaultSQLitePath         = "./redgres.db"
 	DefaultSessionTTL         = 12 * time.Hour
 	DefaultAbsoluteSessionTTL = 24 * time.Hour
@@ -32,15 +34,19 @@ const (
 )
 
 type Config struct {
-	Environment        string
-	Address            string
-	BaseURL            string
-	SQLitePath         string
-	SessionTTL         time.Duration
-	AbsoluteSessionTTL time.Duration
-	CookieSecure       bool
-	LogLevel           string
-	DevAssetDir        string
+	Environment         string
+	Address             string
+	BaseURL             string
+	BootstrapAddress    string
+	BootstrapTTL        time.Duration
+	CloudflareTokenFile string
+	TunnelTokenFile     string
+	SQLitePath          string
+	SessionTTL          time.Duration
+	AbsoluteSessionTTL  time.Duration
+	CookieSecure        bool
+	LogLevel            string
+	DevAssetDir         string
 
 	PostgresHost               string
 	PostgresPort               string
@@ -83,14 +89,18 @@ func Load(args []string) (Config, error) {
 	}
 
 	cfg := Config{
-		Environment:        normalizeEnvironment(envOr("REDGRES_ENVIRONMENT", EnvironmentDevelopment)),
-		Address:            envOr("REDGRES_ADDRESS", DefaultAddress),
-		BaseURL:            envOr("REDGRES_BASE_URL", DefaultDevelopmentBaseURL),
-		SQLitePath:         envOr("REDGRES_SQLITE_PATH", DefaultSQLitePath),
-		SessionTTL:         DefaultSessionTTL,
-		AbsoluteSessionTTL: DefaultAbsoluteSessionTTL,
-		CookieSecure:       envBoolDefaultFalse("REDGRES_COOKIE_SECURE"),
-		LogLevel:           strings.ToLower(envOr("REDGRES_LOG_LEVEL", DefaultLogLevel)),
+		Environment:         normalizeEnvironment(envOr("REDGRES_ENVIRONMENT", EnvironmentDevelopment)),
+		Address:             envOr("REDGRES_ADDRESS", DefaultAddress),
+		BaseURL:             envOr("REDGRES_BASE_URL", DefaultDevelopmentBaseURL),
+		BootstrapAddress:    envOr("REDGRES_BOOTSTRAP_ADDRESS", DefaultBootstrapAddress),
+		BootstrapTTL:        DefaultBootstrapTTL,
+		CloudflareTokenFile: envOr("REDGRES_CLOUDFLARE_TOKEN_FILE", ""),
+		TunnelTokenFile:     envOr("REDGRES_TUNNEL_TOKEN_FILE", ""),
+		SQLitePath:          envOr("REDGRES_SQLITE_PATH", DefaultSQLitePath),
+		SessionTTL:          DefaultSessionTTL,
+		AbsoluteSessionTTL:  DefaultAbsoluteSessionTTL,
+		CookieSecure:        envBoolDefaultFalse("REDGRES_COOKIE_SECURE"),
+		LogLevel:            strings.ToLower(envOr("REDGRES_LOG_LEVEL", DefaultLogLevel)),
 	}
 
 	var err error
@@ -98,6 +108,9 @@ func Load(args []string) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.AbsoluteSessionTTL, err = envDuration("REDGRES_ABSOLUTE_SESSION_TTL", DefaultAbsoluteSessionTTL); err != nil {
+		return Config{}, err
+	}
+	if cfg.BootstrapTTL, err = envDuration("REDGRES_BOOTSTRAP_TTL", DefaultBootstrapTTL); err != nil {
 		return Config{}, err
 	}
 	if v, err := envBool("REDGRES_COOKIE_SECURE"); err != nil {
@@ -111,6 +124,10 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&cfg.Environment, "environment", cfg.Environment, "runtime environment")
 	fs.StringVar(&cfg.Address, "address", cfg.Address, "listen address")
 	fs.StringVar(&cfg.BaseURL, "base-url", cfg.BaseURL, "public base URL")
+	fs.StringVar(&cfg.BootstrapAddress, "bootstrap-address", cfg.BootstrapAddress, "temporary first-run bootstrap listen address (empty disables)")
+	fs.DurationVar(&cfg.BootstrapTTL, "bootstrap-ttl", cfg.BootstrapTTL, "bootstrap auto-close hard cap")
+	fs.StringVar(&cfg.CloudflareTokenFile, "cloudflare-token-file", cfg.CloudflareTokenFile, "path to the per-zone Cloudflare API token file (server-side secret)")
+	fs.StringVar(&cfg.TunnelTokenFile, "tunnel-token-file", cfg.TunnelTokenFile, "path to the cloudflared tunnel token file (server-side secret)")
 	fs.StringVar(&cfg.SQLitePath, "sqlite-path", cfg.SQLitePath, "SQLite database path")
 	fs.DurationVar(&cfg.SessionTTL, "session-ttl", cfg.SessionTTL, "idle session TTL")
 	fs.DurationVar(&cfg.AbsoluteSessionTTL, "absolute-session-ttl", cfg.AbsoluteSessionTTL, "absolute session TTL")
@@ -256,6 +273,18 @@ func (c Config) validate() error {
 	if err := validateAddress(c.Address, c.Production()); err != nil {
 		return err
 	}
+	if err := validateBootstrapAddress(c.BootstrapAddress, c.Address); err != nil {
+		return err
+	}
+	if c.BootstrapTTL <= 0 {
+		return errors.New("REDGRES_BOOTSTRAP_TTL: must be positive")
+	}
+	if err := validateSecretFilePath(c.CloudflareTokenFile, "REDGRES_CLOUDFLARE_TOKEN_FILE", c.Production()); err != nil {
+		return err
+	}
+	if err := validateSecretFilePath(c.TunnelTokenFile, "REDGRES_TUNNEL_TOKEN_FILE", c.Production()); err != nil {
+		return err
+	}
 	if err := validateBaseURL(c.BaseURL, c.Production()); err != nil {
 		return err
 	}
@@ -294,6 +323,24 @@ func validateAddress(address string, production bool) error {
 	return nil
 }
 
+// validateBootstrapAddress validates the optional first-run bootstrap listener
+// (PRD OPS-008, ADR-012). Unlike REDGRES_ADDRESS it may bind a non-loopback
+// address: that is the deliberate, self-closing bootstrap exception, source-
+// restricted by the firewall rather than the bind. Empty disables bootstrap.
+func validateBootstrapAddress(address, mainAddress string) error {
+	if strings.TrimSpace(address) == "" {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || host == "" || port == "" {
+		return errors.New("REDGRES_BOOTSTRAP_ADDRESS: must be host:port")
+	}
+	if address == mainAddress {
+		return errors.New("REDGRES_BOOTSTRAP_ADDRESS: must differ from REDGRES_ADDRESS")
+	}
+	return nil
+}
+
 func validateBaseURL(raw string, production bool) error {
 	if strings.TrimSpace(raw) == "" {
 		return errors.New("REDGRES_BASE_URL: is required")
@@ -310,6 +357,24 @@ func validateBaseURL(raw string, production bool) error {
 	}
 	if !production && parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return errors.New("REDGRES_BASE_URL: must use http or https")
+	}
+	return nil
+}
+
+// validateSecretFilePath validates an optional server-side secret file path.
+// The value is a path, never the secret itself; errors never echo the value.
+func validateSecretFilePath(path, varName string, production bool) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	if strings.ContainsAny(path, "?#%") || strings.ContainsRune(path, 0) {
+		return errors.New(varName + ": must not contain URI reserved characters")
+	}
+	if production {
+		cleaned := pathpkg.Clean(strings.ReplaceAll(path, `\`, "/"))
+		if !strings.HasPrefix(cleaned, ProductionStateDirectory+"/") {
+			return errors.New(varName + ": production path must be under /var/lib/redgres")
+		}
 	}
 	return nil
 }
