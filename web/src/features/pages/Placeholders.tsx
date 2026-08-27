@@ -1,6 +1,7 @@
 import type { SectionId } from "../../nav";
 import AuditPage from "../audit/AuditPage";
 import DocsPage from "../docs/DocsPage";
+import DomainNetworkPage from "../domain/DomainNetworkPage";
 import OverviewPage from "../overview/OverviewPage";
 import DatabasesPage from "../postgres/DatabasesPage";
 import SecurityOverview from "../postgres/SecurityOverview";
@@ -62,6 +63,10 @@ export function SectionPage({
 
   if (section === "system") {
     return <SystemPage />;
+  }
+
+  if (section === "domain") {
+    return <DomainNetworkPage csrf={csrf} />;
   }
 
   if (section === "docs") {
