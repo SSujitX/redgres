@@ -24,7 +24,7 @@
 - Keep application authentication even behind Access; Cloudflare is an outer control, not the only login.
 - Trust forwarding headers only from the local tunnel path/configured proxy, never arbitrary internet clients.
 
-**First-run bootstrap ([ADR-012](decisions/ADR-012-ui-bootstrap.md)):** the Redgres console alone gets a temporary `0.0.0.0:8989` listener, source-restricted to the operator's IP, which auto-closes (rebind to `127.0.0.1:8790` + firewall-rule removal) once Tunnel + Access are verified. pgAdmin and RedisInsight never get a public listener.
+**First-run bootstrap ([ADR-012](decisions/ADR-012-ui-bootstrap.md)):** the Redgres console alone gets a temporary `0.0.0.0:8989` listener, source-restricted to the operator's IP. Domain & Network apply leaves bootstrap open under Access deny-by-default; the operator adds an Access allow email, confirms the console hostname is reachable through Tunnel + Access, then Redgres closes the bootstrap listener. Firewall-rule removal and loopback-only steady-state remain installer/ops follow-through. pgAdmin and RedisInsight never get a public listener.
 
 ### PostgreSQL
 
