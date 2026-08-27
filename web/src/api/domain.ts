@@ -4,6 +4,8 @@ export type DomainStatusPayload = {
   configured?: boolean;
   zone?: string;
   hostname?: string;
+  access?: string;
+  bootstrap_still_open?: boolean;
   request_id?: string;
 };
 
@@ -18,6 +20,9 @@ export type DomainApplyPayload = {
 
 export type DomainOkPayload = {
   ok?: boolean;
+  access?: string;
+  bootstrap_still_open?: boolean;
+  bootstrap_closed?: boolean;
   request_id?: string;
 };
 
@@ -40,6 +45,23 @@ export async function applyDomain(zone: string, hostname: string, csrf: string, 
     method: "POST",
     csrf,
     body: JSON.stringify({ zone, hostname }),
+  });
+}
+
+export async function setDomainAccessPolicy(emails: string[], csrf: string, init: RequestInit = {}) {
+  return apiRequest<DomainOkPayload & ApiErrorBody>("/api/v1/domain/access-policy", {
+    ...init,
+    method: "POST",
+    csrf,
+    body: JSON.stringify({ emails }),
+  });
+}
+
+export async function confirmDomainReachable(csrf: string, init: RequestInit = {}) {
+  return apiRequest<DomainOkPayload & ApiErrorBody>("/api/v1/domain/confirm-reachable", {
+    ...init,
+    method: "POST",
+    csrf,
   });
 }
 
