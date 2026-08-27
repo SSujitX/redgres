@@ -12,9 +12,19 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const webDirectory = path.resolve(scriptDirectory, "..");
 const repositoryDirectory = path.resolve(webDirectory, "..");
 const assetDirectory = path.join(repositoryDirectory, "internal", "web", "dist", "app");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const goCommand = process.platform === "win32" ? "go.exe" : "go";
 const viteEntry = path.join(webDirectory, "node_modules", "vite", "bin", "vite.js");
+const npmCliFromNode = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+
+const npmRunner = (() => {
+  if (process.platform === "win32" && process.env.npm_execpath) {
+    return { command: process.execPath, args: [process.env.npm_execpath] };
+  }
+  if (process.platform === "win32" && existsSync(npmCliFromNode)) {
+    return { command: process.execPath, args: [npmCliFromNode] };
+  }
+  return { command: process.platform === "win32" ? "npm.cmd" : "npm", args: [] };
+})();
 
 function runSetup(command, args, cwd) {
   const result = spawnSync(command, args, {
@@ -34,11 +44,11 @@ function runSetup(command, args, cwd) {
 
 if (!existsSync(viteEntry)) {
   console.log("Frontend dependencies are missing; running npm ci...");
-  runSetup(npmCommand, ["ci"], webDirectory);
+  runSetup(npmRunner.command, [...npmRunner.args, "ci"], webDirectory);
 }
 
 console.log("Building the frontend...");
-runSetup(npmCommand, ["run", "build"], webDirectory);
+runSetup(npmRunner.command, [...npmRunner.args, "run", "build"], webDirectory);
 
 const developmentEnvironment = {
   ...process.env,
