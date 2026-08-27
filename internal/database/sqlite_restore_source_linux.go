@@ -85,7 +85,13 @@ func copyBoundedSQLiteRestoreSource(
 	return size, hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-const requiredSQLiteRestoreSeals = unix.F_SEAL_WRITE | unix.F_SEAL_GROW | unix.F_SEAL_SHRINK | unix.F_SEAL_SEAL
+// requiredSQLiteRestoreSeals are the memfd seals applied to the restore
+// source. F_SEAL_WRITE is deliberately omitted: modernc.org/sqlite opens the
+// source connection read-write even for mode=ro, and a write seal makes that
+// open fail with EPERM. The source is only ever read (mode=ro) and the memfd
+// descriptor is process-private, so GROW/SHRINK/SEAL still prevent resize and
+// seal-set changes while remaining openable.
+const requiredSQLiteRestoreSeals = unix.F_SEAL_GROW | unix.F_SEAL_SHRINK | unix.F_SEAL_SEAL
 
 func sealAndVerifySQLiteRestoreSource(ctx context.Context, file *os.File, expectedSize int64, expectedDigest string) error {
 	if _, err := unix.FcntlInt(file.Fd(), unix.F_ADD_SEALS, requiredSQLiteRestoreSeals); err != nil {
