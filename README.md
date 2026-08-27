@@ -1,81 +1,155 @@
-# Redgres
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="web/public/assets/redgres-logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="web/public/assets/redgres-logo-light.png">
+    <img src="web/public/assets/redgres-logo-light.png" width="520" alt="Redgres self-hosted PostgreSQL and Redis control plane">
+  </picture>
+</p>
 
-**One secure control plane for PostgreSQL and Redis.**
+<h1 align="center">Redgres</h1>
 
-Redgres is a self-hosted Go/React administration console for one PostgreSQL cluster and one Redis instance. It is the migration successor to the local read-only reference systems `../database-app` and `../redis-ui`; production never depends on those repositories.
+<p align="center">
+  <strong>One secure control plane for PostgreSQL and Redis.</strong><br>
+  Self-hosted database administration for a single PostgreSQL cluster and Redis instance.
+</p>
 
-## Status
+<p align="center">
+  <a href="https://github.com/SSujitX/redgres/actions/workflows/ci.yml"><img alt="Redgres CI status" src="https://img.shields.io/github/actions/workflow/status/SSujitX/redgres/ci.yml?branch=master&style=flat-square&label=CI"></a>
+  <a href="https://github.com/SSujitX/redgres/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/SSujitX/redgres?style=flat-square&logo=github"></a>
+  <img alt="Project status: development partial" src="https://img.shields.io/badge/status-development--partial-f59e0b?style=flat-square">
+  <img alt="Self-hosted software" src="https://img.shields.io/badge/deployment-self--hosted-2563eb?style=flat-square">
+  <img alt="License pending" src="https://img.shields.io/badge/license-pending-6b7280?style=flat-square">
+</p>
 
-The repository contains substantial authenticated PostgreSQL/Redis administration, audit, UI, integration harnesses, and partial deployment/recovery code. It is **not production accepted**. The evidence-backed current matrix and limitations are in [docs/TRACEABILITY.md](docs/TRACEABILITY.md); planned behavior is not implementation evidence.
+<p align="center">
+  <img alt="Go 1.27.0" src="https://img.shields.io/badge/Go-1.27.0-00ADD8?style=for-the-badge&logo=go&logoColor=white">
+  <img alt="React 19.2.8" src="https://img.shields.io/badge/React-19.2.8-20232A?style=for-the-badge&logo=react&logoColor=61DAFB">
+  <img alt="TypeScript 7.0.2" src="https://img.shields.io/badge/TypeScript-7.0.2-3178C6?style=for-the-badge&logo=typescript&logoColor=white">
+  <img alt="PostgreSQL 17 and 18 compatibility targets" src="https://img.shields.io/badge/PostgreSQL-17%20%7C%2018-4169E1?style=for-the-badge&logo=postgresql&logoColor=white">
+  <img alt="Redis 8.2 and 8.8 compatibility targets" src="https://img.shields.io/badge/Redis-8.2%20%7C%208.8-DC382D?style=for-the-badge&logo=redis&logoColor=white">
+</p>
 
-Do not retire either legacy console until every gate in [docs/MIGRATION.md](docs/MIGRATION.md) and [docs/ACCEPTANCE_CHECKLIST.md](docs/ACCEPTANCE_CHECKLIST.md) passes on authorized staging/production infrastructure.
+Redgres is a self-hosted Go and React administration console for securely managing one PostgreSQL cluster and one Redis instance. It combines PostgreSQL project database provisioning, Redis ACL user management, credential-safe workflows, audit history, health monitoring, and protected links to expert tools in one operator-focused interface.
 
-## Develop
+> [!WARNING]
+> Redgres is under active development and is **not production accepted**. Do not retire an existing database console until the migration, recovery, compatibility, staging, and production gates are complete. See the evidence-backed [implementation matrix](docs/TRACEABILITY.md) and [acceptance checklist](docs/ACCEPTANCE_CHECKLIST.md).
 
-Required versions are pinned in `go.mod`, `web/.nvmrc`, and lockfiles.
+## Features
 
-```powershell
-npm --prefix web ci
-npm --prefix web run build
-go test ./...
-go vet ./...
+- Manage PostgreSQL project databases and least-privilege project roles.
+- Inspect schemas, tables, bounded row data, connections, and database security state.
+- Issue, reveal, and rotate PostgreSQL credentials through the legacy-compatible encrypted vault.
+- Create and manage Redis ACL users with explicit command allow-lists and key-prefix isolation.
+- Review secret-safe audit history and PostgreSQL, PgBouncer, Redis, and control-plane health.
+- Use a responsive React interface with authenticated search and links to pgAdmin and RedisInsight.
+- Build one Go binary with the production frontend embedded.
+- Follow deterministic installer, backup, verification, update, and rollback contracts as they become accepted.
+
+## Quick start: clone, build, and run Redgres
+
+### Prerequisites
+
+- [Git](https://git-scm.com/)
+- [Go 1.27.0](https://go.dev/)
+- [Node.js 24.19.0](https://nodejs.org/) with npm
+
+PostgreSQL and Redis are optional for interface development. Without service configuration, Redgres starts and reports those dependencies as unavailable.
+
+### 1. Clone the repository
+
+```shell
+git clone https://github.com/SSujitX/redgres.git
+cd redgres
 ```
 
-Create a development owner once:
+### 2. Install frontend dependencies and build
 
-```powershell
+```shell
+npm --prefix web ci
+npm --prefix web run build
+go build ./cmd/redgres
+```
+
+The frontend build is embedded into the Go application. Required versions are pinned in `go.mod`, `web/.nvmrc`, and the lockfiles.
+
+### 3. Create a local development owner
+
+```shell
 go run ./cmd/redgres create-owner --username admin
 ```
 
-Run the embedded API/UI development stack:
+Enter the owner password only at the secure interactive prompt. Do not place passwords, tokens, connection URLs, or private keys in `.env`, command arguments, logs, commits, or browser storage.
 
-```powershell
+### 4. Run the embedded API and web interface
+
+```shell
 npm --prefix web run dev:full
 ```
 
-Open <http://127.0.0.1:8989>. Stop with `Ctrl+C`. A frontend rebuild briefly clears embedded assets; refresh after Vite finishes.
+Open <http://127.0.0.1:8989>. Stop the development stack with `Ctrl+C`. A frontend rebuild briefly clears the embedded assets; refresh after Vite finishes.
 
-Frontend-only HMR uses two terminals:
+## Development usage
+
+### Frontend hot module replacement
+
+Run the Go API and Vite frontend in separate terminals.
+
+Terminal 1 — PowerShell:
 
 ```powershell
 $env:REDGRES_BASE_URL = "http://127.0.0.1:5173"
 go run ./cmd/redgres serve
 ```
 
-```powershell
+Terminal 2:
+
+```shell
 npm --prefix web run dev
 ```
 
-Open <http://127.0.0.1:5173>. Vite proxies `/api` to the local Go process.
+Open <http://127.0.0.1:5173>. Vite proxies `/api` requests to the local Go process.
 
-Development without PostgreSQL/Redis configuration is supported for shell work; dependent pages report unavailable. Configure secrets only through the documented credential-file settings in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). Never put passwords, tokens, or private keys in `.env`, command lines, logs, commits, or browser storage.
+### Run tests and production builds
 
-## Product boundary
+```shell
+go test ./...
+go vet ./...
+npm --prefix web run test:run
+npm --prefix web run build
+```
 
-Redgres provides:
+Browser tests require Playwright Chromium:
 
-- PostgreSQL project database/role lifecycle, bounded inspection, credentials, duplication, and guarded destructive workflows;
-- Redis ACL user lifecycle with explicit command allow-lists and key-prefix isolation;
-- owner authentication, audit, health, search, and protected expert-tool links;
-- deterministic installer, backup, verification, update, and rollback workflows as they become accepted.
+```shell
+npm --prefix web exec -- playwright install chromium
+npm --prefix web run test:e2e
+```
 
-Redgres is not a public DBaaS, SQL workbench, Redis key browser, Kubernetes operator, fleet manager, or replacement for pgAdmin/RedisInsight.
+## Product scope
+
+Redgres is designed for one trusted owner operating one PostgreSQL cluster and one Redis instance. It is a focused self-hosted control plane—not a public DBaaS, SQL workbench, Redis key browser, Kubernetes operator, fleet manager, or replacement for pgAdmin and RedisInsight.
+
+The browser never connects directly to PostgreSQL or Redis. Browser/admin origins bind to loopback and are intended to be reached through Cloudflare Tunnel and Access; native PostgreSQL and Redis clients use separate end-to-end TLS endpoints. Read [Security](docs/SECURITY.md), [Deployment](docs/DEPLOYMENT.md), and [Domain and network](docs/DOMAIN_AND_NETWORK.md) before planning a real deployment.
 
 ## Documentation
 
-Start with [docs/INDEX.md](docs/INDEX.md). Key entry points:
+Start with the [documentation index](docs/INDEX.md). Key references:
 
-- [AGENTS.md](AGENTS.md) — compact agent safety, routing, and completion contract;
-- [docs/PRD.md](docs/PRD.md) — requirements and acceptance criteria;
-- [docs/TRACEABILITY.md](docs/TRACEABILITY.md) — current implementation/test evidence;
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — component and data-flow contracts;
-- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) — exact supported service matrix;
-- [docs/SECURITY.md](docs/SECURITY.md) — threat model and controls;
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — target runtime/topology;
-- [docs/CURSOR_WORKFLOW.md](docs/CURSOR_WORKFLOW.md) — local agent orchestration.
+- [Project requirements](docs/PRD.md)
+- [Architecture and data flow](docs/ARCHITECTURE.md)
+- [Current implementation and test evidence](docs/TRACEABILITY.md)
+- [Supported compatibility matrix](docs/COMPATIBILITY.md)
+- [Security architecture](docs/SECURITY.md)
+- [Configuration reference](docs/CONFIGURATION.md)
+- [Deployment topology](docs/DEPLOYMENT.md)
+- [Installer specification](docs/INSTALLER_SPEC.md)
+- [Backup and recovery](docs/BACKUP_RECOVERY.md)
+- [Contributing guide](CONTRIBUTING.md)
 
-Cursor users open `Redgres.code-workspace` and run `/start-redgres`. The workflow may create reviewed local commits, but it never pushes or changes production/DNS/Cloudflare without separate explicit authorization.
+## Project status and license
 
-## License and name
+Redgres is the migration successor to the local read-only reference systems `../database-app` and `../redis-ui`; production does not depend on those repositories. Current requirements remain Partial until their documented acceptance evidence is complete.
 
-Apache-2.0 is the recommended project license. Vendored agent skills retain their upstream notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The Redgres name is not represented as legally cleared.
+No project license has been declared yet. Apache-2.0 is the recommended license, but the repository must not be represented as Apache-2.0 until a license file is approved and added. Vendored agent skills retain their upstream notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The Redgres name has not been represented as legally cleared.
+
+Cursor users can open `Redgres.code-workspace` and run `/start-redgres`. The workflow may create reviewed local commits, but it never pushes or changes production, DNS, Cloudflare, or secrets without separate explicit authorization.
