@@ -4,6 +4,7 @@ import { useFocusTrap } from "../../hooks/useFocusTrap";
 import type { ToolLinks } from "../../api/auth";
 import { errorMessage, fetchStatus, isStatusPayload, type StatusComponent } from "../../api/status";
 import Icon from "../icons";
+import BrandLogo from "../BrandLogo";
 import NavigationSearch from "../search/NavigationSearch";
 import OverviewPage from "../../features/overview/OverviewPage";
 import DatabasesPage from "../../features/postgres/DatabasesPage";
@@ -188,11 +189,7 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
       <div className="shell-content" inert={drawerOpen || searchOpen}>
         <aside className="app-sidebar" aria-label="Redgres">
           <div className="brand">
-            <div className="service-rail" aria-hidden="true">
-              <span className="service-rail-postgres" />
-              <span className="service-rail-redis" />
-            </div>
-            <p className="brand-name">Redgres</p>
+            <BrandLogo />
           </div>
           {nav}
           <div className="sidebar-footer">
