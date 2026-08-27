@@ -1123,6 +1123,8 @@ describe("App session and login", () => {
     render(<App />);
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Redgres" })).toBeInTheDocument();
+    expect(document.querySelector(".brand-logo-light")).toHaveAttribute("src", "/assets/redgres-logo-light.png");
+    expect(document.querySelector(".brand-logo-dark")).toHaveAttribute("src", "/assets/redgres-logo-dark.png");
     expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
     expect(screen.queryByText(/reachable/i)).not.toBeInTheDocument();
     expect(fetch.mock.calls.every((call) => !String(call[0]).includes("/api/v1/healthz"))).toBe(true);
@@ -1155,6 +1157,10 @@ describe("App session and login", () => {
     });
     render(<App />);
     expect(await screen.findByRole("button", { name: "admin" })).toBeInTheDocument();
+    expect(document.querySelector(".app-sidebar .brand-logo-light")).toHaveAttribute(
+      "src",
+      "/assets/redgres-logo-light.png",
+    );
     expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
   });
 
@@ -4874,7 +4880,7 @@ describe("App session and login", () => {
     fireEvent.click(await screen.findByRole("button", { name: /project_a/ }));
     fireEvent.click(await screen.findByRole("button", { name: /Schema public Table items/ }));
     expect(await screen.findByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
-    expect(document.querySelector("img")).toBeNull();
+    expect(document.querySelector('img[src="x"]')).toBeNull();
     fireEvent.change(screen.getByLabelText("Search rows"), { target: { value: "tokenish" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     expect(window.location.href).toBe(hrefBefore);
@@ -7397,7 +7403,7 @@ describe("App session and login", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open menu" }));
     fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Audit" }));
     expect(await screen.findAllByText("<img src=x onerror=alert(1)>")).not.toHaveLength(0);
-    expect(document.querySelector("img")).toBeNull();
+    expect(document.querySelector('img[src="x"]')).toBeNull();
   });
 
   it("renders the stored created_at string with a UTC marker (AC-7)", async () => {
