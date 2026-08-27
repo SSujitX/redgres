@@ -115,7 +115,7 @@ Expect Access challenge / deny until a policy exists — that still proves the t
 
 ### 6. Access policy (required for browser login)
 
-Apply creates an Access **application** only. Add an allow policy (email / IdP) in Zero Trust for that hostname before treating the domain as usable. Bootstrap `:8989` stays open until you confirm console reachability (later OPS-009 step).
+Apply creates an Access **application** only (deny by default). Use Domain & Network steps **Access allow policy** then **Console is reachable — close bootstrap** (`POST /api/v1/domain/access-policy`, `POST /api/v1/domain/confirm-reachable`) before treating the domain as steady-state. Bootstrap `:8989` stays open until confirm succeeds (or the hard-cap TTL fires).
 
 ### 7. Firewall
 
