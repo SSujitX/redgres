@@ -34,15 +34,29 @@ type redisHealth interface {
 }
 
 type Server struct {
-	cfg        config.Config
-	db         *sql.DB
-	assets     fs.FS
-	log        *slog.Logger
-	audit      audit.Store
-	operations operations.Store
-	postgres   postgresadmin.Inventory
-	redis      redisHealth
-	cloudflare cloudflare.Client
+	cfg             config.Config
+	db              *sql.DB
+	assets          fs.FS
+	log             *slog.Logger
+	audit           audit.Store
+	operations      operations.Store
+	postgres        postgresadmin.Inventory
+	redis           redisHealth
+	cloudflare      cloudflare.Client
+	bootstrapCloser bootstrapCloser
+}
+
+// bootstrapCloser is the optional first-run public listener (OPS-008).
+type bootstrapCloser interface {
+	Open() bool
+	Close() error
+	Shutdown(ctx context.Context) error
+}
+
+// SetBootstrapCloser wires the temporary bootstrap listener so domain confirm
+// can close it. Nil means bootstrap is not configured.
+func (s *Server) SetBootstrapCloser(c bootstrapCloser) {
+	s.bootstrapCloser = c
 }
 
 func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger, postgres postgresadmin.Inventory, redis redisHealth) *Server {
@@ -84,6 +98,8 @@ func (s *Server) Handler() http.Handler {
 	r.With(s.requireSession, s.requireCapability("platform.network")).Get("/api/v1/domain", s.handleDomainGet)
 	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/token", s.handleDomainTokenSet)
 	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/apply", s.handleDomainApply)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/access-policy", s.handleDomainAccessPolicy)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/confirm-reachable", s.handleDomainConfirmReachable)
 	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Delete("/api/v1/domain", s.handleDomainDisconnect)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/status", s.handleRedisStatus)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/presets", s.handleRedisPresets)
