@@ -33,9 +33,11 @@ var allowedMetadataKeys = map[string]map[string]struct{}{
 	"postgres.rows.delete":        keySet("database", "schema", "table", "deleted"),
 	"postgres.database.truncate":  keySet("database", "truncated", "total_tables"),
 	"postgres.database.drop":      keySet("database", "owner", "dropped_role"),
-	"domain.token.set":           keySet("configured"),
-	"domain.apply":               keySet("zone", "hostname_count"),
-	"domain.disconnect":          keySet("zone"),
+	"domain.token.set":            keySet("configured"),
+	"domain.apply":                keySet("zone", "hostname_count"),
+	"domain.access.allow":         keySet("email_count"),
+	"domain.confirm_reachable":    keySet("bootstrap_closed"),
+	"domain.disconnect":           keySet("zone"),
 }
 
 type Event struct {
