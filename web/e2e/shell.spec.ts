@@ -121,10 +121,12 @@ test.describe("responsive navigation", () => {
     expect(width).toBeLessThanOrEqual(80);
     expect(width).toBeGreaterThanOrEqual(60);
 
-    // Brand name should be visually hidden (sr-only) at icon rail width
-    const brandName = shellPage.locator(".brand-name");
-    const brandClip = await brandName.evaluate((el) => getComputedStyle(el).clip);
-    expect(brandClip).toBe("rect(0px, 0px, 0px, 0px)");
+    // The full wordmark remains visible but scales to the narrow icon rail.
+    const brandLogo = shellPage.locator(".app-sidebar .brand-logo");
+    await expect(brandLogo).toBeVisible();
+    const brandWidth = await brandLogo.evaluate((el) => el.getBoundingClientRect().width);
+    expect(brandWidth).toBeLessThanOrEqual(52);
+    expect(brandWidth).toBeGreaterThanOrEqual(44);
 
     // Navigation items should exist and be accessible
     const nav = shellPage.getByRole("navigation", { name: "Primary" });
@@ -159,9 +161,12 @@ test.describe("responsive navigation", () => {
     await expect(nav.getByRole("button", { name: "System" })).toBeVisible();
     await expect(nav.getByRole("button", { name: "Documentation" })).toBeVisible();
 
-    // Brand name should be visible
-    const brandName = shellPage.locator(".brand-name");
-    await expect(brandName).toBeVisible();
+    // The full wordmark should be visible without a separate text label.
+    const brandLogo = shellPage.locator(".app-sidebar .brand-logo");
+    await expect(brandLogo).toBeVisible();
+    const brandWidth = await brandLogo.evaluate((el) => el.getBoundingClientRect().width);
+    expect(brandWidth).toBeGreaterThanOrEqual(150);
+    expect(brandWidth).toBeLessThanOrEqual(170);
 
     // Hamburger menu should be hidden
     const menuButton = shellPage.locator(".drawer-toggle");
