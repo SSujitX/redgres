@@ -1,106 +1,108 @@
-# AGENTS.md — mandatory Redgres context
+# AGENTS.md — Redgres operating contract
 
-This file governs all work in this repository. Read it completely before planning or editing. Then read [docs/INDEX.md](docs/INDEX.md) and the documents it marks as required for your task.
+This file is always loaded. Keep it compact; detailed truth belongs in routed canonical documents.
 
-Repository-local engineering skills are vendored under `.agents/skills`. Read [.agents/README.md](.agents/README.md) before invoking their tracker-based workflows. Their one-time repository setup is not complete until `setup-matt-pocock-skills` creates the required `docs/agents/` configuration.
+## Bootstrap
 
-## Current truth
+Before planning or editing:
 
-Redgres has a compiling Wave 0 foundation, owner auth, a browser login/shell, read-only PostgreSQL inventory (API + Databases page), a table-list API plus inspector list, a bounded row-browse API, inspector row paging/search, authenticated cluster security overview (`GET /api/v1/postgres/security` plus Security overview page; protected non-template names included; `saved_credential` is vault role existence — details `present`/`missing`/`not_available`, cluster `ok` plus `missing_password_count`; `rotation_eligible` derived on cluster GET and shown as Yes/No; Security overview has no Rotate; POST reveal is Databases inspector only, not Security overview; POST create is Databases header/nav only, not Security overview), paginated audit history, Overview component status (Redis Ping on `GET /api/v1/status` plus metrics on `GET /api/v1/redis/status`; compact Overview Recent audit from `GET /api/v1/audit?limit=8` When/Action/Target/Outcome only; configured Redis Open probes `INFO server` (`redis_version`) and fail-closes on unsupported/prerelease/8.10/expected-series mismatch (`REDGRES_REDIS_EXPECTED_SERIES` Implemented; `internal/release` allow-list 17|18 and 8.2|8.8); GET `/status` remains Ping-only; PgBouncer `SHOW VERSION` Ping on `GET /api/v1/status`, version discarded; default without `REDGRES_POSTGRES_POOLED_PORT` is `not_configured`; optional pgAdmin/RedisInsight hrefs on `GET /api/v1/session` and Overview, `GET /status` `tool_links` is config presence and is never fetched; System page paints the same five GET `/api/v1/status` cards without Redis metrics, tool-link hrefs, host/DSN, or a version line; Documentation is a curated in-app catalog plus client `filterDocs` search hits (no deep links, no docs HTTP API)), authenticated bounded global search (PostgreSQL names + non-protected Redis ACL usernames + client navigation), Redis ACL list/inspect (`GET /api/v1/redis/users` and username detail + ACL users page), create isolated ACL users (`POST /api/v1/redis/users`, always `on`, named preset `cache-read-write` / `read-only` / `queue-worker` or custom allow-list `commands` ⊆ `AllowedCommands()`, one-time credential ticket), `GET /api/v1/redis/presets` (static named-preset catalog, no Redis call; Permission presets page consumes that GET), `GET /api/v1/redis/commands` (static `AllowedCommands()` allow-list, no Redis call), named-preset PATCH (`PATCH /api/v1/redis/users/{username}`, prefix/grants only, password preserved), custom allow-list PATCH (`preset: custom` plus `commands` ⊆ `AllowedCommands()`, Edit permissions Custom checklist), inspector enable/disable (`POST /api/v1/redis/users/{username}/enable` and `/disable`, `on`/`off` only), rotate (`POST /api/v1/redis/users/{username}/credentials/rotate`, `resetpass` + `>password` only, one-time ticket), and delete (`DELETE /api/v1/redis/users/{username}`: session + `redis.destructive` + CSRF, exact `username_confirmation`, in-handler owner reauth, `ACL LIST` then one `ACL DELUSER`; inspector Delete danger dialog). Redis Ping, INFO/DBSIZE/Ping-RTT metrics, ACL LIST parse, `ACLSetUser` create (named and custom), on/off, rotate, named-preset PATCH, custom allow-list PATCH, and `ACLDelUser` exist when a URL file is configured; AUTH-006 is Redis DELETE plus flagged PostgreSQL row DELETE plus flagged PostgreSQL truncate plus flagged PostgreSQL drop (no `POST /api/v1/auth/reauth`); the adapter is not a full ACL admin (no CLIENT KILL, keys are not deleted). In-process Fernet/KDF compatibility exists in `internal/secrets` against committed Python `cryptography==49.0.0` fixtures (no TTL). HTTP vault existence SQL is `Catalog.SavedRoleNames` (`role_name` only). Authenticated `GET /api/v1/postgres/databases/{db}/connection` returns vault existence plus omitted-or-present masked direct/pooled URLs (`sslmode=require`; public host/ports only; no decrypt). `POST /api/v1/postgres/databases/{db}/connection/reveal` (session + `postgres.credentials` + CSRF) SELECTs `encrypted_password`, decrypts with `internal/secrets` after Open loads optional `REDGRES_LEGACY_VAULT_SECRET_FILE` (derived Fernet key on the service), returns a no-store credential payload (`one_time: false`), and is audited as `postgres.credential.reveal` with metadata `database` and `owner` only; inspector Reveal opens a PostgreSQL vault-repeatable ticket. `POST /api/v1/postgres/databases` (session + `postgres.provision` + CSRF) creates a restricted login (`CONNECTION LIMIT 20`), encrypts the generated password with `secrets.Encrypt`, INSERTs the vault row, always returns **202** after `InsertQueued` (no credential; never waits for TEMPLATE); worker `RunQueuedDuplicates` (15m `operations.MaxRuntime`) performs the clone and vault INSERT, and success-audits `postgres.database.duplicate` with metadata `database`, `owner`, `source`, and `operation_id`; `cmd/redgres` runs `postgresadmin.Open` then `Reconcile(live Probe, Compensator)` then a 1s `ListQueued` poller; inspector Duplicate (not `--danger`) discloses connection termination then **202** polls `GET /api/v1/operations/{id}` every 1s with no ticket and no auto-Reveal; nav `postgres-create` during that poll is consumed and does not open Create after the poll finishes; Security overview has no Duplicate; AUTH-006 does not apply. Authenticated `GET /api/v1/postgres/databases/{db}/tables/{schema}/{table}/primary-key` (session + `postgres.read`, no CSRF, no flag) confirms BASE TABLE then returns `{ primary_key, request_id }` from parameterized `information_schema` PK join (none `[]`; composite returns all names). `DELETE /api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` (session + `postgres.destructive` + CSRF; `REDGRES_FEATURE_POSTGRES_ROW_DELETE` via `envBool`, unset false) requires exact `table_confirmation` and in-handler owner reauth, discovers a single-column PK server-side, and runs parameterized `DELETE … WHERE pk IN ($1…)`; flag off is 403 `Row delete is turned off.` before JSON decode (no audit, no PostgreSQL); `primary_key_column` is an unknown field; inspector checkboxes appear only for a single-column primary key; danger **Delete selected** opens a typed-confirmation owner-password dialog (`role=dialog`, title **Delete selected rows**); flag-off still shows the control and announces **Row delete is turned off.**; Search / login / Security overview never DELETE rows. `POST /api/v1/postgres/databases/{db}/truncate` (session + `postgres.destructive` + CSRF; `REDGRES_FEATURE_POSTGRES_TRUNCATE` via `envBool`, unset false) lists BASE TABLEs then runs one `TRUNCATE TABLE … RESTART IDENTITY` (no `CASCADE`, no `ONLY`); flag off is 403 `Truncate is turned off.` before JSON decode (no audit, no PostgreSQL); AUTH-006 is in-handler `owner_password`; inspector danger **Truncate** (not rotation-eligible gated) opens a typed-confirmation owner-password dialog (`role=dialog`, title **Truncate project data**); flag-off still shows the control and announces **Truncate is turned off.**; Search / login / Security overview never POST truncate. `DELETE /api/v1/postgres/databases/{db}` (session + `postgres.destructive` + CSRF; `REDGRES_FEATURE_POSTGRES_DROP` via `envBool`, unset false) terminates other backends then runs quoted `DROP DATABASE` (no `WITH (FORCE)`); optional `DROP ROLE` + vault DELETE only when the owner is not protected and owns zero databases; flag off is 403 `Drop is turned off.` before JSON decode (no audit, no PostgreSQL); AUTH-006 is in-handler `owner_password`; backup freshness HTTP gate is `backup.LoadCurrent` + `EvaluateDropGate` after AUTH-006 and before terminate/`DROP DATABASE` (unset catalog `503` **Backup catalog is not configured.**; deny `403` with evaluator reason; no live dump/copy/restore); inspector danger **Drop** (distinct from Truncate) opens a typed-confirmation owner-password dialog (`role=dialog`, title **Drop database**); flag-off still shows the control and announces **Drop is turned off.**; HTTP 200 refreshes the list and clears inspector selection; Search / login / Security overview never DELETE a database. `internal/secrets` Encrypt is the Fernet inverse of Decrypt (no TTL, no new module). Fail-closed `deploy/install.sh` dispatcher prints a `--dry-run` stage plan and inventories PATH host `--version` for existing PostgreSQL/Redis/PgBouncer (OPS-001/002/006 Partial; no packages, no SQL SHOW/INFO). Fail-closed `deploy/install.sh verify --non-interactive --dry-run --config PATH` prints a skip matrix (`result=partial`; never sources config, never mutates, never probes DNS/Cloudflare/public TLS/healthz/status; OPS-003 Partial, not Complete). Fail-closed `deploy/install.sh update --non-interactive --dry-run --release PATH` and `rollback --non-interactive --dry-run --to VERSION` print skip matrices (`result=partial`; never source/extract, never mutate `/opt/redgres`, never probe healthz; OPS-005 Partial, not Complete). Fail-closed `deploy/install.sh postgres-plan --config PATH --extension-plan PATH` is a read-only extension-plan validator (policy preserve|apply-selected, capability IDs from the release-owned registry, explicit non-empty identifier-safe databases never protected/template1 or empty-string elements, pg_cron selects exactly one control database, optional pg_partman-only scheduler; malformed JSON, unknown capabilities, protected/empty/empty-string databases, scheduler misuse, and two distinct schedulers fail closed exit 1; prints plan preview + skip matrix `result=partial`; never sources `--config`, never mutates, never resolves packages/preload/restart; `postgres-extensions apply --non-interactive --dry-run` validates the same plan and prints an apply skip matrix (`result=partial`; live apply without `--dry-run` exits 2); a main install `--dry-run` also validates an optional `--extension-plan` with the same rules; subcommand `--help` exits 0; OPS-007 Partial, not Complete). Fail-closed `deploy/install.sh backup --non-interactive --dry-run --config PATH` prints a skip matrix (`result=partial`; never sources `--config`, never invokes pg_dump/pg_dumpall/pg_restore, Redis BGSAVE/LASTSAVE, SQLite online backup, checksums, pruning, or off-host copy; no manifest written; live backup is installer-recovery; OPS-004 Partial, not Complete). Skippable `integration/` live tests and a Playwright login harness exist for disposable CI; the GHA `integration` job is four digest-pinned §8 cells (not COMPATIBILITY.md §6, not production). SQLite `migrations/002_operations.sql` creates `operations` and `operation_locks` (ADR-010). Frozen types live in `internal/operations/types.go` and `internal/backup/types.go`. `backup.ParseManifest` and `backup.EvaluateDropGate` exist; HTTP DROP calls `LoadCurrent` / `EvaluateDropGate`. GET `/api/v1/operations/{id}` is session + `platform.read` (implemented). Duplicate POST is **202 after InsertQueued**. Startup Reconcile runs after `postgresadmin.Open` with live Probe and Compensator, then a 1s `ListQueued` poller. `REDGRES_BACKUP_CATALOG` is loaded; HTTP DROP evaluates jail-root `current.json`. Target documentation is not evidence that remaining OPS/install/cutover features exist.
+1. Read this file and `CONTEXT.md`. Read `docs/PROJECT_CHARTER.md` for product scope/acceptance decisions; use `docs/INDEX.md` only when the routing table does not cover the task.
+2. Inspect Git status/diff and preserve unrelated or user-owned changes.
+3. Read the applicable row and latest slice in `docs/TRACEABILITY.md`; target prose is never implementation evidence.
+4. Identify the governing PRD IDs, acceptance criteria, invariants, and ADRs.
+5. Load only the task-relevant documents below. For large documents, locate the relevant heading or endpoint first; read the whole file only for a genuinely cross-cutting change.
 
-Current DROP artifact-integrity truth: `postgresadmin.DropAfterValidation` acquires the target lock and validates manageability before the HTTP backup callback. The callback runs `backup.LoadCurrent`, `backup.EvaluateDropGate`, and `backup.VerifyPostgresDatabaseArtifact`; the service then re-reads target policy immediately before destructive SQL. Verification requires exactly one matching artifact, streams the existing jailed regular file, rechecks identity, and verifies real size plus lowercase SHA-256. Protected/missing targets collapse to 404 before backup I/O; verification failures are secret-safe 503 responses with no terminate/drop calls. This is OPS-004 / PG-011 Partial; the backup CLI still does not create the required artifacts or evidence.
+`README.md` is human setup/run guidance, not mandatory agent context. Historical slice ledgers are Git history referenced by `docs/TRACEABILITY.md`, not always-loaded prose.
 
-Current SQLite recovery truth: `database.CaptureSQLiteSnapshot` creates one standalone online backup from an already-open SQLite database inside an identity-pinned operation-private directory under an existing private staging root. On Unix it requires the root to be owned by the effective user with mode `0700`, requires every ancestor to be owned by root or the effective user, and rejects non-sticky group/other-writable ancestry. It verifies the driver's pathname-reopened destination before the first copy step, checks cancellation between bounded steps, requires an independent `PRAGMA integrity_check` result of exactly `ok` between two matching size/SHA-256 passes, and returns the final regular file's exact size plus lowercase SHA-256. Cleanup identity-checks the main target and removes only files inside the generated operation directory. `database.VerifySQLiteSnapshotRestore` accepts only that producer namespace and snapshots no larger than 512 MiB. On production Linux it copies and hashes the pinned bytes into a write/grow/shrink/seal-protected `memfd`, verifies the complete seal set, and re-hashes the frozen descriptor before binding the driver's read-only source through `/proc/self/fd`; non-Linux behavior is development-only. It restores into one fresh connection-owned in-memory database, validates integrity, foreign keys, the bounded exact embedded migration set, and six control-table counts, then discards the destination; source identity and size/SHA-256 must remain unchanged. Neither function is wired to the backup CLI, publishes a manifest, prunes, copies off-host, or provides production restore acceptance; OPS-004 and NFR-010 remain Partial.
+Before any tracker-based vendored skill, read `.agents/README.md`; its setup is incomplete until the required `docs/agents/` configuration exists.
 
-Agent turns follow `.cursor/rules/06-continuous-orchestration.mdc`: recover unfinished work, then continue the next dependency-ready PRD slice without asking. `/start-redgres` is the explicit human command for a new chat; the loop does not wait for it.
+## Current boundary
 
-The two source systems are local sibling repositories:
+Redgres is a self-hosted control plane for one PostgreSQL cluster and one Redis instance. Version 1 has one owner and is neither a public DBaaS nor a replacement for pgAdmin/RedisInsight.
 
-| Source | Local path | Role |
-|---|---|---|
-| PostgreSQL console | `D:\code\github\database-app` | Behavioral reference for PostgreSQL operations and the existing credential vault |
-| Redis console | `D:\code\github\redis-ui` | Preferred Go/React foundation for Redgres auth, sessions, audit, API shape, and Redis ACL management |
+The current implementation matrix is `docs/TRACEABILITY.md`. The codebase has substantial authenticated PostgreSQL/Redis administration and UI behavior, but every requirement group remains Partial; installer, recovery, complete compatibility evidence, staging, Cloudflare/DNS/TLS/firewall, canary observation, and production sign-off are not accepted. Documentation describing a target does not make it implemented.
 
-Local paths are development references only. Production Redgres must not import, execute, or depend on files from those directories. The repositories may change independently; record the reviewed commit IDs in [docs/SOURCE_BASELINE.md](docs/SOURCE_BASELINE.md) before implementation begins.
+Read-only behavioral references:
 
-## Required reading by task
+| System | Path |
+|---|---|
+| PostgreSQL console | `D:\\code\\github\\database-app` |
+| Redis console | `D:\\code\\github\\redis-ui` |
 
-- Any task: `README.md`, this file, `docs/INDEX.md`, `docs/PROJECT_CHARTER.md`.
-- Product or UI: `.agents/skills/redgres-ui-design/SKILL.md`, `docs/PRD.md`, `docs/UX.md`, `docs/UI_DESIGN_SYSTEM.md`, `docs/DOMAIN_AND_NETWORK.md`, `docs/API.md`.
-- Backend: `docs/ARCHITECTURE.md`, `docs/COMPATIBILITY.md`, `docs/SOURCE_SYSTEMS.md`, `docs/DATA_AND_SECRETS.md`, `docs/SECURITY.md`.
-- Deployment/operations: `docs/COMPATIBILITY.md`, `docs/DEPLOYMENT.md`, `docs/INSTALLER_SPEC.md`, `docs/POSTGRESQL_PROVISIONING.md`, `docs/BACKUP_RECOVERY.md`, `docs/OPERATIONS.md`.
-- Migration/cutover: `docs/MIGRATION.md`, `docs/TESTING.md`, every ADR in `docs/decisions/`.
+Never edit those repositories or make Redgres depend on them. Pin reviewed source commits in `docs/SOURCE_BASELINE.md`.
+
+## Context routing
+
+| Change | Read |
+|---|---|
+| Product behavior/acceptance | relevant `docs/PRD.md` requirement; `docs/TRACEABILITY.md` |
+| HTTP endpoint | relevant `docs/API.md` endpoint; `docs/ARCHITECTURE.md`; security docs when sensitive |
+| Go/backend/data flow | relevant `docs/ARCHITECTURE.md`; `docs/COMPATIBILITY.md`; `docs/SOURCE_SYSTEMS.md` only for parity |
+| Secrets/auth/destructive actions | `docs/SECURITY.md`; `docs/DATA_AND_SECRETS.md`; governing ADR |
+| React/UI | `.agents/skills/redgres-ui-design/SKILL.md`; relevant `docs/UX.md`, `docs/UI_DESIGN_SYSTEM.md`, and API endpoint |
+| Deployment/installer | relevant `docs/INSTALLER_SPEC.md`, `docs/DEPLOYMENT.md`, `docs/CONFIGURATION.md`, `docs/COMPATIBILITY.md` |
+| PostgreSQL lifecycle/extensions | `docs/POSTGRESQL_PROVISIONING.md`; ADR-009 |
+| Backup/recovery | `docs/BACKUP_RECOVERY.md`; `docs/OPERATIONS.md`; ADR-011 and ADR-005 as applicable |
+| Migration/cutover | `docs/MIGRATION.md`; `docs/TESTING.md`; affected ADRs only |
+| Test/release evidence | relevant `docs/TESTING.md`; `docs/ACCEPTANCE_CHECKLIST.md`; `docs/TRACEABILITY.md` |
+
+`docs/INDEX.md` is the full catalog. Do not preload the catalog.
 
 ## Non-negotiable invariants
 
-1. Never expose the Redgres, pgAdmin, RedisInsight, or legacy UI origin ports publicly. They bind to loopback and are reached through Cloudflare Tunnel + Access.
-2. Cloudflare Tunnel does not proxy ordinary PostgreSQL or Redis clients in this design. Raw database endpoints use DNS-only records and end-to-end TLS.
-3. Never log, audit, cache, persist in browser storage, or return in a later GET: passwords, connection URLs containing passwords, session tokens, CSRF tokens, tunnel tokens, DNS API tokens, or private keys.
-4. Every credential-bearing response must set `Cache-Control: no-store`; UI state must clear it on dismiss/navigation/selection change.
-5. Preserve the existing PostgreSQL Fernet vault until byte-for-byte Go compatibility is proven against fixture and copied production records. Losing or changing the legacy `SESSION_SECRET` destroys the ability to decrypt existing credentials.
-6. Destructive PostgreSQL actions are disabled by default and must protect `postgres`, `template0`, `template1`, `database_console_vault`, the configured Redgres state/admin databases, and a configurable deny-list.
-7. Redis custom permissions use an explicit tested allow-list. A deny-list is insufficient. Never offer arbitrary Redis command execution.
-8. Application rollback may switch release binaries/configuration only. It must never automatically reverse database schema migrations, credential rotations, Redis state, PostgreSQL data, or backups.
-9. The installer must be idempotent and must never overwrite, reinitialize, or remove an existing PostgreSQL cluster without explicit fresh-install mode and validated preconditions.
-10. A backup is not accepted until checksums and a restore test exist. Same-server copies are not disaster recovery.
-11. Service support is the release-owned matrix in `docs/COMPATIBILITY.md`. Never use floating `latest` service artifacts, widen support through configuration, or perform an implicit PostgreSQL major/Redis series upgrade.
-12. PostgreSQL server adoption, host extension packages, per-database `CREATE EXTENSION`, preload/restart changes, and PgBouncer are separate lifecycles. Existing mode defaults to preserve; never install/enable all extensions, touch `template1`, or restart PostgreSQL without an explicit reviewed plan and approval.
+1. Browser/admin origins bind loopback and are reached through Cloudflare Tunnel + Access; never expose origin ports.
+2. Tunnel does not proxy ordinary PostgreSQL/Redis clients. Raw endpoints use DNS-only records and end-to-end TLS.
+3. Never log, audit, cache, persist in browser storage, or return later: passwords, credential URLs, session/CSRF/tunnel/DNS tokens, or private keys.
+4. Credential responses use `Cache-Control: no-store`; UI clears them on dismiss, navigation, and selection change.
+5. Preserve the legacy Fernet vault and `SESSION_SECRET` compatibility until copied-record tests prove migration safety.
+6. PostgreSQL destructive actions default off and protect system/state/admin databases, roles, and the configured deny-list.
+7. Redis custom permissions are an explicit tested allow-list; arbitrary Redis commands are forbidden.
+8. Rollback switches application binaries/config only; it never reverses data, migrations, rotations, Redis state, or backups.
+9. Installer behavior is idempotent and cannot overwrite/reinitialize/remove an existing PostgreSQL cluster without explicit fresh-install mode and validated preconditions.
+10. Backup acceptance requires checksums and an isolated restore test; same-server copies are not disaster recovery.
+11. Support is the release-owned matrix in `docs/COMPATIBILITY.md`: exact immutable artifacts, no floating tags, implicit majors, or config-based widening.
+12. PostgreSQL adoption, packages/extensions, preload/restart, and PgBouncer are separate lifecycles. Existing mode preserves by default; no blanket extension enablement, `template1` changes, or unapproved restart.
 
-## Engineering rules
+## Engineering contract
 
-- Stay within the assigned PRD slice/non-goals. Do not add speculative features, abstractions, dependencies, or refactors unrelated to its acceptance criteria.
-- Never invent APIs, symbols, flags, configuration, version behavior, source parity, deployment facts, or test results. Verify locally first, then against exact pinned-version source/docs or official primary sources; record material external evidence and versions.
-- For new dependencies and planned refreshes, choose the newest stable security-supported mutually compatible release, then pin it exactly. Never interpret “latest” as a floating range/tag, prerelease, or permission for an unreviewed major upgrade.
-- Inspect available repository skills and use the smallest relevant set. Skills never override accepted requirements, safety boundaries, or authorization.
-- Prefer the Go/React source structure from `redis-ui`; port PostgreSQL behavior behind a `postgresadmin` package. Do not mechanically translate Python line by line.
-- Use direct, parameterized SQL through `pgx`; do not add an ORM unless an ADR replaces the current decision.
-- Version Redgres endpoints under `/api/v1`. Preserve legacy behavior through explicit adapters or a documented migration, not accidental compatibility.
-- All state-changing use cases must produce a secret-safe audit event with actor, action, target, outcome, request ID, client IP, and redacted metadata.
-- Validate identifiers at both transport and domain boundaries; quote PostgreSQL identifiers with library primitives. Values always use parameters.
-- Use typed errors mapped to stable API error codes. Do not return raw database/server errors to browsers.
-- New behavior requires unit tests. PostgreSQL/Redis behavior requires the applicable jobs from the complete matrix in `docs/COMPATIBILITY.md`; evidence records detected full versions and immutable artifacts.
-- Never commit runtime SQLite files, `.env`, certificates, token files, binaries, backups, or generated credentials.
-- Update documentation and the traceability matrix in the same change as behavior.
-- UI work must use the shared design tokens/shell, prove the responsive states in `docs/UI_DESIGN_SYSTEM.md`, and receive independent `redgres-ui-reviewer` evidence before merge.
-- Production code must be explicit, typed, bounded, secure by default, and deliberate about errors/cancellation/dependency failure. No placeholder success paths, silent fallback, random copied code, or completion claim based on reputation-language instead of evidence.
+- Stay within one accepted PRD slice and its explicit non-goals.
+- Verify APIs, flags, versions, service behavior, and external facts from code or exact primary sources; never invent them.
+- Use exact supported dependency pins. New dependencies require compatibility/security evidence.
+- Prefer the existing Go/React structure, with PostgreSQL behavior behind `postgresadmin`. PostgreSQL uses direct parameterized `pgx` without an ORM; identifiers are validated and safely quoted. HTTP endpoints are versioned under `/api/v1`.
+- State changes emit secret-safe actor/action/target/outcome/request-ID/client-IP audit events with redacted metadata. Typed errors map to stable API errors; raw dependency errors never reach browsers.
+- Production code is explicit, typed, bounded, cancellable where applicable, fail-closed, and covered by observable success/failure tests.
+- PostgreSQL/Redis claims require the applicable `docs/COMPATIBILITY.md` matrix jobs with detected full versions and immutable artifacts.
+- Preserve dirty work. Never commit runtime SQLite/WAL files, `.env`, certificates, tokens, binaries, backups, or credentials.
+- Update the canonical owner and `docs/TRACEABILITY.md` in the same implementation change. Avoid duplicate status ledgers.
+- UI changes use shared tokens/shell, responsive/accessibility evidence, and independent UI review.
+- Local implementation/commits are allowed by the active workflow. Never push or change production, DNS, Cloudflare, secrets, or legacy services without separate explicit authorization.
 
 ## Documentation ownership
 
-Update only the canonical owner for the change; link instead of duplicating policy. Every implementation change updates `docs/TRACEABILITY.md` (current matrix plus one current-slice block). Historical slice ledgers stay in Git (`git show 5474720:docs/TRACEABILITY.md`), not in this file.
-
-| Change | Canonical documentation |
+| Change | Canonical owner |
 |---|---|
-| Product behavior or acceptance criteria | `docs/PRD.md`, then `docs/TRACEABILITY.md` |
-| HTTP request/response/error behavior | `docs/API.md` |
-| Go/module/data-flow boundary | `docs/ARCHITECTURE.md`; add/supersede an ADR for a durable decision |
-| Service version/default/support | `docs/COMPATIBILITY.md` and ADR-008 |
-| UI information architecture/workflow | `docs/UX.md` |
-| UI tokens, shell, responsive/accessibility behavior | `docs/UI_DESIGN_SYSTEM.md` |
-| Configuration key/default/validation | `docs/CONFIGURATION.md` |
-| Installer/runtime/network/domain behavior | `docs/INSTALLER_SPEC.md`, `docs/DEPLOYMENT.md`, or `docs/DOMAIN_AND_NETWORK.md` as applicable |
-| PostgreSQL existing/fresh lifecycle, extensions, preload/restart, PgBouncer | `docs/POSTGRESQL_PROVISIONING.md` and ADR-009 |
-| Backup/restore/runbook behavior | `docs/BACKUP_RECOVERY.md` or `docs/OPERATIONS.md` |
-| Security/secret boundary | `docs/SECURITY.md`, `docs/DATA_AND_SECRETS.md`, and an ADR when architectural |
-| Legacy parity/provenance discovery | `docs/SOURCE_SYSTEMS.md` or `docs/SOURCE_BASELINE.md` |
-| Test/release gate | `docs/TESTING.md` and `docs/ACCEPTANCE_CHECKLIST.md` |
-| Milestone order/scope | `docs/ROADMAP.md` or `docs/MIGRATION.md` |
+| Product/acceptance | `docs/PRD.md` |
+| HTTP contract | `docs/API.md` |
+| Module/data flow | `docs/ARCHITECTURE.md` plus ADR for durable decisions |
+| Versions/support | `docs/COMPATIBILITY.md`, ADR-008 |
+| UI workflow/system | `docs/UX.md`, `docs/UI_DESIGN_SYSTEM.md` |
+| Configuration | `docs/CONFIGURATION.md` |
+| Installer/runtime/network | `docs/INSTALLER_SPEC.md`, `docs/DEPLOYMENT.md`, `docs/DOMAIN_AND_NETWORK.md` |
+| PostgreSQL lifecycle | `docs/POSTGRESQL_PROVISIONING.md`, ADR-009 |
+| Backup/runbook | `docs/BACKUP_RECOVERY.md`, `docs/OPERATIONS.md` |
+| Security/secrets | `docs/SECURITY.md`, `docs/DATA_AND_SECRETS.md`, ADR when architectural |
+| Source parity | `docs/SOURCE_SYSTEMS.md`, `docs/SOURCE_BASELINE.md` |
+| Tests/release gates | `docs/TESTING.md`, `docs/ACCEPTANCE_CHECKLIST.md` |
+| Milestones/cutover | `docs/ROADMAP.md`, `docs/MIGRATION.md` |
 
-Do not edit a document merely to create noise. If behavior and contracts did not change, record test evidence only in traceability. If implementation reveals that a target document is wrong, correct the canonical document and requirement/ADR in the same change before claiming completion.
+## Completion protocol
 
-## Change protocol
+Before coding, freeze the requirement, acceptance criteria, affected invariants/ADRs, source parity, and migration/rollback impact. Before claiming a slice complete:
 
-Before coding:
+1. Run the required focused and complete checks from `docs/TESTING.md`.
+2. Confirm the diff contains no secret or runtime artifact.
+3. Synchronize canonical docs and one current block in `docs/TRACEABILITY.md`.
+4. Record exactly what ran, what did not, and why.
+5. Obtain required independent security/UI review and verify the corrected immutable commit.
 
-1. Identify the PRD requirement and acceptance criteria.
-2. Identify affected invariants and ADRs.
-3. Inspect the corresponding source-system implementation and tests.
-4. State migration/rollback impact, including data and secret compatibility.
-
-Before declaring complete:
-
-1. Run the required checks in `docs/TESTING.md`.
-2. Confirm no secrets or runtime artifacts are in the diff.
-3. Update `docs/TRACEABILITY.md` with implementation and test evidence.
-4. State what was not tested and why.
-
-If documentation conflicts, security invariants and accepted ADRs take precedence, followed by the PRD, architecture, deployment documents, and roadmap. Resolve the contradiction in the same change; do not silently choose one.
+Security invariants and accepted ADRs outrank PRD, architecture/deployment docs, roadmap, and targets in that order. Resolve contradictions in the same change.

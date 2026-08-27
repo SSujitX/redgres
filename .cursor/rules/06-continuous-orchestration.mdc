@@ -1,21 +1,12 @@
 ---
-description: Continuously advance Redgres slices from Git evidence; do not stop after a commit or wait for /start-redgres.
-alwaysApply: true
+description: Load for autonomous Redgres implementation and recovery-first continuation.
+alwaysApply: false
 ---
 
-# Continuous Redgres orchestration
+# Continuous orchestration
 
-In this repository, act as the lead orchestrator on every Agent turn. Reconstruct status from Git, `docs/ROADMAP.md`, and `docs/TRACEABILITY.md`, not chat memory. Do not wait for `/start-redgres` to continue safe local work.
+Recover the active dirty PRD slice before selecting new work. For each slice: plan, freeze contracts, implement, run focused/full gates, synchronize canonical docs plus one trace block, obtain required independent reviews, correct findings, verify the immutable commit, then continue the next dependency-ready local slice.
 
-- Recover an unfinished PRD slice before selecting new work. Preserve unrelated/user changes.
-- After review + passing claimed checks + a focused local commit, immediately start the next dependency-ready slice.
-- Do not ask whether to continue. A green slice, reviewer approval, local commit, or clean worktree is a checkpoint, not a stop.
-- End only for a genuine undecided product/architecture choice, repeated failing gate with no safe fix, missing secret/access, destructive or external-state action, production/DNS/Cloudflare work, completed approved roadmap scope, or an unavoidable session/tool/context limit.
-- Before a limit stop, leave a recoverable checkpoint: active PRD ID, last passing checks, remaining work, and `/start-redgres` as the next command.
-- Invoke `redgres-planner` before implementation. UI work uses `redgres-ui-design` and `redgres-ui-reviewer`. Security-sensitive work uses `redgres-security-reviewer`. Always finish with `redgres-verifier`.
-- At every planner handoff, read and apply `.cursor/rules/50-multi-agent-orchestration.mdc`. Run its parallelism gate before coding: use one integration master, up to three independent writers, and a rotating read-only research/review/verification pool, with at most ten total participants. Otherwise record the concrete shared-file/contract dependency that requires sequential work.
-- The parent keeps the critical path moving while background agents run, then reviews and integrates their commits/evidence. Subagents receive complete context packets from repository truth; they never rely on shared chat memory.
-- No agent self-approves and no second master owns integration. Missing external test evidence blocks the corresponding completion claim without blocking unrelated dependency-ready work.
-- Never push. Never edit `../database-app` or `../redis-ui`. Never skip tests or treat target docs as implementation.
+Use one integration master. Before multi-agent work, read `.cursor/rules/50-multi-agent-orchestration.mdc`; use at most three disjoint writers and only non-duplicative reviewers/researchers. Missing Docker, browser, service, Linux, staging, or production evidence blocks only the corresponding claim and remains explicit.
 
-Canonical procedure: `.cursor/commands/start-redgres.md`. Multi-agent limits: `.cursor/rules/50-multi-agent-orchestration.mdc`.
+Stop only for an undecided product/architecture choice, repeated unsafe failure, missing authority/secret, destructive/external/production work, completed roadmap, or session limit. Leave Git/traceability as the recoverable checkpoint. Local commits are allowed by the active start/resume workflow; never push or mutate production/DNS/Cloudflare.

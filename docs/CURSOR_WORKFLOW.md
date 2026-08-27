@@ -21,7 +21,7 @@ Human copy/paste commands for starting, resuming partial work, checking status, 
 
 ## Automatic context routing
 
-The always-applied core rule forces every agent to read `AGENTS.md`, `CONTEXT.md`, the docs index, and charter first. The always-applied continuous-orchestration rule (`.cursor/rules/06-continuous-orchestration.mdc`) then keeps the parent advancing dependency-ready slices after each local checkpoint, even when `/start-redgres` was not typed. File-scoped rules attach backend, frontend, deployment, or testing context. Intelligent rules are pulled when multi-agent work is requested.
+The always-applied compact core reads `AGENTS.md` plus `CONTEXT.md`, routes product-scope decisions to the charter, and uses the docs index only when the compact routing table is insufficient. It routes implementation work to `.cursor/rules/05-evidence-first-engineering.mdc` and autonomous coding to `.cursor/rules/06-continuous-orchestration.mdc`. Status and explanation turns therefore avoid loading the implementation loop. File-scoped rules attach backend, frontend, deployment, or testing context; multi-agent work loads its dedicated rule.
 
 This intentionally does not force every document into every context. Agents read the canonical document map and then only the documents relevant to their task.
 
@@ -70,7 +70,7 @@ Port PostgreSQL read-only behavior, then prove vault compatibility, then add mut
 
 ## Checkpointed continuation loop
 
-`/start-redgres` and the always-applied continuous-orchestration rule run the same recovery-first loop:
+`/start-redgres` and the core-routed continuous-orchestration rule run the same recovery-first loop:
 
 1. Reconstruct current state from Git, roadmap, traceability, tests, and configured tracker items.
 2. Recover an unfinished PRD slice before selecting new work.

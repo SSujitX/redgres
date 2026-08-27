@@ -1,62 +1,18 @@
 ---
-description: Apply when a Redgres task requests multiple agents, multitasking, worktrees, or work decomposition.
+description: Load when Redgres work requests multiple agents, worktrees, or parallel decomposition.
 alwaysApply: false
 ---
 
-# Multi-agent orchestration rule
+# Multi-agent orchestration
 
-Use one lead parent as the sole integration authority. Domain agents may coordinate a bounded packet, but they never become a second integration master. Before spawning writers, invoke `redgres-planner` to identify dependencies, shared files, test seams, review gates, and merge order.
+One parent is the integration master. A planner classifies:
 
-## Parallelism gate
+1. parent-owned sequential contracts/shared files;
+2. disjoint writer packets;
+3. read-only research/review/verification packets.
 
-At the start of every implementation slice, the parent and planner must classify the execution graph into:
+Use at most ten participants total and three concurrent writers. Parallelize only dependency-ready packets with frozen interfaces and disjoint write sets; otherwise state the exact dependency. Writers use isolated worktrees from a committed baseline, know other work exists, and never own shared dependency manifests, migrations, routes, or traceability unless explicitly assigned.
 
-1. sequential contract work owned by the parent;
-2. independent editing packets with disjoint files and frozen interfaces;
-3. independent read-only research/review/verification packets.
+Every packet includes objective/non-goals, PRD IDs, accepted docs/ADRs, fixed commit, allowed/forbidden files, required tests, safety boundaries, and handoff format. Handoffs report commit/diff, files, commands/results, limitations, risks, and integration order.
 
-Use a dynamic wave of at most ten total participants including the parent. Start two or three concurrent editing agents whenever at least two packets can run without sharing writable files or depending on an unfinished contract. Never exceed three concurrent writers. Add up to six concurrent read-only research, security, UI, compatibility, or evidence-review agents only when they have concrete non-duplicative packets. If only one writer is safe, state the exact dependency or overlapping file that prevents parallel writers; “the task is small” or habit is not enough.
-
-The normal maximum-capacity wave is:
-
-- one parent integration master;
-- up to three `redgres-implementer` writers in isolated worktrees;
-- scoped independent `redgres-security-reviewer` and `redgres-ui-reviewer` instances;
-- one `redgres-compatibility-researcher` when source/version facts are unresolved;
-- one `redgres-evidence-reviewer` for requirement, documentation, and claimed-evidence coverage;
-- one `redgres-verifier` against the fixed integrated commit.
-
-Agents rotate through the wave as dependencies become ready; ten active roles is a ceiling, not a utilization target. Reviewers inspect fixed commits and cannot approve their own implementation. Verification follows review corrections and never substitutes for required real-service or deployment evidence.
-
-The parent does not wait idly. It performs sequential shared-contract/integration work or another non-overlapping critical-path task while background agents run. Foundation changes to module files, entry points, migrations, shared API types, or frontend bootstrap run sequentially first.
-
-Useful concurrency patterns:
-
-- backend adapter/use case and frontend UI against a parent-frozen API fixture/contract;
-- independent Redis and PostgreSQL packages with no shared HTTP/config/dependency files;
-- implementation plus independent fixture/source characterization when implementation does not depend on its result;
-- security and UI review in parallel after integration, followed by final verification;
-- independent test-matrix or documentation evidence checks that write no shared files.
-
-Every delegated context packet must include:
-
-- objective and explicit non-goals;
-- PRD requirement IDs and acceptance criteria;
-- documents and ADRs to read;
-- allowed files/directories and forbidden files;
-- legacy source paths/functions to inspect, if any;
-- tests/commands required;
-- secret/destructive restrictions;
-- expected output, commit behavior, and handoff format.
-
-Editing agents must use isolated Git worktrees/branches. Read-only analysis agents may share the checkout. Never allow two writers to own the same files, migration numbers, API schemas, or dependency manifests. The parent reviews and integrates branches in dependency order. Security and UI reviews may run in parallel against the same fixed commit; the parent routes required corrections back to an owned writer, integrates them, and then invokes `redgres-verifier` on the corrected fixed commit.
-
-No agent self-approves. A passing handoff is insufficient without parent diff review and independently executed evidence. Missing Docker, service, staging, browser, security-scan, or production checks remain explicit release blockers; continue independent work, but never convert unavailable evidence into a completion claim.
-
-Use `redgres-implementer` for bounded writing packets. Subagents start with clean context and do not know the parent conversation; committed documentation plus the explicit context packet is the shared context. In parallel runs the parent owns shared files such as `docs/TRACEABILITY.md`, dependency manifests, route wiring, and migration numbering. Each implementer updates only explicitly owned canonical docs and returns an exact traceability evidence block for the parent to integrate.
-
-Every subagent handoff reports: fixed commit, branch/commit, PRD IDs, files changed, tests and exact results, documentation/evidence proposed, limitations, risks, and integration order. The parent validates the actual diff and reruns checks; reputation-language is not evidence.
-
-Worktrees require a committed baseline. Do not start parallel editing from an unborn branch or a dirty uncommitted specification tree.
-
-Cloud agents cannot see uncommitted local sibling repositories unless they are explicitly made available. For legacy parity, use local multi-root agents or include committed characterization fixtures/specifications in Redgres.
+The parent keeps the critical path moving, reviews every diff, integrates in dependency order, and reruns evidence. Security/UI reviewers inspect a fixed integrated commit; corrections return to an owner; the final verifier inspects the corrected immutable commit. No agent approves its own work. Missing external evidence remains a blocker to that claim, not permission to invent it.
