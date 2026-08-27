@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useId, useState } from "react";
 import { errorMessage, login } from "../../api/auth";
+import BrandLogo from "../../components/BrandLogo";
 
 type LoginPageProps = {
   onSuccess: (username: string, csrf: string) => void;
@@ -50,12 +51,9 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
   return (
     <div className="login-page">
       <section className="login-identity" aria-label="Redgres">
-        <div className="service-rail" aria-hidden="true">
-          <span className="service-rail-postgres" />
-          <span className="service-rail-redis" />
-        </div>
+        <BrandLogo className="brand-logo-login" />
         <div>
-          <h1>Redgres</h1>
+          <h1 className="visually-hidden">Redgres</h1>
           <p className="login-tagline">One secure control plane for PostgreSQL and Redis.</p>
         </div>
       </section>
