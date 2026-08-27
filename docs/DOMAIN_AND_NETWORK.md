@@ -18,11 +18,13 @@
 
 ### Browser applications
 
-- Bind origins to `127.0.0.1` only.
+- Bind origins to `127.0.0.1` only, except the self-closing first-run bootstrap ([ADR-012](decisions/ADR-012-ui-bootstrap.md)).
 - Publish through one remotely managed Cloudflare Tunnel with multiple hostname-to-service routes.
 - Require Cloudflare Access policies for every administration hostname.
 - Keep application authentication even behind Access; Cloudflare is an outer control, not the only login.
 - Trust forwarding headers only from the local tunnel path/configured proxy, never arbitrary internet clients.
+
+**First-run bootstrap ([ADR-012](decisions/ADR-012-ui-bootstrap.md)):** the Redgres console alone gets a temporary `0.0.0.0:8989` listener, source-restricted to the operator's IP, which auto-closes (rebind to `127.0.0.1:8790` + firewall-rule removal) once Tunnel + Access are verified. pgAdmin and RedisInsight never get a public listener.
 
 ### PostgreSQL
 
@@ -49,13 +51,15 @@ Expected public listeners:
 - `6432/tcp` — PgBouncer TLS/SCRAM.
 - `6380/tcp` — Redis TLS/ACL.
 
-HTTP UI origin ports must not appear in public firewall allow rules or bind to `0.0.0.0`/`::`.
+HTTP UI origin ports must not appear in public firewall allow rules or bind to `0.0.0.0`/`::`, except the temporary, source-restricted, self-closing Redgres bootstrap on `8989` ([ADR-012](decisions/ADR-012-ui-bootstrap.md)).
 
 ## DNS/TLS ownership
 
 - Cloudflare Tunnel terminates public browser HTTPS; no Certbot certificate is needed for the tunneled UI origin.
 - Certbot DNS validation is for raw PostgreSQL and Redis service certificates.
-- Use separate least-privilege Cloudflare tokens for DNS certificate automation and tunnel execution.
+- Cloudflare access uses a self-created OAuth app with minimal scopes, or a per-zone API token as fallback; the OAuth/tunnel tokens are stored server-side only and never in browser storage or the control-state SQLite.
+- The zone SSL/TLS mode is **Full (strict)** (never Flexible); the tunnel hop is already encrypted, so the loopback UI origin stays plain HTTP.
+- Let's Encrypt DNS-01 issues the raw database certificates and reuses the `dns.write` permission for auto-renewal.
 - Tunnel token is a bearer credential and must be rotated if exposed.
 - Certificate renewal deploy hooks must copy/set ownership to service-readable paths and reload only after configuration validation.
 
