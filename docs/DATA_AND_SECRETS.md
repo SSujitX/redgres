@@ -22,9 +22,10 @@
 6. Redis ACL administrator URL/password: root-owned file consumed by Redgres service; never displayed.
 7. Redis project passwords: shown only on create/rotate, not persisted by Redgres. DELETE `/api/v1/redis/users/{username}` request body `owner_password` is the Redgres owner password for AUTH-006 reauth; it is never logged, audited, cached, persisted, or returned. DELETE `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` request body `owner_password` is the same owner password class; it is never logged, audited, cached, persisted, or returned. POST `/api/v1/postgres/databases/{db}/truncate` request body `owner_password` is the same owner password class; it is never logged, audited, cached, persisted, or returned. DELETE `/api/v1/postgres/databases/{db}` request body `owner_password` is the same owner password class; it is never logged, audited, cached, persisted, or returned. `primary_key_values` are not secrets but must not appear in audit metadata.
 8. Cloudflare tunnel token: root-owned bearer token file.
-9. Cloudflare Certbot DNS token: separate least-privilege root-owned file.
-10. TLS private keys: readable only by root and the exact service group where necessary.
-11. Backup encryption/off-host credentials: isolated from application runtime where practical.
+9. Cloudflare OAuth access/refresh tokens: root-owned; issued by the self-created minimal-scope OAuth app (or a per-zone API token as fallback); authorize the DNS/TLS/tunnel/Access API calls. Never in SQLite, browser storage, logs, or audit.
+10. Cloudflare Certbot DNS token: separate least-privilege root-owned file; used for the Let's Encrypt DNS-01 challenge when not covered by the OAuth `dns.write` scope.
+11. TLS private keys: readable only by root and the exact service group where necessary.
+12. Backup encryption/off-host credentials: isolated from application runtime where practical.
 
 ## Credential response policy
 
@@ -108,6 +109,7 @@ Recommended:
 /etc/redgres/secrets/legacy-vault-secret         root:root    0600
 /etc/redgres/secrets/redis-admin-url              root:root    0600
 /etc/redgres/secrets/cloudflared-tunnel-token     root:root    0600
+/etc/redgres/secrets/cloudflare-oauth-token       root:root    0600
 /etc/redgres/secrets/certbot-dns-token            root:root    0600
 ```
 
