@@ -4,7 +4,7 @@ This runbook defines operator intent. Exact commands must be generated/validated
 
 ## Daily automated checks
 
-- Redgres, PostgreSQL, PgBouncer, Redis, cloudflared service health.
+- Redgres, PostgreSQL, PgBouncer, Redis, cloudflared service health (`cloudflared-redgres.service` — see [CLOUDFLARED.md](CLOUDFLARED.md)).
 - Loopback/public listener conformance.
 - Backup completion, checksums, off-host transfer, disk capacity.
 - Certificate remaining lifetime.
