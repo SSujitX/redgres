@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -149,6 +150,44 @@ func TestSealAndVerifySQLiteRestoreSourceRejectsPreSealTampering(t *testing.T) {
 		context.Background(), file, int64(len(expected)), hex.EncodeToString(digest[:]),
 	); err == nil {
 		t.Fatal("expected sealed-byte mismatch rejection")
+	}
+}
+
+func TestDiagnoseProcSelfFdOpen(t *testing.T) {
+	fd, err := unix.MemfdCreate("diag", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := os.NewFile(uintptr(fd), "diag")
+	defer f.Close()
+	if _, err := f.Write([]byte("SQLite format 3\x00")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unix.FcntlInt(f.Fd(), unix.F_ADD_SEALS, requiredSQLiteRestoreSeals); err != nil {
+		t.Fatal(err)
+	}
+	fdPath := "/proc/self/fd/" + strconv.Itoa(int(f.Fd()))
+	if o, err := os.Open(fdPath); err != nil {
+		t.Errorf("os.Open(%s): %v", fdPath, err)
+	} else {
+		_ = o.Close()
+		t.Logf("os.Open(%s) ok", fdPath)
+	}
+	if fi, err := os.Stat(fdPath); err != nil {
+		t.Errorf("os.Stat(%s): %v", fdPath, err)
+	} else {
+		t.Logf("os.Stat(%s) size=%d mode=%v", fdPath, fi.Size(), fi.Mode())
+	}
+	db, err := sql.Open("sqlite", "file:"+fdPath+"?mode=ro")
+	if err != nil {
+		t.Errorf("sql.Open: %v", err)
+		return
+	}
+	defer db.Close()
+	if _, err := db.Query("SELECT 1"); err != nil {
+		t.Errorf("db.Query: %v", err)
+	} else {
+		t.Logf("db.Query ok")
 	}
 }
 
