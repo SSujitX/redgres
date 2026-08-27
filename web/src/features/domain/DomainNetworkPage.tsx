@@ -1,9 +1,11 @@
-import { FormEvent, useEffect, useId, useRef, useState, type RefObject } from "react";
+import { FormEvent, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   applyDomain,
+  confirmDomainReachable,
   disconnectDomain,
   errorMessage,
   fetchDomain,
+  setDomainAccessPolicy,
   setDomainToken,
   type DomainApplyPayload,
   type DomainStatusPayload,
@@ -65,9 +67,18 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   const [disconnectError, setDisconnectError] = useState("");
   const [disconnectBusy, setDisconnectBusy] = useState(false);
 
+  const [allowEmail, setAllowEmail] = useState("");
+  const [allowError, setAllowError] = useState("");
+  const [allowBusy, setAllowBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTyped, setConfirmTyped] = useState("");
+  const [confirmError, setConfirmError] = useState("");
+  const [confirmBusy, setConfirmBusy] = useState(false);
+
   const abortRef = useRef<AbortController | null>(null);
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
   const disconnectButtonRef = useRef<HTMLButtonElement | null>(null);
+  const confirmButtonRef = useRef<HTMLButtonElement | null>(null);
 
   function clearTokenField() {
     setToken("");
@@ -217,6 +228,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
         setDisconnectOpen(false);
         setDisconnectConfirm("");
         setApplyResult(null);
+        setAllowEmail("");
         hostnameEdited.current = false;
         setZone("");
         setHostname("");
@@ -235,9 +247,71 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
     }
   }
 
+  async function handleAccessAllow(event: FormEvent) {
+    event.preventDefault();
+    const email = allowEmail.trim();
+    if (email === "" || allowBusy) {
+      setAllowError("Enter an email allowed by Cloudflare Access.");
+      return;
+    }
+    setAllowBusy(true);
+    setAllowError("");
+    try {
+      const result = await setDomainAccessPolicy([email], csrf);
+      setAllowEmail("");
+      if (result.status === 200 && result.body.ok === true) {
+        refresh();
+        return;
+      }
+      if (result.status === 401) {
+        setAllowError(sessionExpired);
+        return;
+      }
+      setAllowError(errorMessage(result.body, "Access allow policy could not be created."));
+    } catch {
+      setAllowEmail("");
+      setAllowError("Access allow policy could not be created.");
+    } finally {
+      setAllowBusy(false);
+    }
+  }
+
+  async function handleConfirmReachable() {
+    if (confirmBusy) {
+      return;
+    }
+    const expected = status?.hostname ?? "";
+    if (confirmTyped !== expected) {
+      setConfirmError("Type the exact hostname to close bootstrap.");
+      return;
+    }
+    setConfirmBusy(true);
+    setConfirmError("");
+    try {
+      const result = await confirmDomainReachable(csrf);
+      if (result.status === 200 && result.body.ok === true) {
+        setConfirmOpen(false);
+        setConfirmTyped("");
+        refresh();
+        return;
+      }
+      if (result.status === 401) {
+        setConfirmError(sessionExpired);
+        return;
+      }
+      setConfirmError(errorMessage(result.body, "Could not confirm console reachability."));
+    } catch {
+      setConfirmError("Could not confirm console reachability.");
+    } finally {
+      setConfirmBusy(false);
+    }
+  }
+
   const configured = status?.configured === true;
   const showWizard = status?.configured === false && !statusError;
   const canApply = showWizard && zone.trim() !== "" && hostname.trim() !== "" && !applyBusy;
+  const accessAllow = status?.access === "allow";
+  const bootstrapOpen = status?.bootstrap_still_open === true;
 
   return (
     <article>
@@ -281,7 +355,84 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                 <dd className="bidi-isolate identifier">{displayText(status.hostname)}</dd>
               </div>
             ) : null}
+            {configured ? (
+              <div>
+                <dt>Access</dt>
+                <dd>
+                  {accessAllow
+                    ? "Allow policy configured"
+                    : "Deny by default (add an allow policy)"}
+                </dd>
+              </div>
+            ) : null}
+            <div>
+              <dt>Bootstrap</dt>
+              <dd>{bootstrapOpen ? "Still open" : "Closed or not configured"}</dd>
+            </div>
           </dl>
+          {configured && !accessAllow ? (
+            <form onSubmit={handleAccessAllow} autoComplete="off">
+              <h3>3. Access allow policy</h3>
+              <p className="muted-copy">
+                Add your email so Cloudflare Access allows you through to{" "}
+                {status.hostname ? (
+                  <span className="bidi-isolate identifier">{displayText(status.hostname)}</span>
+                ) : (
+                  "the console hostname"
+                )}
+                .
+              </p>
+              <div className="field-stack">
+                <label htmlFor="domain-access-email">Allowed email</label>
+                <input
+                  id="domain-access-email"
+                  name="access_email"
+                  type="email"
+                  autoComplete="off"
+                  value={allowEmail}
+                  disabled={allowBusy}
+                  onChange={(event) => {
+                    setAllowEmail(event.target.value);
+                    setAllowError("");
+                  }}
+                />
+              </div>
+              {allowError ? (
+                <p className="form-error" role="alert">
+                  {allowError}
+                </p>
+              ) : null}
+              <button type="submit" disabled={allowBusy || allowEmail.trim() === ""}>
+                Add Access allow policy
+              </button>
+            </form>
+          ) : null}
+          {configured && accessAllow && bootstrapOpen ? (
+            <div>
+              <h3>4. Close bootstrap</h3>
+              <p className="muted-copy">
+                After you can open the console hostname through Tunnel + Access, close the temporary public bootstrap
+                listener. This cannot be undone from the UI.
+              </p>
+              {confirmError && !confirmOpen ? (
+                <p className="form-error" role="alert">
+                  {confirmError}
+                </p>
+              ) : null}
+              <button
+                ref={confirmButtonRef}
+                type="button"
+                disabled={confirmBusy}
+                onClick={() => {
+                  setConfirmTyped("");
+                  setConfirmError("");
+                  setConfirmOpen(true);
+                }}
+              >
+                Console is reachable — close bootstrap
+              </button>
+            </div>
+          ) : null}
           {configured ? (
             <button
               ref={disconnectButtonRef}
@@ -435,11 +586,20 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
       ) : null}
 
       {disconnectOpen && configured && status?.hostname ? (
-        <DisconnectDialog
+        <HostnameConfirmDialog
+          title="Disconnect domain"
+          description={
+            <>
+              Deletes only the tunnel, DNS record, and Access app Redgres created for{" "}
+              <span className="bidi-isolate identifier">{displayText(status.hostname)}</span>. Unrelated zone records are
+              not touched. Type the exact hostname to confirm.
+            </>
+          }
           hostname={status.hostname}
           confirmation={disconnectConfirm}
           error={disconnectError}
           submitting={disconnectBusy}
+          submitLabel="Disconnect"
           restoreFocusRef={disconnectButtonRef}
           onConfirmationChange={setDisconnectConfirm}
           onCancel={() => {
@@ -450,24 +610,56 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
           onConfirm={() => void handleDisconnect()}
         />
       ) : null}
+
+      {confirmOpen && configured && status?.hostname ? (
+        <HostnameConfirmDialog
+          title="Close bootstrap listener"
+          description={
+            <>
+              Closes the temporary public bootstrap port. Use this only after{" "}
+              <span className="bidi-isolate identifier">{displayText(status.hostname)}</span> opens through Tunnel +
+              Access. Type the exact hostname to confirm — this cannot be undone from the UI.
+            </>
+          }
+          hostname={status.hostname}
+          confirmation={confirmTyped}
+          error={confirmError}
+          submitting={confirmBusy}
+          submitLabel="Close bootstrap"
+          restoreFocusRef={confirmButtonRef}
+          onConfirmationChange={setConfirmTyped}
+          onCancel={() => {
+            setConfirmOpen(false);
+            setConfirmTyped("");
+            setConfirmError("");
+          }}
+          onConfirm={() => void handleConfirmReachable()}
+        />
+      ) : null}
     </article>
   );
 }
 
-function DisconnectDialog({
+function HostnameConfirmDialog({
+  title,
+  description,
   hostname,
   confirmation,
   error,
   submitting,
+  submitLabel,
   restoreFocusRef,
   onConfirmationChange,
   onCancel,
   onConfirm,
 }: {
+  title: string;
+  description: ReactNode;
   hostname: string;
   confirmation: string;
   error: string;
   submitting: boolean;
+  submitLabel: string;
   restoreFocusRef: RefObject<HTMLElement | null>;
   onConfirmationChange: (value: string) => void;
   onCancel: () => void;
@@ -505,12 +697,8 @@ function DisconnectDialog({
           }
         }}
       >
-        <h2 id={titleId}>Disconnect domain</h2>
-        <p>
-          Deletes only the tunnel, DNS record, and Access app Redgres created for{" "}
-          <span className="bidi-isolate identifier">{displayText(hostname)}</span>. Unrelated zone records are not
-          touched. Type the exact hostname to confirm.
-        </p>
+        <h2 id={titleId}>{title}</h2>
+        <p>{description}</p>
         <form onSubmit={handleSubmit} autoComplete="off">
           <div className="field-stack">
             <label htmlFor={confirmId}>Confirm hostname</label>
@@ -535,7 +723,7 @@ function DisconnectDialog({
               Cancel
             </button>
             <button type="submit" disabled={!canSubmit}>
-              Disconnect
+              {submitLabel}
             </button>
           </div>
         </form>
