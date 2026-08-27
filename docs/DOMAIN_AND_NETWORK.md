@@ -55,7 +55,7 @@ HTTP UI origin ports must not appear in public firewall allow rules or bind to `
 
 ## DNS/TLS ownership
 
-- Cloudflare Tunnel terminates public browser HTTPS; no Certbot certificate is needed for the tunneled UI origin.
+- Cloudflare Tunnel terminates public browser HTTPS; no Certbot certificate is needed for the tunneled UI origin. Operator `cloudflared` wiring: [CLOUDFLARED.md](CLOUDFLARED.md).
 - Certbot DNS validation is for raw PostgreSQL and Redis service certificates.
 - Cloudflare access uses a self-created OAuth app with minimal scopes, or a per-zone API token as fallback; the OAuth/tunnel tokens are stored server-side only and never in browser storage or the control-state SQLite.
 - The zone SSL/TLS mode is **Full (strict)** (never Flexible); the tunnel hop is already encrypted, so the loopback UI origin stays plain HTTP.
