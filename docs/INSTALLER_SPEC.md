@@ -44,6 +44,8 @@ The initial selections and defaults are defined in [COMPATIBILITY.md](COMPATIBIL
 
 The installer does not guess zones, delete records, generate publicly trusted credentials, or print secrets.
 
+**Deferred domain/TLS ([ADR-012](decisions/ADR-012-ui-bootstrap.md)):** public hostnames, Cloudflare credentials, and TLS may be omitted from the first `install.sh` pass. They are supplied later through the runtime Domain & Network wizard ([INSTALL_WALKTHROUGH.md](INSTALL_WALKTHROUGH.md); PRD OPS-008/OPS-009). The first pass must still complete preflight, packages, services, and report a source-restricted bootstrap URL for the console.
+
 ## Stage contract
 
 1. **Preflight** — root, supported OS/architecture, requested service versions, package/image availability, clock, DNS, RAM/disk/inodes, network, commands, port conflicts.
@@ -58,7 +60,7 @@ The installer does not guess zones, delete records, generate publicly trusted cr
 10. **Cloudflare** — install/validate cloudflared and routes; token stays protected.
 11. **Firewall** — calculate intended rules, preserve SSH access, apply, then verify listeners externally and locally.
 12. **End-to-end verify** — run [TESTING.md](TESTING.md) deployment checks. **This Partial (OPS-003):** `verify --non-interactive --dry-run --config PATH` only; PATH must pass the trusted regular-file policy and is never sourced, evaluated, or printed. Prints an explicit skip matrix (`result=partial`) for DNS, Cloudflare Tunnel/Access/routes, public TLS, GET `/api/v1/healthz` (curl not invoked), GET `/api/v1/status` auth boundaries, live bindings (intended redgres `127.0.0.1:8790`), cluster SHOW/INFO, and backup prerequisites (no named backup keys; OPS-004). Does not call inventory, curl, wget, cloudflared, or certbot. Live verify without `--dry-run` exits 2. Missing `--non-interactive`, missing/untrusted `--config`, or unknown flags (including `--mode`) exit 1. DNS/Cloudflare/public TLS remain skipped; this Partial is not Complete.
-13. **Report** — produce a redacted manifest with changed/skipped items and exact follow-ups. Never emit credentials.
+13. **Report** — produce a redacted manifest with changed/skipped items and exact follow-ups, including the source-restricted bootstrap UI URL for the console ([ADR-012](decisions/ADR-012-ui-bootstrap.md)). Never emit credentials.
 
 ## Idempotency
 
