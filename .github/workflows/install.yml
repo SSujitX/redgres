@@ -1,0 +1,23 @@
+# Active push/PR CI: installer dry-run only.
+# Full Wave 0 gates live in ci.yml (workflow_dispatch backup until restored).
+name: install
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Disposable CI only. Not production, not COMPATIBILITY.md §6.
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash deploy/tests/run.sh
