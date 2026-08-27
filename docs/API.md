@@ -255,16 +255,18 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 
 ## Domain & Network endpoints (OPS-009 Partial, token-first)
 
-UI: System → **Domain & Network** (`web/src/features/domain/DomainNetworkPage.tsx`) drives these endpoints (token paste, apply, status, disconnect). OAuth, Access allow policy, bootstrap close-on-reachable, and DB LE remain deferred.
+UI: System → **Domain & Network** (`web/src/features/domain/DomainNetworkPage.tsx`) drives these endpoints (token paste, apply, Access allow email, confirm-reachable bootstrap close, status, disconnect). OAuth, DB LE, and manual DNS remain deferred.
 
 All require a session cookie and the `platform.network` capability; mutations also require `X-CSRF-Token` (origin + CSRF). The per-zone Cloudflare API token is pasted once and stored server-side at `REDGRES_CLOUDFLARE_TOKEN_FILE`; the one-time cloudflared tunnel token is stored at `REDGRES_TUNNEL_TOKEN_FILE`. Neither is ever returned by the API. Responses are `Cache-Control: no-store`.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/v1/domain` | Deployment status (`configured` false/true + `zone`/`hostname` when set) |
+| GET | `/api/v1/domain` | Deployment status (`configured`, `zone`/`hostname` when set, `access` `deny_by_default`\|`allow`, `bootstrap_still_open`) |
 | POST | `/api/v1/domain/token` | Paste Cloudflare API token → server-side 0600 file; `{ok:true}` |
 | POST | `/api/v1/domain/apply` | `{zone, hostname}` → remote tunnel + ingress to loopback Redgres + proxied CNAME + deny-by-default Access app; persist IDs + tunnel token; audit |
-| DELETE | `/api/v1/domain` | Delete exactly the persisted tunnel/record/Access app; clear state; remove the tunnel token file |
+| POST | `/api/v1/domain/access-policy` | `{emails:[…]}` → Access allow policy on the wizard app (exact emails, deduped); persist policy id; audit |
+| POST | `/api/v1/domain/confirm-reachable` | Operator confirms console hostname works; closes bootstrap listener if open; requires Access allow first |
+| DELETE | `/api/v1/domain` | Delete exactly the persisted policy/tunnel/record/Access app; clear state; remove the tunnel token file |
 
 **POST `/api/v1/domain/token`** body `{"token":"<per-zone token>"}`. Success `200` `{"ok":true,"request_id":"…"}`. The token is never echoed. Empty, whitespace, or >512-char token → `400` `validation_error`.
 
@@ -281,12 +283,38 @@ All require a session cookie and the `platform.network` capability; mutations al
 }
 ```
 
-- `bootstrap_still_open: true` means the first-run bootstrap listener is **not** auto-closed on apply; it closes on its 30-minute hard cap or a later explicit "console reachable" confirm step.
+- `bootstrap_still_open` reflects whether the optional bootstrap listener is still open on this process (`false` when bootstrap was not configured).
 - `access: "deny_by_default"` means the Access app exists but has **no allow policy**; login through it fails until an identity policy is added.
 - Any failure after the tunnel is created compensates: the created Access app, DNS record, and tunnel are deleted in reverse creation order (same order as disconnect).
 - Re-apply while configured → `409` `conflict`.
 
-**DELETE `/api/v1/domain`** success `200` `{"ok":true,"request_id":"…"}`. No deployment → `404` `not_found`.
+**POST `/api/v1/domain/access-policy`** body `{"emails":["owner@example.com"]}`. Creates an Access **allow** policy on the wizard’s Access app (exact email selectors; trimmed/lowercased; deduped; max 8), verifies the policy via API reflection, then persists the policy id. Success `200`:
+
+```json
+{
+  "ok": true,
+  "access": "allow",
+  "bootstrap_still_open": true,
+  "request_id": "…"
+}
+```
+
+Emails are never returned. Empty/invalid email → `400` `validation_error`. No deployment → `404`. Policy already set → `409` `conflict`. Verify failure compensates by deleting the created policy.
+
+**POST `/api/v1/domain/confirm-reachable`** body `{}`. Operator asserts the console hostname is reachable through Tunnel + Access; schedules a **graceful** bootstrap shutdown so an in-flight confirm on `:8989` can finish writing `200` before the port closes. Requires an Access allow policy first. Success `200`:
+
+```json
+{
+  "ok": true,
+  "bootstrap_still_open": false,
+  "bootstrap_closed": true,
+  "request_id": "…"
+}
+```
+
+`bootstrap_closed` is `true` when this call scheduled close of an open bootstrap listener (force Close remains the hard-cap timer path). No Access allow yet → `409` `conflict`. No deployment → `404`. The UI requires typing the exact hostname before calling this endpoint.
+
+**DELETE `/api/v1/domain`** success `200` `{"ok":true,"request_id":"…"}`. No deployment → `404` `not_found`. Deletes Access policy (if any), Access app, DNS records, and tunnel.
 
 Missing/invalid token or tunnel-token file config → `400` `validation_error`. Cloudflare auth failure → `403` `forbidden` (`Cloudflare token is unauthorized`). Cloudflare not-found → `404` `not_found`. Other Cloudflare failures → `503` `dependency_unavailable`. No response contains the token, the tunnel token, or a raw Cloudflare error body.
 
