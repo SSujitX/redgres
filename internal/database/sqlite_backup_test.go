@@ -57,7 +57,7 @@ INSERT INTO widgets(id, name) VALUES (1, 'alpha'), (2, 'beta');
 	}
 	assertSourceFilesExist(t, sourcePath)
 
-	stagingRoot := t.TempDir()
+	stagingRoot := secureStagingRoot(t)
 	snapshot, err := CaptureSQLiteSnapshot(context.Background(), source, stagingRoot)
 	if err != nil {
 		t.Fatalf("CaptureSQLiteSnapshot: %v", err)
@@ -171,7 +171,7 @@ INSERT INTO widgets(id, name) VALUES (1, 'alpha'), (2, 'beta');
 
 func TestCaptureSQLiteSnapshotDoesNotOverwriteExistingFiles(t *testing.T) {
 	source := openMemorySource(t)
-	root := t.TempDir()
+	root := secureStagingRoot(t)
 	canaryPath := filepath.Join(root, "redgres-sqlite-caller-name.db")
 	const canary = "caller-owned-canary"
 	if err := os.WriteFile(canaryPath, []byte(canary), 0o600); err != nil {
@@ -242,7 +242,7 @@ func TestCaptureSQLiteSnapshotRejectsInvalidSource(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := secureStagingRoot(t)
 			if _, err := CaptureSQLiteSnapshot(context.Background(), tt.source(t), root); err == nil {
 				t.Fatal("expected source rejection")
 			}
@@ -399,7 +399,7 @@ CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
 	}
 	assertSourceFilesExist(t, sourcePath)
 
-	root := t.TempDir()
+	root := secureStagingRoot(t)
 	writeCanary(t, root)
 	ctx := &cancelAfterErrChecksContext{Context: context.Background(), cancelAt: 4}
 	if _, err := CaptureSQLiteSnapshot(ctx, source, root); !errors.Is(err, context.Canceled) {
@@ -432,7 +432,7 @@ func TestCaptureSQLiteSnapshotRejectsReplacementBeforeFirstStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root := t.TempDir()
+	root := secureStagingRoot(t)
 	if _, err := CaptureSQLiteSnapshot(context.Background(), source, root); err == nil {
 		t.Fatal("expected replacement to fail closed before backup copy")
 	}
@@ -443,7 +443,7 @@ func TestCaptureSQLiteSnapshotRejectsReplacementBeforeFirstStep(t *testing.T) {
 }
 
 func TestCleanupTargetPreservesReplacement(t *testing.T) {
-	rootPath := t.TempDir()
+	rootPath := secureStagingRoot(t)
 	root, err := openSnapshotRoot(rootPath)
 	if err != nil {
 		t.Fatal(err)

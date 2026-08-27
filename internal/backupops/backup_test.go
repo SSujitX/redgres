@@ -48,7 +48,7 @@ VALUES ('postgres.database', 'project_copy', '0123456789abcdef0123456789abcdef')
 
 func TestCaptureRunsAndVerifiesControlState(t *testing.T) {
 	source := seedControlState(t)
-	stagingRoot := t.TempDir()
+	stagingRoot := secureStagingRoot(t)
 
 	result, err := Capture(context.Background(), source, stagingRoot)
 	if err != nil {
@@ -150,7 +150,7 @@ func TestCaptureKeepsSnapshotWhenVerificationFails(t *testing.T) {
 		t.Fatalf("seed bare source: %v", err)
 	}
 
-	stagingRoot := t.TempDir()
+	stagingRoot := secureStagingRoot(t)
 	if _, err := Capture(context.Background(), source, stagingRoot); err == nil {
 		t.Fatal("expected verification failure for unmigrated source")
 	}

@@ -222,7 +222,7 @@ func captureNamedOwnerSnapshot(t *testing.T, username string) SQLiteSnapshot {
 	); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := CaptureSQLiteSnapshot(context.Background(), source, t.TempDir())
+	snapshot, err := CaptureSQLiteSnapshot(context.Background(), source, secureStagingRoot(t))
 	if err != nil {
 		t.Fatal(err)
 	}

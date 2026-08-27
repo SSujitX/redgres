@@ -41,7 +41,7 @@ VALUES ('postgres.database', 'project_copy', '0123456789abcdef0123456789abcdef')
 		t.Fatal(err)
 	}
 
-	snapshot, err := CaptureSQLiteSnapshot(context.Background(), source, t.TempDir())
+	snapshot, err := CaptureSQLiteSnapshot(context.Background(), source, secureStagingRoot(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func (b *fakeSQLiteRestoreBackup) Finish() error {
 
 func captureSQLiteRestoreFixture(t *testing.T, mutate func(*sql.DB)) SQLiteSnapshot {
 	t.Helper()
-	return captureSQLiteRestoreFixtureAt(t, t.TempDir(), mutate)
+	return captureSQLiteRestoreFixtureAt(t, secureStagingRoot(t), mutate)
 }
 
 func captureSQLiteRestoreFixtureAt(t *testing.T, stagingRoot string, mutate func(*sql.DB)) SQLiteSnapshot {

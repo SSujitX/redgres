@@ -39,7 +39,7 @@ func createSnapshotDir(t *testing.T, root, name string, mod time.Time) {
 
 func TestApplyRetentionRemovesOldestBeyondKeep(t *testing.T) {
 	const total, keep = 9, 7
-	root := t.TempDir()
+	root := secureStagingRoot(t)
 	base := time.Now().Add(-48 * time.Hour)
 
 	// names[i] is created with ModTime base + i hours; index 0 is oldest.
@@ -132,7 +132,7 @@ func TestApplyRetentionRemovesOldestBeyondKeep(t *testing.T) {
 // looks like a producer operation directory is never followed or removed, and
 // its target outside the staging root is untouched.
 func TestApplyRetentionIgnoresProducerNamedSymlink(t *testing.T) {
-	root := t.TempDir()
+	root := secureStagingRoot(t)
 	outside := filepath.Join(t.TempDir(), "outside-target")
 	if err := os.Mkdir(outside, 0o700); err != nil {
 		t.Fatal(err)
@@ -245,7 +245,7 @@ func TestApplyRetentionRootSwapFailsClosed(t *testing.T) {
 // TestApplyRetentionProtectsName ensures a protected name is never removed,
 // even when clock skew (a future-mtime sibling) would otherwise prune it.
 func TestApplyRetentionProtectsName(t *testing.T) {
-	root := t.TempDir()
+	root := secureStagingRoot(t)
 	base := time.Now().Add(-24 * time.Hour)
 
 	futureName := randomSnapshotName(t)
