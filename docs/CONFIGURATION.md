@@ -10,6 +10,10 @@ Status: implemented in `internal/config`.
 |---|---:|---|---|
 | `REDGRES_ENVIRONMENT` | Yes | `production` | `development` or `production`; controls fail-closed validation, not authorization |
 | `REDGRES_ADDRESS` | Yes | `127.0.0.1:8790` | Production must be loopback unless an ADR approves a trusted private bind |
+| `REDGRES_BOOTSTRAP_ADDRESS` | No | `0.0.0.0:8989` | Optional first-run bootstrap listener (PRD OPS-008, ADR-012). Empty disables it (fail-closed). May bind a non-loopback address (the ADR-012 exception, source-restricted by the firewall rather than the bind). Must be a distinct `host:port` from `REDGRES_ADDRESS`; validation errors never echo the value. |
+| `REDGRES_BOOTSTRAP_TTL` | No | `30m` | Bootstrap hard-cap auto-close; must be positive. The listener closes itself after this duration even if setup is abandoned. |
+| `REDGRES_CLOUDFLARE_TOKEN_FILE` | No | `/var/lib/redgres/secrets/cloudflare-api-token` | Optional path where the per-zone Cloudflare API token is stored (server-side secret, PRD OPS-009). Empty disables the Domain & Network wizard. The value is a path, never the token itself; production must be under `/var/lib/redgres`. |
+| `REDGRES_TUNNEL_TOKEN_FILE` | No | `/var/lib/redgres/secrets/cloudflared-tunnel-token` | Optional path where the one-time cloudflared tunnel connector token is stored (server-side secret, PRD OPS-009). Written by apply, never returned by the API; cloudflared loads it via `TUNNEL_TOKEN` / systemd `LoadCredential`. Production must be under `/var/lib/redgres`. |
 | `REDGRES_BASE_URL` | Yes | `https://console.onelifeltd.xyz` | Exact **browser page origin** for cookie/origin checks; production must be `https`. This is not the listen address. |
 | `REDGRES_SQLITE_PATH` | Yes | `/var/lib/redgres/redgres.db` | Must not contain `?`, `#`, `%`, or NUL. Production path must be a file beneath a verified real `/var/lib/redgres` directory (not a lexical prefix check alone); development keeps relative and temporary paths |
 | `REDGRES_SESSION_TTL` | No | `12h` | Idle expiry; minimum 5m, maximum 24h |
