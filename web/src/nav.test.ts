@@ -18,6 +18,12 @@ describe("visibleNavEntries", () => {
     expect(visibleNavEntries("postgres-create").map((entry) => entry.id)).toContain("postgres-security");
     expect(visibleNavEntries("postgres").map((entry) => entry.id)).not.toContain("redis-presets");
   });
+
+  it("keeps Domain & Network visible in the System group", () => {
+    const ids = visibleNavEntries("overview").map((entry) => entry.id);
+    expect(ids).toContain("system");
+    expect(ids).toContain("domain");
+  });
 });
 
 describe("filterDocs", () => {

@@ -16,6 +16,7 @@ export type SectionId =
   | "redis-presets"
   | "audit"
   | "system"
+  | "domain"
   | "docs";
 
 export type ServiceId = "postgres" | "redis";
@@ -49,6 +50,7 @@ export const navEntries: NavEntry[] = [
   { id: "redis-presets", label: "Permission presets", group: "Redis ACL", service: "redis", icon: "sliders", nested: true },
   { id: "audit", label: "Audit", group: "Audit", service: null, icon: "audit", nested: false },
   { id: "system", label: "System", group: "System", service: null, icon: "system", nested: false },
+  { id: "domain", label: "Domain & Network", group: "System", service: null, icon: "shield", nested: false },
   { id: "docs", label: "Documentation", group: "Documentation", service: null, icon: "docs", nested: false },
 ];
 
