@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/SSujitX/redgres/internal/audit"
+	"github.com/SSujitX/redgres/internal/bootstrap"
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/database"
 	"github.com/SSujitX/redgres/internal/httpapi"
@@ -92,9 +93,12 @@ func run(args []string) error {
 	defer stop()
 	go pollQueuedDuplicates(ctx, ops, pg, audit.Store{DB: db}, log)
 
+	api := httpapi.New(cfg, db, assets, log, pg, rd)
+	handler := api.Handler()
+
 	srv := &http.Server{
 		Addr:              cfg.Address,
-		Handler:           httpapi.New(cfg, db, assets, log, pg, rd).Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -107,6 +111,16 @@ func run(args []string) error {
 		log.Info("listening", slog.String("address", cfg.Address))
 		errCh <- srv.ListenAndServe()
 	}()
+
+	if cfg.BootstrapAddress != "" {
+		bootstrapLn := bootstrap.New(handler, cfg.BootstrapAddress, cfg.BootstrapTTL)
+		defer bootstrapLn.Close()
+		if err := bootstrapLn.Start(); err != nil {
+			_ = srv.Close()
+			return err
+		}
+		log.Info("bootstrap listening", slog.String("address", bootstrapLn.Addr()), slog.Duration("ttl", cfg.BootstrapTTL))
+	}
 
 	select {
 	case err := <-errCh:
