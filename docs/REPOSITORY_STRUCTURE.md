@@ -147,7 +147,8 @@ Redgres/
 │   ├── agents/                    # planner, bounded implementer, and independent reviewers
 │   └── rules/                     # persistent and path-routed project instructions
 ├── .github/
-│   ├── workflows/ci.yml          # authoritative Wave 0 check list
+│   ├── workflows/install.yml     # push/PR: installer dry-run only
+│   ├── workflows/ci.yml          # Wave 0 backup (workflow_dispatch)
 │   ├── ISSUE_TEMPLATE/
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── .env.example
