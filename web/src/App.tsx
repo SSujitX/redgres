@@ -6,9 +6,14 @@ import LoginPage from "./features/auth/LoginPage";
 type View =
   | { kind: "loading" }
   | { kind: "login" }
-  | { kind: "shell"; username: string; csrf: string; toolLinks: ToolLinks };
+  | { kind: "shell"; username: string; csrf: string; toolLinks: ToolLinks; version?: string };
 
-function shellFromSession(body: { owner?: { username?: string }; csrf_token?: string; tool_links?: unknown }): View | null {
+function shellFromSession(body: {
+  owner?: { username?: string };
+  csrf_token?: string;
+  tool_links?: unknown;
+  version?: unknown;
+}): View | null {
   if (!body.owner?.username || !body.csrf_token) {
     return null;
   }
@@ -17,6 +22,7 @@ function shellFromSession(body: { owner?: { username?: string }; csrf_token?: st
     username: body.owner.username,
     csrf: body.csrf_token,
     toolLinks: parseToolLinks(body.tool_links),
+    version: typeof body.version === "string" && body.version !== "" ? body.version : undefined,
   };
 }
 
@@ -115,7 +121,9 @@ export default function App() {
         username={view.username}
         csrf={view.csrf}
         toolLinks={view.toolLinks}
+        version={view.version}
         onLogout={() => void handleLogout()}
+        onPasswordChanged={() => setView({ kind: "login" })}
         loggingOut={loggingOut}
       />
     </>
