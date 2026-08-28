@@ -81,10 +81,10 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 
 - Authenticated `GET /api/v1/status` on mount and Refresh (no polling, no CSRF, no query). Same strict complete-envelope validation and five independent cards as Overview: Redgres state, PostgreSQL direct, PgBouncer, Redis, and tool links. Accepted states follow the ID-specific API contract and paint Reachable, Unavailable, or **Not configured**; contract-invalid states such as PgBouncer `not_implemented` or tool links `unavailable` reject the whole envelope. Development default for PgBouncer is **Not configured**, not “Not connected”. One valid component failure does not blank the other cards.
 - Does not fetch `GET /api/v1/redis/status`. Redis metrics stay Overview-only. Tool-link `<a href>`s stay Overview-only from GET `/session`; System paints the tool_links **state** card only.
-- Does not paint host, port, DSN, password, token, SQL, driver text, raw errors, version, uptime, URLs, or `request_id` as operator copy. There is no release/version line: GET `/status` and GET `/session` have no such field.
+- Does not paint host, port, DSN, password, token, SQL, driver text, raw errors, uptime, URLs, or `request_id` as operator copy. GET `/status` has no version field; GET `/session` carries the operator-facing `version` string (default `dev`, ldflags-overridable) which the sidebar footer renders as a compact pill.
 - Login never fetches `/status`. HTTP 401 uses “Your session has expired. Sign in again to continue.” Envelope or network failure uses “Component status is unavailable. Try again.” Loading copy is “Loading component status.”
 - State stays in memory only (no `localStorage` / `sessionStorage` / `location.search`). Refresh aborts an in-flight request and refetches. The System header is neutral (no PostgreSQL/Redis page-header rail); PostgreSQL and Redis service rails stay on the matching status cards only.
-- Residual: release line. The authenticated shell aggregate-health indicator is implemented; it does not claim the absent release/version contract.
+- The authenticated shell aggregate-health indicator and the sidebar footer version pill are implemented. The footer version comes from GET `/session` `version` (a build-time string, never a secret); it is absent when the field is missing.
 
 ## Documentation
 
