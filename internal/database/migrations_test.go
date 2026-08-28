@@ -61,7 +61,7 @@ func TestMigrateCreatesControlStateSchema(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 3 {
+	if version != 4 {
 		t.Fatalf("schema_migrations count = %d", version)
 	}
 }
