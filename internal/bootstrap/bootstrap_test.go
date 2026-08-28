@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -206,4 +208,59 @@ func TestTimerNotArmedBeforeStart(t *testing.T) {
 	addr := l.Addr()
 	dial(t, addr)
 	_ = l.Close()
+}
+
+func TestWriteClosedStateAndMarkerPresent(t *testing.T) {
+	dir := t.TempDir()
+	sqlitePath := filepath.Join(dir, "redgres.db")
+	if MarkerPresent(sqlitePath) {
+		t.Fatal("missing marker must not skip bootstrap")
+	}
+	if err := WriteClosedState(sqlitePath); err != nil {
+		t.Fatalf("WriteClosedState: %v", err)
+	}
+	if !MarkerPresent(sqlitePath) {
+		t.Fatal("marker should be present after WriteClosedState")
+	}
+	if _, err := os.Lstat(UFWRemoveRequestPath(sqlitePath)); err != nil {
+		t.Fatalf("ufw request: %v", err)
+	}
+	if err := WriteClosedState(sqlitePath); err != nil {
+		t.Fatalf("idempotent WriteClosedState: %v", err)
+	}
+}
+
+func TestTimerPersistsClosedState(t *testing.T) {
+	dir := t.TempDir()
+	sqlitePath := filepath.Join(dir, "redgres.db")
+	l := New(okHandler(), "127.0.0.1:0", 200*time.Millisecond)
+	l.SetSQLitePath(sqlitePath)
+	if err := l.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	assertRefused(t, l.Addr())
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if MarkerPresent(sqlitePath) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("TTL close did not persist bootstrap.closed")
+}
+
+func TestProcessCloseDoesNotPersist(t *testing.T) {
+	dir := t.TempDir()
+	sqlitePath := filepath.Join(dir, "redgres.db")
+	l := New(okHandler(), "127.0.0.1:0", time.Minute)
+	l.SetSQLitePath(sqlitePath)
+	if err := l.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if MarkerPresent(sqlitePath) {
+		t.Fatal("SIGTERM Close must not persist closed (restart during setup must reopen bootstrap)")
+	}
 }

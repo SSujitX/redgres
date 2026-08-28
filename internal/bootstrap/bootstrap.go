@@ -10,6 +10,8 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -36,6 +38,8 @@ type Listener struct {
 
 	closeOnce sync.Once
 	closeErr  error
+
+	sqlitePath string
 }
 
 // New prepares a bootstrap listener. A non-positive ttl falls back to
@@ -74,11 +78,78 @@ func (l *Listener) Start() error {
 	}
 	l.listener = ln
 	l.addr = ln.Addr().String()
+	sqlitePath := l.sqlitePath
 	// Arm the timer only now that the port is open: the exposure window is the
 	// port-open window. The timer is stored under mu so the callback observes a
-	// synchronized value.
-	l.timer = time.AfterFunc(l.ttl, func() { _ = l.Close() })
+	// synchronized value. TTL persist writes the closed sentinel so a later
+	// systemd restart cannot reopen :8989 (process SIGTERM Close does not).
+	l.timer = time.AfterFunc(l.ttl, func() {
+		_ = WriteClosedState(sqlitePath)
+		_ = l.Close()
+	})
 	go func() { _ = l.server.Serve(ln) }()
+	return nil
+}
+
+const (
+	closedMarkerName = "bootstrap.closed"
+	ufwRequestName   = "bootstrap-ufw-remove.requested"
+)
+
+// SetSQLitePath records the control-state path so the TTL callback can persist
+// "already closed" next to SQLite. Process Close/SIGTERM does not persist.
+func (l *Listener) SetSQLitePath(sqlitePath string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.sqlitePath = sqlitePath
+}
+
+// ClosedMarkerPath is the sentinel next to the SQLite file.
+func ClosedMarkerPath(sqlitePath string) string {
+	if sqlitePath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(sqlitePath), closedMarkerName)
+}
+
+// UFWRemoveRequestPath is the systemd path-unit trigger next to SQLite.
+func UFWRemoveRequestPath(sqlitePath string) string {
+	if sqlitePath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(sqlitePath), ufwRequestName)
+}
+
+// MarkerPresent reports whether a closed sentinel exists. Any existing
+// filesystem object counts so a restart cannot reopen the public port.
+func MarkerPresent(sqlitePath string) bool {
+	path := ClosedMarkerPath(sqlitePath)
+	if path == "" {
+		return false
+	}
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+// WriteClosedState writes the closed sentinel and UFW-remove request. Empty
+// sqlitePath is a no-op. Existing files are left in place (idempotent).
+func WriteClosedState(sqlitePath string) error {
+	if sqlitePath == "" {
+		return nil
+	}
+	dir := filepath.Dir(sqlitePath)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	for _, name := range []string{closedMarkerName, ufwRequestName} {
+		path := filepath.Join(dir, name)
+		if _, err := os.Lstat(path); err == nil {
+			continue
+		}
+		if err := os.WriteFile(path, []byte("1\n"), 0o600); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
