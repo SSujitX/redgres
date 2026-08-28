@@ -184,6 +184,10 @@ redgres_write_unit_file() {
   local binary_path="$1"
   local unit_path="${REDGRES_UNIT_PATH}"
   /usr/bin/mkdir -p "$(/usr/bin/dirname "${unit_path}")"
+  if declare -F redgres_app_unit_body >/dev/null 2>&1; then
+    redgres_app_unit_body "${binary_path}" >"${unit_path}"
+    return 0
+  fi
   cat >"${unit_path}" <<EOF
 [Unit]
 Description=Redgres control plane
@@ -192,6 +196,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=redgres
+Group=redgres
+UMask=0077
 EnvironmentFile=-/etc/redgres/redgres.env
 ExecStart=${binary_path} serve
 Restart=on-failure
