@@ -586,7 +586,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   const tlsRS = status?.tls?.rs ?? status?.tls?.redis ?? "not_issued";
 
   return (
-    <article>
+    <article className="domain-page">
       <header className="page-header">
         <h1>Domain & Network</h1>
         <p>
@@ -611,9 +611,9 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
       ) : null}
 
       {status && !statusError ? (
-        <section aria-labelledby="domain-status-heading">
+        <section className="panel" aria-labelledby="domain-status-heading">
           <h2 id="domain-status-heading">Status</h2>
-          <dl className="fact-list">
+          <dl className="fact-list domain-facts">
             <div>
               <dt>Configured</dt>
               <dd>{configured ? "Yes" : "No"}</dd>
@@ -672,13 +672,13 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
             </ul>
           ) : null}
           {configured && !accessAllow && isManual ? (
-            <div>
+            <div className="panel-sub">
               <h3>3. Manual DNS and Access</h3>
               <p className="muted-copy">
                 Complete the DNS records and Cloudflare Access steps below outside Redgres, then confirm when done.
               </p>
               {manualInstructions.length > 0 ? (
-                <ol className="muted-copy">
+                <ol className="domain-instructions">
                   {manualInstructions.map((item) => (
                     <li key={item}>{item}</li>
                   ))}
@@ -690,7 +690,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                 </p>
               ) : null}
               {manualVerifyResults ? (
-                <ul className="muted-copy">
+                <ul className="domain-verify-results">
                   {Object.entries(manualVerifyResults).map(([host, result]) => (
                     <li key={host}>
                       <span className="bidi-isolate identifier">{displayText(host)}</span>: {displayText(result)}
@@ -699,10 +699,10 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                 </ul>
               ) : null}
               <div className="form-actions">
-                <button type="button" disabled={manualVerifyBusy} onClick={() => void handleManualVerify()}>
+                <button type="button" className="text-button" disabled={manualVerifyBusy} onClick={() => void handleManualVerify()}>
                   Verify public DNS
                 </button>
-                <button type="button" disabled={manualAccessBusy} onClick={() => void handleManualConfirmAccess()}>
+                <button type="button" className="primary-button" disabled={manualAccessBusy} onClick={() => void handleManualConfirmAccess()}>
                   Access configured manually
                 </button>
               </div>
@@ -714,7 +714,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
             </div>
           ) : null}
           {configured && !accessAllow && !isManual ? (
-            <form onSubmit={handleAccessAllow} autoComplete="off">
+            <form className="panel-sub" onSubmit={handleAccessAllow} autoComplete="off">
               <h3>3. Access allow policy</h3>
               <p className="muted-copy">
                 Add up to 8 emails allowed by Cloudflare Access for the tunnel hostnames (console, pgAdmin, Redis
@@ -756,13 +756,13 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                   {allowError}
                 </p>
               ) : null}
-              <button type="submit" disabled={allowBusy || allowEmails.every((e) => e.trim() === "")}>
+              <button type="submit" className="primary-button" disabled={allowBusy || allowEmails.every((e) => e.trim() === "")}>
                 Add Access allow policy
               </button>
             </form>
           ) : null}
           {configured && accessAllow && credential !== "oauth" && !isManual ? (
-            <form onSubmit={handleOAuthConnect} autoComplete="off">
+            <form className="panel-sub" onSubmit={handleOAuthConnect} autoComplete="off">
               <h3>4. Connect Cloudflare OAuth</h3>
               <p className="muted-copy">
                 Create a self-hosted OAuth app in Cloudflare, paste client ID and secret, then connect. Redirect URI:{" "}
@@ -802,13 +802,13 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                   {oauthError}
                 </p>
               ) : null}
-              <button type="submit" disabled={oauthBusy || oauthClientID.trim() === "" || oauthClientSecret.trim() === ""}>
+              <button type="submit" className="primary-button" disabled={oauthBusy || oauthClientID.trim() === "" || oauthClientSecret.trim() === ""}>
                 Connect Cloudflare
               </button>
             </form>
           ) : null}
           {configured && accessAllow && (tlsDb !== "issued" || tlsRS !== "issued") && status.dns_provider !== "manual" ? (
-            <div>
+            <div className="panel-sub">
               <h3>5. Issue TLS certificates (db + rs)</h3>
               <p className="muted-copy">
                 Issues Let&apos;s Encrypt DNS-01 certificates for grey-cloud db and rs hostnames via certbot.
@@ -818,13 +818,13 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                   {tlsError}
                 </p>
               ) : null}
-              <button type="button" disabled={tlsBusy} onClick={() => void handleTLSIssue()}>
+              <button type="button" className="primary-button" disabled={tlsBusy} onClick={() => void handleTLSIssue()}>
                 Issue TLS certificates
               </button>
             </div>
           ) : null}
           {configured && accessAllow && bootstrapOpen ? (
-            <div>
+            <div className="panel-sub">
               <h3>6. Close bootstrap</h3>
               <p className="muted-copy">
                 After you can open the console hostname through Tunnel + Access, close the temporary public bootstrap
@@ -838,6 +838,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               <button
                 ref={confirmButtonRef}
                 type="button"
+                className="primary-button"
                 disabled={confirmBusy}
                 onClick={() => {
                   setConfirmTyped("");
@@ -853,7 +854,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
             <button
               ref={disconnectButtonRef}
               type="button"
-              className="text-button"
+              className="danger-button"
               onClick={() => {
                 setDisconnectConfirm("");
                 setDisconnectError("");
@@ -868,10 +869,9 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
 
       {showWizard ? (
         <>
-          <section aria-labelledby="domain-provider-heading">
+          <section className="panel" aria-labelledby="domain-provider-heading">
             <h2 id="domain-provider-heading">1. DNS provider</h2>
-            <fieldset className="field-stack">
-              <legend className="sr-only">DNS provider</legend>
+            <fieldset className="field-stack provider-fieldset">
               <label>
                 <input
                   type="radio"
@@ -896,12 +896,12 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
           </section>
 
           {showCloudflareTokenWizard ? (
-          <section aria-labelledby="domain-token-heading">
+          <section className="panel" aria-labelledby="domain-token-heading">
             <h2 id="domain-token-heading">2. Cloudflare API token</h2>
             <p className="muted-copy">
               Create a custom token scoped to your zone with the permissions below. Redgres stores it server-side only.
             </p>
-            <ul className="muted-copy">
+            <ul className="domain-token-permissions">
               {CLOUDFLARE_TOKEN_PERMISSIONS.map((item) => (
                 <li key={item}>{item}</li>
               ))}
@@ -953,14 +953,14 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                   Token stored on the server. It is not shown again.
                 </p>
               ) : null}
-              <button type="submit" disabled={tokenBusy || token.trim() === ""}>
+              <button type="submit" className="primary-button" disabled={tokenBusy || token.trim() === ""}>
                 Store token
               </button>
             </form>
           </section>
           ) : null}
 
-          <section aria-labelledby="domain-apply-heading">
+          <section className="panel" aria-labelledby="domain-apply-heading">
             <h2 id="domain-apply-heading">{dnsProvider === "manual" ? "2. Save hostname plan" : "3. Apply tunnel and DNS"}</h2>
             <p className="muted-copy">
               {dnsProvider === "manual"
@@ -1039,7 +1039,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                   (it is not re-checked in this browser session).
                 </p>
               ) : null}
-              <button type="submit" disabled={!canApply}>
+              <button type="submit" className="primary-button" disabled={!canApply}>
                 {dnsProvider === "manual" ? "Save manual plan" : "Apply domain"}
               </button>
             </form>
@@ -1048,7 +1048,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
       ) : null}
 
       {applyResult ? (
-        <section aria-labelledby="domain-apply-result-heading">
+        <section className="panel" aria-labelledby="domain-apply-result-heading">
           <h2 id="domain-apply-result-heading">Apply result</h2>
           <dl className="fact-list">
             <div>
@@ -1289,7 +1289,7 @@ function HostnameConfirmDialog({
             <button type="button" className="text-button" disabled={submitting} onClick={onCancel}>
               Cancel
             </button>
-            <button type="submit" disabled={!canSubmit}>
+            <button type="submit" className="danger-button" disabled={!canSubmit}>
               {submitLabel}
             </button>
           </div>
