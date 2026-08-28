@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Redgres — Self-hosted PostgreSQL and Redis on your Ubuntu VPS</title>
+    <meta
+      name="description"
+      content="Redgres is a self-hosted control plane for one PostgreSQL cluster and one Redis instance. Raw Ubuntu install with deploy/install.sh — not Supabase, Neon, Prisma, or Drizzle."
+    />
+    <link rel="canonical" href="https://redgres.com/" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="theme-color" content="#f4f6f8" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Redgres" />
+    <meta property="og:title" content="Redgres — Self-hosted PostgreSQL and Redis" />
+    <meta
+      property="og:description"
+      content="Raw Ubuntu VPS install of one PostgreSQL cluster and one Redis instance, plus an operator console. Not a hosted DBaaS. Not an ORM."
+    />
+    <meta property="og:url" content="https://redgres.com/" />
+    <meta property="og:image" content="https://redgres.com/assets/og.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Redgres — Self-hosted PostgreSQL and Redis" />
+    <meta
+      name="twitter:description"
+      content="Raw Ubuntu install for PostgreSQL 17/18 and Redis 8.2/8.8. Connect with psql, Prisma, Drizzle, or any driver."
+    />
+    <link rel="icon" type="image/png" sizes="128x128" href="assets/redgres-favicon-light.png" />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="128x128"
+      media="(prefers-color-scheme: dark)"
+      href="assets/redgres-favicon-dark.png"
+    />
+    <link rel="apple-touch-icon" href="assets/redgres-logo-light.png" />
+    <link rel="alternate" type="text/plain" href="llms.txt" title="LLM index" />
+    <link rel="stylesheet" href="assets/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Redgres",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Ubuntu 24.04, Ubuntu 26.04",
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "url": "https://redgres.com/",
+        "downloadUrl": "https://github.com/SSujitX/redgres",
+        "description": "Self-hosted control plane for one PostgreSQL cluster and one Redis instance. Raw package install on an Ubuntu VPS.",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "author": {
+          "@type": "Person",
+          "name": "SSujitX",
+          "email": "ssujitxx@gmail.com",
+          "url": "https://github.com/SSujitX"
+        }
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "Redgres",
+        "url": "https://redgres.com/",
+        "email": "ssujitxx@gmail.com",
+        "sameAs": ["https://github.com/SSujitX/redgres"]
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Is Redgres a self-hosted Supabase or Neon alternative?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Supabase and Neon are hosted or platform Postgres products. Redgres installs raw PostgreSQL and Redis on your Ubuntu VPS and gives you an operator console. You keep the data directory, roles, and network."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I use Prisma or Drizzle with Redgres?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Redgres provisions real PostgreSQL. Your app can use Prisma, Drizzle, psql, pgx, or any driver. Redgres itself uses parameterized pgx and does not embed an ORM."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What does a raw Redgres installation include?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Named Ubuntu/PGDG packages postgresql-17 or postgresql-18, Docker Redis 8.2 or 8.8, optional PgBouncer, and the redgres.service unit. Upstream latest tags are rejected."
+            }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip" href="#content">Skip to content</a>
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand" href="./" aria-label="Redgres home">
+          <img class="brand-logo" src="assets/redgres-logo-light.png" width="164" alt="Redgres" />
+        </a>
+        <nav aria-label="Primary">
+          <a href="./" aria-current="page">Home</a>
+          <a href="install/">Raw install</a>
+          <a href="compare/">Compare</a>
+          <a href="sponsor/">Sponsor</a>
+          <a href="https://github.com/SSujitX/redgres">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <p class="banner"><span class="wrap">Development software. Not production-accepted.</span></p>
+    <main id="content">
+      <div class="wrap">
+        <p class="engines">
+          <span class="chip chip-pg">PostgreSQL 17 | 18</span>
+          <span class="chip chip-redis">Redis 8.2 | 8.8</span>
+        </p>
+        <h1>Self-hosted PostgreSQL and Redis on your Ubuntu VPS</h1>
+        <p class="lede">
+          Redgres is a control plane for <strong>one PostgreSQL cluster</strong> and
+          <strong>one Redis instance</strong>. The full-stack path is a raw installation:
+          Ubuntu packages, Docker Redis, optional PgBouncer, and a systemd unit. It is not a
+          hosted DBaaS and not an ORM.
+        </p>
+        <p class="actions">
+          <a class="btn btn-primary" href="install/">Raw install commands</a>
+          <a class="btn btn-ghost" href="compare/">vs Supabase, Neon, Prisma</a>
+        </p>
+
+        <section class="panel" aria-labelledby="install-heading">
+          <div class="term-head">
+            <span id="install-heading">Full stack on Ubuntu 24.04 or 26.04</span>
+            <button type="button" class="copy" data-copy="home-install">Copy</button>
+          </div>
+          <pre id="home-install"><code>cd ~
+git clone https://github.com/SSujitX/redgres.git
+cd ~/redgres
+sudo ./deploy/install.sh</code></pre>
+        </section>
+
+        <h2>What you get</h2>
+        <p>
+          An operator console (Go + React) that provisions project databases and Redis ACL users
+          on a server you control. Apps connect with <code>psql</code>, Prisma, Drizzle, pgx, or
+          any PostgreSQL driver. The browser never talks to Postgres or Redis directly.
+        </p>
+
+        <h2>What it is not</h2>
+        <p>
+          Not Supabase (no Auth, Storage, or generated API). Not Neon (no serverless
+          scale-to-zero). Not Prisma or Drizzle (those stay in your application). See
+          <a href="compare/">the comparison</a>.
+        </p>
+
+        <section class="panel" aria-labelledby="sponsor-heading">
+          <h2 id="sponsor-heading">Looking for sponsorship</h2>
+          <p>
+            Redgres is Apache-2.0 and still finishing production gates. If you can fund test
+            hosts, release work, or partnership, email
+            <a class="mail" href="mailto:ssujitxx@gmail.com?subject=Redgres%20sponsorship">ssujitxx@gmail.com</a>.
+          </p>
+          <p class="actions">
+            <a class="btn btn-primary" href="mailto:ssujitxx@gmail.com?subject=Redgres%20sponsorship">Email ssujitxx@gmail.com</a>
+            <a class="btn btn-ghost" href="sponsor/">Sponsorship details</a>
+          </p>
+        </section>
+
+        <section class="faq" aria-labelledby="faq-heading">
+          <h2 id="faq-heading">FAQ</h2>
+          <details>
+            <summary>Is Redgres a self-hosted Supabase or Neon alternative?</summary>
+            <p>
+              No. Supabase and Neon are hosted or platform Postgres products. Redgres installs
+              raw PostgreSQL and Redis on your VPS and gives you an operator console.
+            </p>
+          </details>
+          <details>
+            <summary>Can I use Prisma or Drizzle with Redgres?</summary>
+            <p>
+              Yes. Your app talks to the PostgreSQL you installed. Redgres does not embed an ORM.
+            </p>
+          </details>
+          <details>
+            <summary>Which versions are in scope?</summary>
+            <p>PostgreSQL 17 or 18, Redis 8.2 or 8.8, Ubuntu 24.04 or 26.04. No upstream latest.</p>
+          </details>
+        </section>
+      </div>
+    </main>
+    <footer class="site-footer">
+      <div class="wrap">
+        <nav aria-label="Footer">
+          <a href="install/">Install</a>
+          <a href="compare/">Compare</a>
+          <a href="sponsor/">Sponsor</a>
+          <a href="https://github.com/SSujitX/redgres#debug-logs-and-fixes-on-the-server">Debug on the server</a>
+          <a href="https://github.com/SSujitX/redgres">Source</a>
+        </nav>
+        <p>Looking for sponsorship — <a class="mail" href="mailto:ssujitxx@gmail.com">ssujitxx@gmail.com</a></p>
+        <p>Apache-2.0. Last updated 29 August 2026.</p>
+      </div>
+    </footer>
+    <script src="assets/copy.js"></script>
+  </body>
+</html>
