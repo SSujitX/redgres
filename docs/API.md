@@ -38,6 +38,7 @@ Core error codes: `unauthorized`, `forbidden`, `csrf_invalid`, `rate_limited`, `
 |---|---|---|
 | POST | `/api/v1/auth/login` | Authenticate owner and issue session + CSRF |
 | POST | `/api/v1/auth/logout` | Delete session |
+| POST | `/api/v1/auth/password` | Change owner password (verify current, invalidate all sessions) |
 | GET | `/api/v1/session` | Return owner identity, rotated CSRF, enabled capabilities/tool links |
 | GET | `/api/v1/healthz` | Liveness/state DB health, no auth secrets |
 | GET | `/api/v1/status` | Authenticated component status |
@@ -57,6 +58,8 @@ Generic failure is `401` `unauthorized` with message `Invalid username or passwo
 
 **POST `/api/v1/auth/logout`** requires session + origin + CSRF. Success `200`: `{"ok":true,"request_id":"…"}` and clears the cookie (`MaxAge=-1`).
 
+**POST `/api/v1/auth/password`** requires session + origin + CSRF and is credential-bearing (`Cache-Control: no-store, max-age=0`, `Pragma: no-cache`). Body: `{"current_password":"…","new_password":"…"}`; unknown fields are rejected. It verifies the current password through the same reauthentication path as destructive actions (rate-limited, `reauthIPPrefix` stream), rejects a new password equal to the current one (`422` `same_as_current`), validates the new password against the owner strength policy (≥15 runes, ≤1024 bytes, not equal to the username), stores the new Argon2id hash, deletes every owner session, and records the `owner.password_change` success audit in the same SQLite transaction (an audit failure rolls the hash update and session deletion back). Success `200`: `{"ok":true,"request_id":"…"}` and clears the cookie (`MaxAge=-1`). Wrong current password is `403` `reauth_required` `Current password is incorrect.` and records a `failure` audit. A weak or too-long new password is `422` `validation_error` with `fields.new_password` (`too_weak`/`too_long`) and records a `failure` audit. Throttled reauthentication is `429` `rate_limited` plus `Retry-After` and records a `rate_limited` audit. The new password is never logged, audited, or returned.
+
 **GET `/api/v1/session`** requires a session cookie and does not require CSRF. It rotates the CSRF token. Success `200`:
 
 ```json
@@ -69,9 +72,12 @@ Generic failure is `401` `unauthorized` with message `Invalid username or passwo
     "redis.read", "redis.provision", "redis.credentials", "redis.destructive"
   ],
   "tool_links": {},
+  "version": "dev",
   "request_id": "…"
 }
 ```
+
+`version` is the Redgres release string; `"dev"` means an untagged local build, and release pipelines set it at build time via `-ldflags "-X github.com/SSujitX/redgres/internal/version.Version=…"`. It is operator-facing metadata only (not a capability, not a secret), so the shell footer can display it.
 
 `tool_links` is an object, never `null`. Unconfigured (both `REDGRES_PGADMIN_URL` and `REDGRES_REDISINSIGHT_URL` empty/unset) is `{}`. Configured keys are present only when that URL is set: string hrefs, never `null`, never `""`. Allowed keys: `pgadmin`, `redisinsight`. Example when both are set:
 
@@ -311,7 +317,7 @@ Manual mode: `"dns_provider":"manual"` with the same hostname map returns `{inst
 }
 ```
 
-`bootstrap_closed` is `true` when this call scheduled close of an open bootstrap listener (force Close remains the hard-cap timer path). Response includes `bootstrap_ufw_removed` and `bootstrap_ufw_attempted` when `REDGRES_BOOTSTRAP_UFW_REMOVE_CMD` is set. No Access allow yet → `409` `conflict`. No deployment → `404`. The UI requires typing the exact hostname before calling this endpoint.
+`bootstrap_closed` is `true` when this call scheduled close of an open bootstrap listener (force Close remains the hard-cap timer path). The handler also writes `bootstrap.closed` next to SQLite (so a systemd restart does not reopen `:8989`) and rewrites `/etc/redgres/redgres.env` to empty `REDGRES_BOOTSTRAP_ADDRESS`, `REDGRES_COOKIE_SECURE=true`, and `https://{console_hostname}` `REDGRES_BASE_URL`. Response includes `bootstrap_ufw_removed` and `bootstrap_ufw_attempted` when `REDGRES_BOOTSTRAP_UFW_REMOVE_CMD` is set; a path unit also removes UFW when `bootstrap-ufw-remove.requested` appears. No Access allow yet → `409` `conflict`. No deployment → `404`. The UI requires typing the exact hostname before calling this endpoint.
 
 **POST `/api/v1/domain/access-policy`** body `{"emails":["owner@example.com"]}`. Creates an Access **allow** policy on the wizard’s Access app (exact email selectors; trimmed/lowercased; deduped; max 8), verifies the policy via API reflection, then persists the policy id. Success `200`:
 
