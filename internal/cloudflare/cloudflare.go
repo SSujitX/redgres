@@ -41,8 +41,10 @@ type Tunnel struct {
 
 // Record is a created DNS record.
 type Record struct {
-	ID   string
-	Name string
+	ID      string
+	Name    string
+	Type    string
+	Proxied bool
 }
 
 // AccessApp is a created Cloudflare Access application.
@@ -64,6 +66,7 @@ type Client interface {
 	CreateTunnel(ctx context.Context, accountID, name string) (Tunnel, error)
 	ConfigureIngress(ctx context.Context, accountID, tunnelID, hostname, originHTTP string) error
 	CreateRecord(ctx context.Context, zoneID, name, content string, proxied bool) (Record, error)
+	CreateDNSRecord(ctx context.Context, zoneID, name, recordType, content string, proxied bool) (Record, error)
 	CreateAccessApp(ctx context.Context, accountID, domain string) (AccessApp, error)
 	CreateAccessPolicy(ctx context.Context, accountID, appID string, emails []string) (AccessPolicy, error)
 	DeleteTunnel(ctx context.Context, accountID, tunnelID string) error
@@ -247,14 +250,29 @@ func (c *HTTPClient) VerifyTunnel(ctx context.Context, accountID, tunnelID strin
 	return c.call(ctx, http.MethodGet, "/accounts/"+accountID+"/cfd_tunnel/"+tunnelID, nil, &result)
 }
 
-// CreateRecord creates a DNS record.
+// CreateRecord creates a proxied or grey-cloud CNAME record.
 func (c *HTTPClient) CreateRecord(ctx context.Context, zoneID, name, content string, proxied bool) (Record, error) {
+	return c.CreateDNSRecord(ctx, zoneID, name, "CNAME", content, proxied)
+}
+
+// CreateDNSRecord creates a DNS record of the given type (CNAME, A, or AAAA).
+func (c *HTTPClient) CreateDNSRecord(ctx context.Context, zoneID, name, recordType, content string, proxied bool) (Record, error) {
+	recordType = strings.ToUpper(strings.TrimSpace(recordType))
+	switch recordType {
+	case "CNAME", "A", "AAAA":
+	default:
+		return Record{}, errors.New("unsupported dns record type")
+	}
+	content = strings.TrimSpace(content)
+	if name == "" || content == "" {
+		return Record{}, errors.New("invalid dns record name or content")
+	}
 	var result struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
 	body := map[string]any{
-		"type":    "CNAME",
+		"type":    recordType,
 		"name":    name,
 		"content": content,
 		"proxied": proxied,
@@ -263,7 +281,7 @@ func (c *HTTPClient) CreateRecord(ctx context.Context, zoneID, name, content str
 	if err := c.call(ctx, http.MethodPost, "/zones/"+zoneID+"/dns_records", body, &result); err != nil {
 		return Record{}, err
 	}
-	return Record{ID: result.ID, Name: result.Name}, nil
+	return Record{ID: result.ID, Name: result.Name, Type: recordType, Proxied: proxied}, nil
 }
 
 // DeleteRecord deletes a DNS record.
