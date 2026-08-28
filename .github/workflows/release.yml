@@ -137,25 +137,21 @@ jobs:
           git tag -a "${TAG}" -m "Redgres ${TAG}"
           git push origin "${TAG}"
 
-      - name: Build commit changelog
+      - name: Build categorized release notes
         id: notes
         run: |
           set -euo pipefail
-          PREV="${{ steps.ver.outputs.previous_tag }}"
-          TAG="${{ steps.ver.outputs.tag }}"
-          {
-            echo "## Commits"
-            echo
-            if [[ -n "$PREV" ]]; then
-              git log "${PREV}..HEAD" --pretty=format:'- %s (%h)' --no-merges
-            else
-              git log HEAD --pretty=format:'- %s (%h)' --no-merges
-            fi
-            echo
-            echo
-            echo "_Tag ${TAG} from bump \`${{ steps.ver.outputs.bump }}\` (${{ steps.ver.outputs.current }} → ${{ steps.ver.outputs.version }})._"
-          } >"${RUNNER_TEMP}/release-notes.md"
+          chmod +x scripts/generate-release-notes.sh
+          ./scripts/generate-release-notes.sh \
+            "${{ steps.ver.outputs.previous_tag }}" \
+            "${{ steps.ver.outputs.tag }}" \
+            "${{ steps.ver.outputs.bump }}" \
+            "${{ steps.ver.outputs.current }}" \
+            "${{ steps.ver.outputs.version }}" \
+            >"${RUNNER_TEMP}/release-notes.md"
           echo "path=${RUNNER_TEMP}/release-notes.md" >>"$GITHUB_OUTPUT"
+          echo "---- release notes preview ----"
+          head -n 80 "${RUNNER_TEMP}/release-notes.md"
 
       - name: Build release tarball
         run: |
