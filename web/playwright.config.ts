@@ -6,13 +6,13 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   use: {
-    baseURL: "http://127.0.0.1:5273",
+    baseURL: "http://127.0.0.1:8791",
     trace: "on-first-retry",
   },
   webServer: {
-    command: "npm run build && npx vite preview --host 127.0.0.1 --port 5273 --strictPort",
-    url: "http://127.0.0.1:5273",
-    reuseExistingServer: false,
+    command: "npm run build && npx vite preview --host 127.0.0.1 --port 8791 --strictPort",
+    url: "http://127.0.0.1:8791",
+    reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },
   projects: [
