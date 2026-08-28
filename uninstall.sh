@@ -26,6 +26,7 @@ FORCE=0
 APP_ONLY=0
 PURGE_CONFIG=0
 PURGE_STATE=0
+KEEP_REMOTE=0
 
 for arg in "$@"; do
   case "${arg}" in
@@ -33,16 +34,18 @@ for arg in "$@"; do
     --app-only) APP_ONLY=1 ;;
     --purge-config) PURGE_CONFIG=1 ;;
     --purge-state) PURGE_STATE=1 ;;
+    --keep-remote) KEEP_REMOTE=1 ;;
     --help|-h)
       cat <<EOF
-Usage: uninstall.sh [-y|--force] [--app-only] [--purge-config] [--purge-state]
+Usage: uninstall.sh [-y|--force] [--app-only] [--keep-remote] [--purge-config] [--purge-state]
 
-Default (no --app-only): full purge — application, config, SQLite state, tunnel
-units, bootstrap firewall rule, Redgres Docker workloads, PostgreSQL clusters,
-Redis, and PgBouncer installed for this host.
+Default (no --app-only): full purge — application, config, SQLite state, Cloudflare
+DNS/tunnel/Access (via stored API token), certbot db/rs certificates, tunnel units,
+bootstrap firewall rule, Redgres Docker workloads, PostgreSQL, Redis, PgBouncer.
 
---app-only: remove only /opt/redgres and systemd units; databases and /etc|/var
-            state are preserved unless --purge-config / --purge-state are set.
+--keep-remote: local purge only; skip Cloudflare API and certbot delete.
+--app-only: remove only /opt/redgres and systemd units; databases preserved unless
+            --purge-config / --purge-state are set.
 EOF
       exit 0
       ;;
@@ -74,8 +77,9 @@ else
   printf '%b\n' "${YELLOW}    · Redgres     copy ${VAR_ROOT} and ${ETC_ROOT}${NC}"
   printf '%b\n' "${DIM}  There is no undo. This script does not create or verify backups.${NC}"
   printf '%b\n' ""
-  printf '%b\n' "${DIM}  Also removes: tunnel units, bootstrap :8989 firewall rule, Redgres Docker workloads.${NC}"
-  printf '%b\n' "${DIM}  Docker Engine stays installed.${NC}"
+  printf '%b\n' "${DIM}  Also removes: Cloudflare DNS/tunnel/Access (API), certbot db/rs certs, tunnel units,${NC}"
+  printf '%b\n' "${DIM}  bootstrap :8989 firewall rule, Redgres Docker workloads, cloudflared package.${NC}"
+  printf '%b\n' "${DIM}  Docker Engine stays installed. Use --keep-remote to skip Cloudflare/certbot.${NC}"
   printf '%b\n' ""
 fi
 
@@ -96,6 +100,165 @@ if [[ "${FORCE}" -ne 1 ]]; then
 else
   printf '%b\n' "${YELLOW}Force mode (-y): warnings shown above; confirmation skipped.${NC}"
 fi
+
+env_value_from_file() {
+  local key="$1" file="${2:-${ETC_ROOT}/redgres.env}" line
+  [[ -f "${file}" ]] || return 0
+  line="$(grep -E "^${key}=" "${file}" 2>/dev/null | tail -n1 || true)"
+  printf '%s' "${line#*=}"
+}
+
+remote_cloudflare_disconnect() {
+  local sqlite db_path env_file
+  [[ "${KEEP_REMOTE}" -eq 1 ]] && return 0
+  env_file="${ETC_ROOT}/redgres.env"
+  sqlite="$(env_value_from_file REDGRES_SQLITE_PATH "${env_file}")"
+  [[ -n "${sqlite}" ]] || sqlite="${VAR_ROOT}/redgres.db"
+  [[ -f "${sqlite}" ]] || return 0
+  command -v python3 >/dev/null 2>&1 || {
+    printf '%b\n' "         ${YELLOW}skipped — python3 required for Cloudflare API${NC}"
+    return 0
+  }
+  python3 - "${env_file}" "${sqlite}" <<'PY' || true
+import json, os, sqlite3, sys, urllib.error, urllib.request
+
+def load_env(path):
+    env = {}
+    if not os.path.isfile(path):
+        return env
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            env[key.strip()] = value.strip()
+    return env
+
+def read_token(env):
+    token_path = env.get("REDGRES_CLOUDFLARE_TOKEN_FILE", "/var/lib/redgres/secrets/cloudflare-api-token")
+    if token_path and os.path.isfile(token_path):
+        token = open(token_path, encoding="utf-8").read().strip()
+        if token:
+            return token
+    oauth_path = env.get("REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE", "")
+    if oauth_path and os.path.isfile(oauth_path):
+        try:
+            payload = json.load(open(oauth_path, encoding="utf-8"))
+            token = (payload.get("access_token") or "").strip()
+            if token:
+                return token
+        except (OSError, json.JSONDecodeError):
+            pass
+    return ""
+
+def cf_delete(path, token):
+    url = "https://api.cloudflare.com/client/v4" + path
+    req = urllib.request.Request(
+        url,
+        method="DELETE",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.status in (200, 404)
+    except urllib.error.HTTPError as err:
+        if err.code == 404:
+            return True
+        print(f"         warn: Cloudflare DELETE failed ({err.code})", file=sys.stderr)
+        return False
+
+env_path, db_path = sys.argv[1], sys.argv[2]
+env = load_env(env_path)
+sqlite = env.get("REDGRES_SQLITE_PATH", db_path)
+if not os.path.isfile(sqlite):
+    print("         no domain state (sqlite missing)")
+    raise SystemExit(0)
+con = sqlite3.connect(f"file:{sqlite}?mode=ro", uri=True)
+row = con.execute("SELECT payload FROM domain_deployment WHERE id = 1").fetchone()
+if not row:
+    print("         no domain configured")
+    raise SystemExit(0)
+dep = json.loads(row[0])
+if (dep.get("dns_provider") or "").strip().lower() == "manual":
+    print("         manual DNS — Cloudflare API skipped")
+    raise SystemExit(0)
+token = read_token(env)
+if not token:
+    print("         warn: no Cloudflare token — remove DNS/tunnel/Access in dashboard", file=sys.stderr)
+    raise SystemExit(0)
+account = dep.get("account_id") or ""
+zone = dep.get("zone_id") or ""
+apps = dep.get("access_apps") or []
+if not apps and dep.get("access_app_id"):
+    apps = [{
+        "app_id": dep.get("access_app_id"),
+        "policy_id": dep.get("access_policy_id") or "",
+    }]
+deleted_apps = set()
+for binding in apps:
+    app_id = binding.get("app_id") or ""
+    policy_id = binding.get("policy_id") or ""
+    if app_id and policy_id:
+        cf_delete(f"/accounts/{account}/access/apps/{app_id}/policies/{policy_id}", token)
+    if app_id and app_id not in deleted_apps:
+        cf_delete(f"/accounts/{account}/access/apps/{app_id}", token)
+        deleted_apps.add(app_id)
+for rec in dep.get("records") or []:
+    rec_id = rec.get("id") or ""
+    if rec_id and zone:
+        cf_delete(f"/zones/{zone}/dns_records/{rec_id}", token)
+tunnel_id = dep.get("tunnel_id") or ""
+if tunnel_id and account:
+    cf_delete(f"/accounts/{account}/cfd_tunnel/{tunnel_id}", token)
+print("         Cloudflare disconnect attempted (DNS records, tunnel, Access)")
+PY
+}
+
+purge_tls_certs() {
+  local sqlite certbot_bin primary
+  [[ "${KEEP_REMOTE}" -eq 1 ]] && return 0
+  sqlite="$(env_value_from_file REDGRES_SQLITE_PATH)"
+  [[ -n "${sqlite}" ]] || sqlite="${VAR_ROOT}/redgres.db"
+  [[ -f "${sqlite}" ]] || return 0
+  certbot_bin="$(env_value_from_file REDGRES_CERTBOT_BIN)"
+  [[ -n "${certbot_bin}" ]] || certbot_bin="certbot"
+  command -v "${certbot_bin}" >/dev/null 2>&1 || return 0
+  primary="$(python3 - "${sqlite}" <<'PY' || true
+import json, sqlite3, sys
+db = sys.argv[1]
+try:
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    row = con.execute("SELECT payload FROM domain_deployment WHERE id = 1").fetchone()
+    if not row:
+        raise SystemExit(0)
+    dep = json.loads(row[0])
+except Exception:
+    raise SystemExit(0)
+db_host = (dep.get("db_hostname") or "").strip()
+if not db_host:
+    zone = (dep.get("zone_name") or "").strip()
+    if zone:
+        db_host = f"db.{zone}"
+if db_host:
+    print(db_host)
+PY
+)"
+  [[ -n "${primary}" ]] || return 0
+  "${certbot_bin}" delete --non-interactive --cert-name "${primary}" 2>/dev/null || true
+  printf '%b\n' "         certbot delete attempted for ${primary}"
+}
+
+purge_cloudflared_package() {
+  [[ "${APP_ONLY}" -eq 1 ]] && return 0
+  if command -v apt-get >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y cloudflared 2>/dev/null || true
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf remove -y cloudflared 2>/dev/null || true
+  elif command -v yum >/dev/null 2>&1; then
+    yum remove -y cloudflared 2>/dev/null || true
+  fi
+}
 
 redgres_docker_containers() {
   command -v docker >/dev/null 2>&1 || return 0
@@ -187,27 +350,38 @@ purge_pgbouncer() {
   fi
 }
 
+# ── 0. Cloudflare + TLS (before local state is deleted) ─────────────────────
+if [[ "${APP_ONLY}" -eq 0 && "${KEEP_REMOTE}" -eq 0 ]]; then
+  step "  ${CYAN}[0/8]${NC} Cloudflare + TLS cleanup... "
+  remote_cloudflare_disconnect
+  purge_tls_certs
+  step_done
+elif [[ "${APP_ONLY}" -eq 0 && "${KEEP_REMOTE}" -eq 1 ]]; then
+  step "  ${CYAN}[0/8]${NC} Cloudflare + TLS "
+  step_skip
+fi
+
 # ── 1. Stop Redgres + tunnel units ───────────────────────────────────────────
 if command -v systemctl >/dev/null 2>&1; then
-  step "  ${CYAN}[1/7]${NC} Stopping Redgres and tunnel services... "
+  step "  ${CYAN}[1/8]${NC} Stopping Redgres and tunnel services... "
   stop_systemd_unit redgres.service
   stop_systemd_unit cloudflared-redgres.service
   stop_systemd_unit cloudflared-redgres.path
   stop_systemd_unit cloudflared-redgres-restart.service
   step_done
 else
-  step "  ${CYAN}[1/7]${NC} systemd not found "
+  step "  ${CYAN}[1/8]${NC} systemd not found "
   step_skip
 fi
 
 # ── 2. Bootstrap firewall ────────────────────────────────────────────────────
-step "  ${CYAN}[2/7]${NC} Removing bootstrap firewall rule (8989)... "
+step "  ${CYAN}[2/8]${NC} Removing bootstrap firewall rule (8989)... "
 remove_bootstrap_firewall
 step_done
 
 # ── 3. Docker workloads ──────────────────────────────────────────────────────
 if [[ "${APP_ONLY}" -eq 0 ]]; then
-  step "  ${CYAN}[3/7]${NC} Removing Redgres Docker containers... "
+  step "  ${CYAN}[3/8]${NC} Removing Redgres Docker containers... "
   if command -v docker >/dev/null 2>&1; then
     if [[ -f "${VAR_ROOT}/redis/docker-compose.yml" ]]; then
       (cd "${VAR_ROOT}/redis" && docker compose down --volumes --remove-orphans 2>/dev/null) || true
@@ -231,29 +405,30 @@ if [[ "${APP_ONLY}" -eq 0 ]]; then
     step_skip
   fi
 else
-  step "  ${CYAN}[3/7]${NC} Docker cleanup "
+  step "  ${CYAN}[3/8]${NC} Docker cleanup "
   step_skip
 fi
 
 # ── 4. PostgreSQL / Redis / PgBouncer ───────────────────────────────────────
 if [[ "${APP_ONLY}" -eq 0 ]]; then
-  step "  ${CYAN}[4/7]${NC} Removing PostgreSQL clusters and packages... "
+  step "  ${CYAN}[4/8]${NC} Removing PostgreSQL clusters and packages... "
   purge_postgresql
   step_done
 
-  step "  ${CYAN}[5/7]${NC} Removing Redis and PgBouncer... "
+  step "  ${CYAN}[5/8]${NC} Removing Redis, PgBouncer, and cloudflared... "
   purge_redis_native
   purge_pgbouncer
+  purge_cloudflared_package
   step_done
 else
-  step "  ${CYAN}[4/7]${NC} PostgreSQL/Redis/PgBouncer "
+  step "  ${CYAN}[4/8]${NC} PostgreSQL/Redis/PgBouncer "
   step_skip
-  step "  ${CYAN}[5/7]${NC} (skipped — --app-only) "
+  step "  ${CYAN}[5/8]${NC} (skipped — --app-only) "
   step_skip
 fi
 
 # ── 6. Systemd units + libexec ───────────────────────────────────────────────
-step "  ${CYAN}[6/7]${NC} Removing systemd units and helpers... "
+step "  ${CYAN}[6/8]${NC} Removing systemd units and helpers... "
 rm -f "${UNIT_PATH}" \
   /etc/systemd/system/cloudflared-redgres.service \
   /etc/systemd/system/cloudflared-redgres.path \
@@ -267,7 +442,17 @@ fi
 step_done
 
 # ── 7. Filesystem ────────────────────────────────────────────────────────────
-step "  ${CYAN}[7/7]${NC} Removing Redgres files... "
+step "  ${CYAN}[7/8]${NC} Removing Redgres files... "
+rm -f \
+  "${VAR_ROOT}/secrets/cloudflare-api-token" \
+  "${VAR_ROOT}/secrets/cloudflared-tunnel-token" \
+  "${VAR_ROOT}/secrets/certbot-dns.ini" \
+  "${VAR_ROOT}/secrets/cloudflare-oauth-client.json" \
+  "${VAR_ROOT}/secrets/cloudflare-oauth-token.json" \
+  "${ETC_ROOT}/secrets/cloudflare-oauth-token" \
+  "${ETC_ROOT}/secrets/certbot-dns-token" \
+  2>/dev/null || true
+rmdir "${VAR_ROOT}/secrets" "${ETC_ROOT}/secrets" 2>/dev/null || true
 rm -rf "${OPT_ROOT}" 2>/dev/null || true
 rm -f /usr/local/bin/redgres 2>/dev/null || true
 
@@ -313,7 +498,8 @@ else
   printf '%b\n' "  ${DIM}Redgres ports (8790, 8989, 5432, 6379, 6380, 6432) are free.${NC}"
 fi
 if [[ "${APP_ONLY}" -eq 0 ]]; then
-  printf '%b\n' "  ${DIM}Docker Engine was left installed. Reinstall: curl install-dev.sh | bash${NC}"
+  printf '%b\n' "  ${DIM}Docker Engine was left installed. Cloudflare zone may still show unrelated records you added manually.${NC}"
+  printf '%b\n' "  ${DIM}Reinstall: curl install-dev.sh | bash${NC}"
 else
   printf '%b\n' "  ${DIM}PostgreSQL and Redis were not removed (--app-only).${NC}"
 fi
