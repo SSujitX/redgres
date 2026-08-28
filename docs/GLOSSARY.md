@@ -1,11 +1,13 @@
 # Glossary
 
+- **Owner** — the authenticated Redgres operator. Version 1 has one owner; authorization still uses internal capabilities.
+- **Project database** — a manageable PostgreSQL database owned by a restricted project role.
 - **Control plane** — Redgres administration interface and state; not the application data path.
 - **Data plane** — PostgreSQL/Redis traffic used by applications.
 - **Direct PostgreSQL** — client connection to PostgreSQL on 5432.
 - **Pooled PostgreSQL** — client connection through PgBouncer on 6432.
 - **Project role/user** — least-privilege PostgreSQL login associated with a project database.
-- **Redis ACL user** — Redis identity with password hashes, command permissions, and key patterns.
+- **Redis ACL user** — Redis identity with password hashes, command permissions, and key patterns. `redis-admin` means ACL administration; `redis-insight` means RedisInsight data exploration.
 - **Preset** — versioned explicit Redis command list for a supported workload.
 - **Protected resource** — database, role, or Redis user Redgres must never mutate through ordinary workflows.
 - **Vault** — legacy `database_console_vault` PostgreSQL database holding Fernet-encrypted project passwords.
