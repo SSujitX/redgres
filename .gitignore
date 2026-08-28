@@ -25,6 +25,11 @@
 /secrets/
 /backups/
 
+# Live acceptance evidence (never commit tokens/screenshots with secrets)
+/docs/evidence/ops-009-live/*
+!/docs/evidence/ops-009-live/README.md
+!/docs/evidence/ops-009-live/.gitkeep
+
 # Editors and operating systems
 .idea/
 .vscode/
