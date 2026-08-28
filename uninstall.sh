@@ -2,6 +2,7 @@
 # Redgres uninstaller (DockLift-parity UX).
 # Default: remove every Redgres-owned resource so the host is clean for a fresh install.
 #
+#   curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh | sudo bash
 #   curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh | sudo bash -s -- -y
 #
 # App binary only (preserve PostgreSQL, Redis, config, and data):
@@ -58,6 +59,11 @@ done
 
 [[ "${EUID}" -eq 0 ]] || { printf '%b\n' "${RED}Error: Run with sudo${NC}" >&2; exit 1; }
 
+printf '%b\n' ""
+printf '%b\n' "  ${CYAN}${BOLD}Redgres uninstaller${NC}"
+printf '%b\n' "  ${DIM}Removes Redgres from this host. Full purge is destructive.${NC}"
+printf '%b\n' ""
+
 step() { printf '%b' "$1"; }
 step_done() { printf '%b\n' "${GREEN}done${NC}"; }
 step_skip() { printf '%b\n' "${DIM}none${NC}"; }
@@ -91,14 +97,16 @@ if [[ "${APP_ONLY}" -eq 1 && "${PURGE_STATE}" -eq 1 ]]; then
 fi
 
 if [[ "${FORCE}" -ne 1 ]]; then
-  printf '%b\n' "${YELLOW}${BOLD}Type yes to confirm uninstall:${NC}"
+  printf '%b\n' "${YELLOW}${BOLD}Type yes to confirm uninstall (anything else aborts):${NC}"
   read -r response || true
-  if [[ ! "${response}" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-    echo "Aborted."
+  if [[ "${response}" != "yes" ]]; then
+    printf '%b\n' "${DIM}Aborted.${NC}"
     exit 1
   fi
+  printf '%b\n' ""
 else
   printf '%b\n' "${YELLOW}Force mode (-y): warnings shown above; confirmation skipped.${NC}"
+  printf '%b\n' ""
 fi
 
 env_value_from_file() {
@@ -108,18 +116,165 @@ env_value_from_file() {
   printf '%s' "${line#*=}"
 }
 
-remote_cloudflare_disconnect() {
-  local sqlite db_path env_file
-  [[ "${KEEP_REMOTE}" -eq 1 ]] && return 0
+DOMAIN_SNAPSHOT="$(mktemp /tmp/redgres-uninstall-domain.XXXXXX)"
+CF_API_STATUS="unknown"
+trap 'rm -f "${DOMAIN_SNAPSHOT}"' EXIT
+
+write_domain_snapshot() {
+  local sqlite env_file
+  : >"${DOMAIN_SNAPSHOT}"
   env_file="${ETC_ROOT}/redgres.env"
   sqlite="$(env_value_from_file REDGRES_SQLITE_PATH "${env_file}")"
   [[ -n "${sqlite}" ]] || sqlite="${VAR_ROOT}/redgres.db"
   [[ -f "${sqlite}" ]] || return 0
-  command -v python3 >/dev/null 2>&1 || {
-    printf '%b\n' "         ${YELLOW}skipped — python3 required for Cloudflare API${NC}"
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 - "${env_file}" "${sqlite}" "${DOMAIN_SNAPSHOT}" <<'PY' || true
+import json, os, sqlite3, sys
+
+def q(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+env_path, db_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+def load_env(path):
+    env = {}
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                env[key.strip()] = value.strip()
+    return env
+
+env = load_env(env_path)
+sqlite = env.get("REDGRES_SQLITE_PATH", db_path)
+if not os.path.isfile(sqlite):
+    raise SystemExit(0)
+try:
+    con = sqlite3.connect(f"file:{sqlite}?mode=ro", uri=True)
+    row = con.execute("SELECT payload FROM domain_deployment WHERE id = 1").fetchone()
+    if not row:
+        raise SystemExit(0)
+    dep = json.loads(row[0])
+except Exception:
+    raise SystemExit(0)
+
+zone = (dep.get("zone_name") or "").strip()
+console = (dep.get("console_hostname") or dep.get("hostname") or "").strip()
+db_host = (dep.get("db_hostname") or "").strip()
+rs = (dep.get("rs_hostname") or dep.get("redis_hostname") or "").strip()
+pgadmin = (dep.get("pgadmin_hostname") or "").strip()
+insight = (dep.get("redis_insight_hostname") or "").strip()
+if not console and zone:
+    console = f"console.{zone}"
+if not db_host and zone:
+    db_host = f"db.{zone}"
+if not rs and zone:
+    rs = f"rs.{zone}"
+if not pgadmin and zone:
+    pgadmin = f"pgadmin.{zone}"
+if not insight and zone:
+    insight = f"redis.{zone}"
+tunnel_id = (dep.get("tunnel_id") or "").strip()
+tunnel_name = (dep.get("tunnel_name") or "").strip()
+dns_provider = (dep.get("dns_provider") or "").strip().lower()
+
+lines = [
+    f'ZONE="{q(zone)}"',
+    f'CONSOLE="{q(console)}"',
+    f'DB="{q(db_host)}"',
+    f'RS="{q(rs)}"',
+    f'PGADMIN="{q(pgadmin)}"',
+    f'INSIGHT="{q(insight)}"',
+    f'TUNNEL_ID="{q(tunnel_id)}"',
+    f'TUNNEL_NAME="{q(tunnel_name)}"',
+    f'DNS_PROVIDER="{q(dns_provider)}"',
+    "CONFIGURED=1",
+]
+with open(out_path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(lines) + "\n")
+PY
+}
+
+write_domain_snapshot
+
+print_cloudflare_followup() {
+  local snap="${DOMAIN_SNAPSHOT}" need_manual=1
+  [[ "${APP_ONLY}" -eq 1 ]] && return 0
+  [[ "${KEEP_REMOTE}" -eq 1 ]] && need_manual=1
+  [[ "${CF_API_STATUS}" == "api_ok" ]] && need_manual=0
+
+  if [[ -f "${snap}" ]] && grep -q '^CONFIGURED=1' "${snap}" 2>/dev/null; then
+    # shellcheck disable=SC1090
+    source "${snap}"
+    printf '%b\n' ""
+    if [[ "${need_manual}" -eq 0 ]]; then
+      printf '%b\n' "  ${BOLD}Cloudflare${NC}  ${GREEN}API cleanup attempted${NC} ${DIM}(zone ${ZONE:-unknown})${NC}"
+      printf '%b\n' "  ${DIM}Verify nothing remains — dashboard links below if needed.${NC}"
+    else
+      printf '%b\n' "  ${YELLOW}${BOLD}Cloudflare — check dashboard and remove anything left:${NC}"
+    fi
+    printf '%b\n' "    ${BOLD}DNS${NC}       https://dash.cloudflare.com/  →  ${ZONE:-your zone}  →  DNS"
+    if [[ -n "${CONSOLE:-}" ]]; then
+      printf '%b\n' "              remove: ${CONSOLE}"
+      [[ -n "${DB:-}" ]] && printf '%b\n' "                        ${DB}  ${DIM}(grey-cloud A/AAAA)${NC}"
+      [[ -n "${RS:-}" ]] && printf '%b\n' "                        ${RS}  ${DIM}(grey-cloud A/AAAA)${NC}"
+      [[ -n "${PGADMIN:-}" ]] && printf '%b\n' "                        ${PGADMIN}  ${DIM}(proxied CNAME)${NC}"
+      [[ -n "${INSIGHT:-}" ]] && printf '%b\n' "                        ${INSIGHT}  ${DIM}(proxied CNAME)${NC}"
+    fi
+    printf '%b\n' "    ${BOLD}Access${NC}    https://one.dash.cloudflare.com/access/applications"
+    if [[ -n "${CONSOLE:-}" ]]; then
+      printf '%b\n' "              delete apps for: ${CONSOLE}"
+    else
+      printf '%b\n' "              delete console/pgadmin/redis UI apps"
+    fi
+    [[ -n "${PGADMIN:-}" ]] && printf '%b\n' "                        ${PGADMIN}"
+    [[ -n "${INSIGHT:-}" ]] && printf '%b\n' "                        ${INSIGHT}"
+    printf '%b\n' "    ${BOLD}Tunnels${NC}   https://one.dash.cloudflare.com/networks/tunnels"
+    if [[ -n "${TUNNEL_NAME:-}" ]]; then
+      printf '%b\n' "              delete tunnel: ${TUNNEL_NAME}"
+    elif [[ -n "${TUNNEL_ID:-}" ]]; then
+      printf '%b\n' "              delete tunnel id: ${TUNNEL_ID}"
+    else
+      printf '%b\n' "              delete Redgres tunnel for this host"
+    fi
+    if [[ -n "${DB:-}" ]]; then
+      printf '%b\n' "    ${BOLD}TLS (host)${NC}  certbot certificates  ${DIM}→ delete ${DB} if still listed${NC}"
+    fi
+    return 0
+  fi
+
+  if [[ "${CF_API_STATUS}" == "no_state" || "${CF_API_STATUS}" == "no_token" || "${KEEP_REMOTE}" -eq 1 ]]; then
+    printf '%b\n' ""
+    printf '%b\n' "  ${YELLOW}${BOLD}Cloudflare — no local domain state; check dashboard manually:${NC}"
+    printf '%b\n' "    DNS      https://dash.cloudflare.com/"
+    printf '%b\n' "    Access   https://one.dash.cloudflare.com/access/applications"
+    printf '%b\n' "    Tunnels  https://one.dash.cloudflare.com/networks/tunnels"
+  fi
+}
+
+remote_cloudflare_disconnect() {
+  local sqlite env_file cf_out
+  [[ "${KEEP_REMOTE}" -eq 1 ]] && {
+    CF_API_STATUS="skipped_keep_remote"
     return 0
   }
-  python3 - "${env_file}" "${sqlite}" <<'PY' || true
+  env_file="${ETC_ROOT}/redgres.env"
+  sqlite="$(env_value_from_file REDGRES_SQLITE_PATH "${env_file}")"
+  [[ -n "${sqlite}" ]] || sqlite="${VAR_ROOT}/redgres.db"
+  [[ -f "${sqlite}" ]] || {
+    CF_API_STATUS="no_state"
+    printf '%b\n' "         ${YELLOW}no sqlite state — use Cloudflare dashboard${NC}"
+    return 0
+  }
+  command -v python3 >/dev/null 2>&1 || {
+    printf '%b\n' "         ${YELLOW}skipped — python3 required for Cloudflare API${NC}"
+    CF_API_STATUS="no_python"
+    return 0
+  }
+  cf_out="$(python3 - "${env_file}" "${sqlite}" <<'PY' 2>&1 || true
 import json, os, sqlite3, sys, urllib.error, urllib.request
 
 def load_env(path):
@@ -173,19 +328,23 @@ env = load_env(env_path)
 sqlite = env.get("REDGRES_SQLITE_PATH", db_path)
 if not os.path.isfile(sqlite):
     print("         no domain state (sqlite missing)")
+    print("STATUS:no_state")
     raise SystemExit(0)
 con = sqlite3.connect(f"file:{sqlite}?mode=ro", uri=True)
 row = con.execute("SELECT payload FROM domain_deployment WHERE id = 1").fetchone()
 if not row:
     print("         no domain configured")
+    print("STATUS:no_domain")
     raise SystemExit(0)
 dep = json.loads(row[0])
 if (dep.get("dns_provider") or "").strip().lower() == "manual":
     print("         manual DNS — Cloudflare API skipped")
+    print("STATUS:manual_dns")
     raise SystemExit(0)
 token = read_token(env)
 if not token:
     print("         warn: no Cloudflare token — remove DNS/tunnel/Access in dashboard", file=sys.stderr)
+    print("STATUS:no_token")
     raise SystemExit(0)
 account = dep.get("account_id") or ""
 zone = dep.get("zone_id") or ""
@@ -196,23 +355,30 @@ if not apps and dep.get("access_app_id"):
         "policy_id": dep.get("access_policy_id") or "",
     }]
 deleted_apps = set()
+failed = False
 for binding in apps:
     app_id = binding.get("app_id") or ""
     policy_id = binding.get("policy_id") or ""
-    if app_id and policy_id:
-        cf_delete(f"/accounts/{account}/access/apps/{app_id}/policies/{policy_id}", token)
+    if app_id and policy_id and not cf_delete(f"/accounts/{account}/access/apps/{app_id}/policies/{policy_id}", token):
+        failed = True
     if app_id and app_id not in deleted_apps:
-        cf_delete(f"/accounts/{account}/access/apps/{app_id}", token)
+        if not cf_delete(f"/accounts/{account}/access/apps/{app_id}", token):
+            failed = True
         deleted_apps.add(app_id)
 for rec in dep.get("records") or []:
     rec_id = rec.get("id") or ""
-    if rec_id and zone:
-        cf_delete(f"/zones/{zone}/dns_records/{rec_id}", token)
+    if rec_id and zone and not cf_delete(f"/zones/{zone}/dns_records/{rec_id}", token):
+        failed = True
 tunnel_id = dep.get("tunnel_id") or ""
-if tunnel_id and account:
-    cf_delete(f"/accounts/{account}/cfd_tunnel/{tunnel_id}", token)
+if tunnel_id and account and not cf_delete(f"/accounts/{account}/cfd_tunnel/{tunnel_id}", token):
+    failed = True
 print("         Cloudflare disconnect attempted (DNS records, tunnel, Access)")
+print("STATUS:api_partial" if failed else "STATUS:api_ok")
 PY
+)"
+  printf '%s\n' "${cf_out}" | grep -v '^STATUS:' || true
+  CF_API_STATUS="$(printf '%s\n' "${cf_out}" | grep '^STATUS:' | tail -n1 | cut -d: -f2-)"
+  [[ -n "${CF_API_STATUS}" ]] || CF_API_STATUS="unknown"
 }
 
 purge_tls_certs() {
@@ -498,8 +664,8 @@ else
   printf '%b\n' "  ${DIM}Redgres ports (8790, 8989, 5432, 6379, 6380, 6432) are free.${NC}"
 fi
 if [[ "${APP_ONLY}" -eq 0 ]]; then
-  printf '%b\n' "  ${DIM}Docker Engine was left installed. Cloudflare zone may still show unrelated records you added manually.${NC}"
-  printf '%b\n' "  ${DIM}Reinstall: curl install-dev.sh | bash${NC}"
+  print_cloudflare_followup
+  printf '%b\n' "  ${DIM}Reinstall: curl -fsSL .../install-dev.sh | sudo bash${NC}"
 else
   printf '%b\n' "  ${DIM}PostgreSQL and Redis were not removed (--app-only).${NC}"
 fi
