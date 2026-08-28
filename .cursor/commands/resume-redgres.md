@@ -1,6 +1,6 @@
 Resume unfinished Redgres local work from repository evidence. Do not depend on the previous chat. This is the explicit recovery form of `/start-redgres`. The same recovery-first loop is always applied by `.cursor/rules/06-continuous-orchestration.mdc`.
 
-1. Load all always-applied rules and read `AGENTS.md`, `CONTEXT.md`, `docs/ROADMAP.md`, `docs/TRACEABILITY.md`, `docs/CURSOR_WORKFLOW.md`, then route only the task-relevant documents.
+1. Follow `AGENTS.md` bootstrap, then route only the task-relevant documents.
 2. Inspect `git status`, branch/worktrees, recent commits, uncommitted diff, implementation/tests, generated artifacts, and available terminal/test evidence. Preserve every user/unrelated change.
 3. Identify the exact in-progress PRD slice, its accepted plan/contracts, completed portions, failing or unrun checks, documentation state, and safest recovery point. Do not start a new slice until current partial work is either completed, safely reverted with explicit authorization, or reported blocked.
 4. If the recovered work is substantial or its contract is unclear, invoke `redgres-planner` with a recovery context packet. Do not redesign already accepted architecture or broaden scope.
