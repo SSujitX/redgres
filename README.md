@@ -38,8 +38,12 @@ Assets required on each release: `redgres_<version>_linux_amd64.tar.gz` and adja
 ## Publish a release (Actions → VERSION → assets)
 
 1. GitHub → **Actions** → **release** → **Run workflow**.
-2. Enter semver `X.Y.Z` (no `v` prefix).
-3. The workflow writes root [`VERSION`](VERSION), runs [`scripts/set-version.sh`](scripts/set-version.sh) / [`scripts/sync-version.sh`](scripts/sync-version.sh) (syncs `web/package*.json`), commits those files onto the branch so later commits keep that product version, creates tag `vX.Y.Z`, builds the linux/amd64 tarball, and attaches **`redgres_X.Y.Z_linux_amd64.tar.gz`** + **`SHA256SUMS`** to the GitHub Release.
+2. Choose **bump** (no free-typed version):
+   - `current` — publish root [`VERSION`](VERSION) as-is (first release: **1.0.0**)
+   - `patch` — `1.0.0` → `1.0.1`
+   - `minor` — `1.0.0` → `1.1.0`
+   - `major` — `1.0.0` → `2.0.0`
+3. The workflow writes `VERSION`, syncs `web/package*.json` via [`scripts/set-version.sh`](scripts/set-version.sh), commits onto the branch, tags `vX.Y.Z`, builds the linux/amd64 tarball, and creates a GitHub Release with **commit list notes** plus assets **`redgres_X.Y.Z_linux_amd64.tar.gz`** and **`SHA256SUMS`**.
 
 Local helpers:
 
