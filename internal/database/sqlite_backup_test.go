@@ -117,7 +117,7 @@ INSERT INTO widgets(id, name) VALUES (1, 'alpha'), (2, 'beta');
 		t.Fatalf("snapshot counts widgets/events = %d/%d, want 2/2", widgetCount, eventCount)
 	}
 	for table, want := range map[string]int{
-		"schema_migrations": 3,
+		"schema_migrations": 4,
 		"owners":            1,
 		"sessions":          1,
 		"audit_events":      1,
