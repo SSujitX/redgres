@@ -107,7 +107,7 @@ export default function SystemPage() {
     <article>
       <header className="page-header">
         <h1>System</h1>
-        <p>Independent component status.</p>
+        <p>Component status for Redgres, PostgreSQL, PgBouncer, Redis, and tool links.</p>
         <button type="button" className="text-button" onClick={refresh}>
           Refresh
         </button>
