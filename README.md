@@ -26,8 +26,11 @@ curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/install.sh |
 # Upgrade to latest (preserves /etc/redgres, /var/lib/redgres, PostgreSQL, Redis)
 curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/upgrade.sh | sudo bash
 
-# Uninstall application only (-y); does not purge PostgreSQL/Redis by default
+# Full purge (PostgreSQL, Redis, Docker workloads, config, data):
 curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh | sudo bash -s -- -y
+
+# Application binary only (preserve databases):
+curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh | sudo bash -s -- -y --app-only
 
 # Dev build from master (not a release)
 curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/install-dev.sh | sudo bash
