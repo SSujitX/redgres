@@ -42,7 +42,7 @@ describe("DomainNetworkPage", () => {
         jsonResponse(200, {
           configured: true,
           zone: "example.com",
-          hostname: "redgres.example.com",
+          hostname: "console.example.com",
           request_id: "r1",
         }),
       ),
@@ -143,16 +143,16 @@ describe("DomainNetworkPage", () => {
     await screen.findByText("No");
 
     fireEvent.change(screen.getByLabelText("Zone"), { target: { value: "example.com" } });
-    expect((screen.getByLabelText("Console hostname") as HTMLInputElement).value).toBe("redgres.example.com");
+    expect((screen.getByLabelText("Console hostname") as HTMLInputElement).value).toBe("console.example.com");
 
     fireEvent.change(screen.getByLabelText("Console hostname"), {
-      target: { value: "console.example.com" },
+      target: { value: "app.example.com" },
     });
     fireEvent.change(screen.getByLabelText("Zone"), { target: { value: "other.com" } });
-    expect((screen.getByLabelText("Console hostname") as HTMLInputElement).value).toBe("console.example.com");
+    expect((screen.getByLabelText("Console hostname") as HTMLInputElement).value).toBe("app.example.com");
   });
 
-  it("suggests redgres.<zone> and applies with CSRF", async () => {
+  it("suggests console.<zone> and applies with CSRF", async () => {
     let configured = false;
     const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
       const url = String(input);
@@ -161,7 +161,7 @@ describe("DomainNetworkPage", () => {
           return jsonResponse(200, {
             configured: true,
             zone: "example.com",
-            hostname: "redgres.example.com",
+            hostname: "console.example.com",
             request_id: "r4",
           });
         }
@@ -172,12 +172,17 @@ describe("DomainNetworkPage", () => {
         expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("csrf".padEnd(64, "0"));
         expect(JSON.parse(String(init?.body))).toEqual({
           zone: "example.com",
-          hostname: "redgres.example.com",
+          origin_ip: "203.0.113.10",
+          hostnames: {
+            console: "console.example.com",
+            db: "db.example.com",
+            redis: "redis.example.com",
+          },
         });
         configured = true;
         return jsonResponse(200, {
           zone: "example.com",
-          hostname: "redgres.example.com",
+          hostname: "console.example.com",
           tunnel_id: "tun-1",
           bootstrap_still_open: true,
           access: "deny_by_default",
@@ -192,7 +197,10 @@ describe("DomainNetworkPage", () => {
     await screen.findByText("No");
 
     fireEvent.change(screen.getByLabelText("Zone"), { target: { value: "example.com" } });
-    expect((screen.getByLabelText("Console hostname") as HTMLInputElement).value).toBe("redgres.example.com");
+    fireEvent.change(screen.getByLabelText("Origin IP (grey-cloud A or AAAA)"), {
+      target: { value: "203.0.113.10" },
+    });
+    expect((screen.getByLabelText("Console hostname") as HTMLInputElement).value).toBe("console.example.com");
     expect(screen.getByRole("button", { name: "Apply domain" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Apply domain" }));
@@ -219,7 +227,7 @@ describe("DomainNetworkPage", () => {
           return jsonResponse(200, {
             configured: true,
             zone: "example.com",
-            hostname: "redgres.example.com",
+            hostname: "console.example.com",
             request_id: "r1",
           });
         }
@@ -239,7 +247,7 @@ describe("DomainNetworkPage", () => {
     const statusSection = screen.getByRole("heading", { name: "Status" }).closest("section");
     expect(statusSection).not.toBeNull();
     // Hostname appears in the fact list and again in the Access-allow copy.
-    expect(within(statusSection as HTMLElement).getAllByText("redgres.example.com").length).toBeGreaterThanOrEqual(1);
+    expect(within(statusSection as HTMLElement).getAllByText("console.example.com").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByLabelText("API token")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Disconnect domain" }));
@@ -253,7 +261,7 @@ describe("DomainNetworkPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Disconnect domain" }));
     const dialogAgain = await screen.findByRole("dialog", { name: "Disconnect domain" });
     fireEvent.change(within(dialogAgain).getByLabelText("Confirm hostname"), {
-      target: { value: "redgres.example.com" },
+      target: { value: "console.example.com" },
     });
     fireEvent.click(within(dialogAgain).getByRole("button", { name: "Disconnect" }));
 
@@ -286,7 +294,7 @@ describe("DomainNetworkPage", () => {
         return jsonResponse(200, {
           configured: true,
           zone: "example.com",
-          hostname: "redgres.example.com",
+          hostname: "console.example.com",
           access,
           bootstrap_still_open: bootstrapOpen,
           request_id: "r1",
@@ -317,22 +325,97 @@ describe("DomainNetworkPage", () => {
     expect(await screen.findByRole("button", { name: "Add Access allow policy" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Console is reachable — close bootstrap" })).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Allowed email"), { target: { value: "owner@example.com" } });
+    fireEvent.change(screen.getByLabelText("Allowed email 1"), { target: { value: "owner@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Add Access allow policy" }));
 
     expect(await screen.findByText("Allow policy configured")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Console is reachable — close bootstrap" })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Allowed email")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Allowed email 1")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Console is reachable — close bootstrap" }));
     const dialog = await screen.findByRole("dialog", { name: "Close bootstrap listener" });
     fireEvent.change(within(dialog).getByLabelText("Confirm hostname"), {
-      target: { value: "redgres.example.com" },
+      target: { value: "console.example.com" },
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "Close bootstrap" }));
     await waitFor(() => {
       expect(screen.getByText("Closed or not configured")).toBeInTheDocument();
     });
     expect(screen.queryByRole("button", { name: "Console is reachable — close bootstrap" })).not.toBeInTheDocument();
+  });
+
+  it("completes manual DNS wizard through confirm-access to close bootstrap", async () => {
+    let configured = false;
+    let access: string | undefined;
+    const manualInstructions = [
+      "Create a proxied CNAME for console.example.com pointing to your cloudflared tunnel hostname.",
+      "Create a DNS-only A record for db.example.com with content 203.0.113.10.",
+      "Configure Cloudflare Access on console.example.com (deny by default).",
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/domain" && (!init || !init.method || init.method === "GET")) {
+        if (!configured) {
+          return jsonResponse(200, { configured: false, request_id: "r1" });
+        }
+        return jsonResponse(200, {
+          configured: true,
+          zone: "example.com",
+          hostname: "console.example.com",
+          dns_provider: "manual",
+          access,
+          bootstrap_still_open: true,
+          instructions: manualInstructions,
+          request_id: "r2",
+        });
+      }
+      if (url === "/api/v1/domain/apply") {
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          zone: "example.com",
+          origin_ip: "203.0.113.10",
+          dns_provider: "manual",
+          hostnames: {
+            console: "console.example.com",
+            db: "db.example.com",
+            redis: "redis.example.com",
+          },
+        });
+        configured = true;
+        return jsonResponse(200, {
+          zone: "example.com",
+          dns_provider: "manual",
+          instructions: manualInstructions,
+          bootstrap_still_open: true,
+          request_id: "r3",
+        });
+      }
+      if (url === "/api/v1/domain/manual/confirm-access") {
+        expect(init?.method).toBe("POST");
+        access = "allow";
+        return jsonResponse(200, { ok: true, access: "allow", request_id: "r4" });
+      }
+      throw new Error(`unexpected ${url} ${init?.method}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
+    await screen.findByText("No");
+
+    fireEvent.click(screen.getByLabelText("Manual DNS (instructions only)"));
+    fireEvent.change(screen.getByLabelText("Zone"), { target: { value: "example.com" } });
+    fireEvent.change(screen.getByLabelText("Origin IP (grey-cloud A or AAAA)"), {
+      target: { value: "203.0.113.10" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save manual plan" }));
+
+    expect(await screen.findByRole("heading", { name: "3. Manual DNS and Access" })).toBeInTheDocument();
+    expect(screen.getByText(manualInstructions[0])).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Console is reachable — close bootstrap" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Access configured manually" }));
+
+    expect(await screen.findByText("Allow policy configured")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Console is reachable — close bootstrap" })).toBeInTheDocument();
   });
 });
