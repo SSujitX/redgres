@@ -14,6 +14,7 @@
     }
   ],
   "settings": {
+    "git.pullTags": false,
     "files.exclude": {
       "**/.pytest_cache": true,
       "**/__pycache__": true,
