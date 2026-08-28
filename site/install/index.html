@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Raw PostgreSQL and Redis install on Ubuntu — Redgres</title>
+    <meta
+      name="description"
+      content="Raw installation of PostgreSQL 17 or 18 and Redis 8.2 or 8.8 on Ubuntu 24.04 or 26.04 with Redgres. Clone the repo and run sudo ./deploy/install.sh. Not a hosted DBaaS."
+    />
+    <link rel="canonical" href="https://redgres.com/install/" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="theme-color" content="#f4f6f8" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="Raw PostgreSQL and Redis install on Ubuntu" />
+    <meta
+      property="og:description"
+      content="Named PGDG packages, Docker Redis, optional PgBouncer, and redgres.service. One VPS. No latest tags."
+    />
+    <meta property="og:url" content="https://redgres.com/install/" />
+    <meta property="og:image" content="https://redgres.com/assets/og.svg" />
+    <link rel="icon" type="image/png" sizes="128x128" href="../assets/redgres-favicon-light.png" />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="128x128"
+      media="(prefers-color-scheme: dark)"
+      href="../assets/redgres-favicon-dark.png"
+    />
+    <link rel="apple-touch-icon" href="../assets/redgres-logo-light.png" />
+    <link rel="stylesheet" href="../assets/site.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "HowTo",
+        "name": "Raw-install PostgreSQL and Redis with Redgres",
+        "description": "Clone Redgres on Ubuntu 24.04 or 26.04 and run the full-stack installer for one new PostgreSQL cluster and one new Redis instance.",
+        "totalTime": "PT20M",
+        "tool": [{ "@type": "HowToTool", "name": "Ubuntu 24.04 or 26.04 VPS with sudo" }],
+        "step": [
+          {
+            "@type": "HowToStep",
+            "name": "Clone",
+            "text": "cd ~ && git clone https://github.com/SSujitX/redgres.git && cd ~/redgres"
+          },
+          {
+            "@type": "HowToStep",
+            "name": "Install",
+            "text": "sudo ./deploy/install.sh"
+          },
+          {
+            "@type": "HowToStep",
+            "name": "Sign in",
+            "text": "Copy the owner password printed once on the TTY and open the printed :8989 URL."
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip" href="#content">Skip to content</a>
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand" href="../" aria-label="Redgres home">
+          <img class="brand-logo" src="../assets/redgres-logo-light.png" width="164" alt="Redgres" />
+        </a>
+        <nav aria-label="Primary">
+          <a href="../">Home</a>
+          <a href="./" aria-current="page">Raw install</a>
+          <a href="../compare/">Compare</a>
+          <a href="../sponsor/">Sponsor</a>
+          <a href="https://github.com/SSujitX/redgres">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <p class="banner"><span class="wrap">Live install creates a new PostgreSQL cluster and a new Redis only.</span></p>
+    <main id="content">
+      <div class="wrap">
+        <p class="engines">
+          <span class="chip chip-pg">postgresql-17 | 18</span>
+          <span class="chip chip-redis">Redis 8.2 | 8.8</span>
+        </p>
+        <h1>Raw install on Ubuntu</h1>
+        <p class="lede">
+          A raw installation means named Ubuntu/PGDG packages, Docker Redis, optional
+          <code>pgbouncer</code>, and <code>redgres.service</code>. It does not wrap Postgres in a
+          proprietary cloud API. Pick <strong>one</strong> path. Full stack already installs the
+          app — do not also run <code>curl …/install.sh</code>.
+        </p>
+
+        <h2>1. Clone</h2>
+        <section class="panel">
+          <div class="term-head">
+            <span>Creates ~/redgres</span>
+            <button type="button" class="copy" data-copy="clone">Copy</button>
+          </div>
+          <pre id="clone"><code>cd ~
+git clone https://github.com/SSujitX/redgres.git
+cd ~/redgres</code></pre>
+        </section>
+
+        <h2>2. Ask on the terminal</h2>
+        <p>Defaults: PostgreSQL 18, Redis 8.2, PgBouncer off.</p>
+        <section class="panel">
+          <div class="term-head">
+            <span>Interactive</span>
+            <button type="button" class="copy" data-copy="ask">Copy</button>
+          </div>
+          <pre id="ask"><code>sudo ./deploy/install.sh</code></pre>
+        </section>
+
+        <h2>3. Or pin versions (no prompts)</h2>
+        <p>Swap <code>17</code>/<code>18</code>, <code>8.2</code>/<code>8.8</code>, <code>disabled</code>/<code>fresh</code>. Add <code>--dry-run</code> to preview.</p>
+        <section class="panel">
+          <div class="term-head">
+            <span>PostgreSQL 18 + Redis 8.2</span>
+            <button type="button" class="copy" data-copy="pin">Copy</button>
+          </div>
+          <pre id="pin"><code>sudo ./deploy/install.sh --non-interactive --mode fresh-postgres --postgres-version 18 --redis-mode fresh --redis-version 8.2 --pgbouncer-mode disabled</code></pre>
+        </section>
+
+        <h2>After install</h2>
+        <p>
+          The owner password prints once on your TTY. Open the printed <code>:8989</code> URL.
+          Loopback health is <code>curl -fsS http://127.0.0.1:8790/api/v1/healthz</code>. Debug,
+          logs, owner reset, and rollback live on the
+          <a href="https://github.com/SSujitX/redgres#debug-logs-and-fixes-on-the-server">GitHub README</a>.
+        </p>
+
+        <h2>App only</h2>
+        <p>You already have PostgreSQL and Redis. This does not install databases.</p>
+        <section class="panel">
+          <div class="term-head">
+            <span>Latest app</span>
+            <button type="button" class="copy" data-copy="app">Copy</button>
+          </div>
+          <pre id="app"><code>curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/install.sh | sudo bash</code></pre>
+        </section>
+      </div>
+    </main>
+    <footer class="site-footer">
+      <div class="wrap">
+        <nav aria-label="Footer">
+          <a href="../">Home</a>
+          <a href="../compare/">Compare</a>
+          <a href="../sponsor/">Sponsor</a>
+          <a href="https://github.com/SSujitX/redgres">Source</a>
+        </nav>
+        <p>Looking for sponsorship — <a class="mail" href="mailto:ssujitxx@gmail.com">ssujitxx@gmail.com</a></p>
+      </div>
+    </footer>
+    <script src="../assets/copy.js"></script>
+  </body>
+</html>
