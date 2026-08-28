@@ -6,15 +6,13 @@ This file is always loaded. Keep it compact; detailed truth belongs in routed ca
 
 Before planning or editing:
 
-1. Read this file and `CONTEXT.md`. Read `docs/PROJECT_CHARTER.md` for product scope/acceptance decisions; use `docs/INDEX.md` only when the routing table does not cover the task.
+1. Read this file. Read `docs/PROJECT_CHARTER.md` for product scope/acceptance decisions; use `docs/INDEX.md` only when the routing table does not cover the task.
 2. Inspect Git status/diff and preserve unrelated or user-owned changes.
 3. Read the applicable row and latest slice in `docs/TRACEABILITY.md`; target prose is never implementation evidence.
 4. Identify the governing PRD IDs, acceptance criteria, invariants, and ADRs.
 5. Load only the task-relevant documents below. For large documents, locate the relevant heading or endpoint first; read the whole file only for a genuinely cross-cutting change.
 
 `README.md` is human setup/run guidance, not mandatory agent context. Historical slice ledgers are Git history referenced by `docs/TRACEABILITY.md`, not always-loaded prose.
-
-Before any tracker-based vendored skill, read `.agents/README.md`; its setup is incomplete until the required `docs/agents/` configuration exists.
 
 ## Current boundary
 
@@ -31,6 +29,21 @@ Read-only behavioral references:
 
 Never edit those repositories or make Redgres depend on them. Pin reviewed source commits in `docs/SOURCE_BASELINE.md`.
 
+## Language
+
+Qualify **user** as owner, PostgreSQL role, or Redis ACL user. `redis-admin` is ACL administration; `redis-insight` is data exploration. Terms: **owner**, **project database/role**, **Redis ACL user**, **direct** (5432) vs **pooled** (6432) PostgreSQL, **vault** (`database_console_vault`), **control state** (SQLite; never project credentials), **protected resource**. Full glossary: `docs/GLOSSARY.md`. Packages: `auth`, `audit`, `postgresadmin`, `redisadmin`, `platform`, `database`, `operations`, `backup`, `httpapi`. Put new terms in `docs/GLOSSARY.md`; do not recreate `CONTEXT.md`.
+
+## Cursor commands
+
+Open `Redgres.code-workspace`. One writing command per checkout.
+
+| Situation | Command |
+|---|---|
+| Continue local product work | `/start-redgres` |
+| Recover an unfinished slice | `/resume-redgres` |
+| Report only | `/status-redgres` |
+| Reproduce and fix one issue | `/fix-redgres <issue>` |
+
 ## Context routing
 
 | Change | Read |
@@ -40,13 +53,14 @@ Never edit those repositories or make Redgres depend on them. Pin reviewed sourc
 | Go/backend/data flow | relevant `docs/ARCHITECTURE.md`; `docs/COMPATIBILITY.md`; `docs/SOURCE_SYSTEMS.md` only for parity |
 | Secrets/auth/destructive actions | `docs/SECURITY.md`; `docs/DATA_AND_SECRETS.md`; governing ADR |
 | React/UI | `.agents/skills/redgres-ui-design/SKILL.md`; relevant `docs/UX.md`, `docs/UI_DESIGN_SYSTEM.md`, and API endpoint |
-| Deployment/installer | relevant `docs/INSTALLER_SPEC.md`, `docs/DEPLOYMENT.md`, `docs/CONFIGURATION.md`, `docs/COMPATIBILITY.md` |
+| Deployment/installer | relevant `docs/INSTALLER_SPEC.md`, `docs/DEPLOYMENT.md`, `docs/CONFIGURATION.md`, `docs/COMPATIBILITY.md`; `docs/CLOUDFLARED.md` for tunnel units |
 | PostgreSQL lifecycle/extensions | `docs/POSTGRESQL_PROVISIONING.md`; ADR-009 |
 | Backup/recovery | `docs/BACKUP_RECOVERY.md`; `docs/OPERATIONS.md`; ADR-011 and ADR-005 as applicable |
 | Migration/cutover | `docs/MIGRATION.md`; `docs/TESTING.md`; affected ADRs only |
 | Test/release evidence | relevant `docs/TESTING.md`; `docs/ACCEPTANCE_CHECKLIST.md`; `docs/TRACEABILITY.md` |
+| Public GitHub Pages | `site/` only; never publish `docs/` |
 
-`docs/INDEX.md` is the full catalog. Do not preload the catalog.
+`docs/INDEX.md` is a short human extras list. Do not preload it.
 
 ## Non-negotiable invariants
 
@@ -94,6 +108,7 @@ Never edit those repositories or make Redgres depend on them. Pin reviewed sourc
 | Source parity | `docs/SOURCE_SYSTEMS.md`, `docs/SOURCE_BASELINE.md` |
 | Tests/release gates | `docs/TESTING.md`, `docs/ACCEPTANCE_CHECKLIST.md` |
 | Milestones/cutover | `docs/ROADMAP.md`, `docs/MIGRATION.md` |
+| Public GitHub Pages | `site/` (do not publish `docs/`) |
 
 ## Completion protocol
 
@@ -106,3 +121,15 @@ Before coding, freeze the requirement, acceptance criteria, affected invariants/
 5. Obtain required independent security/UI review and verify the corrected immutable commit.
 
 Security invariants and accepted ADRs outrank PRD, architecture/deployment docs, roadmap, and targets in that order. Resolve contradictions in the same change.
+
+## Learned User Preferences
+
+- Keep installer commits scoped to installer, deploy, and related auth work; leave unrelated UI/theme dirty files out of those commits.
+- While iterating the installer, do not delete `.github/workflows/ci.yml`; keep full CI off push until it is ready, and use a separate installer workflow for that gate.
+- Prefer finishing application code first, then verify on the Ubuntu test host; GitHub Actions service containers are development evidence, not production acceptance.
+
+## Learned Workspace Facts
+
+- Root `install.sh` is application-only (`curl | bash`); full-stack PostgreSQL/Redis/PgBouncer is `git clone` then `sudo ./deploy/install.sh`.
+- Live installer checks on Windows must use Git Bash (`C:\Program Files\Git\bin\bash.exe`); WSL `bash` has no `/bin/bash`.
+- The live Ubuntu installer OS gate is 24.04 (`noble`) and 26.04 (`resolute`) via PGDG named packages; that is not 26.04-only exact apt pins and does not widen `docs/COMPATIBILITY.md` §6.
