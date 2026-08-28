@@ -98,27 +98,37 @@ if [[ "${APP_ONLY}" -eq 1 && "${PURGE_STATE}" -eq 1 ]]; then
   printf '%b\n' "${YELLOW}--purge-state: will delete ${VAR_ROOT}${NC}"
 fi
 
-read_confirm() {
+confirm_uninstall() {
   local response=""
-  if [[ ! -e /dev/tty ]]; then
+  if [[ -t 0 ]]; then
+    :
+  elif [[ -e /dev/tty ]]; then
+    # curl | bash (and curl | sudo bash) leaves stdin on the pipe — attach the real terminal.
+    exec 0</dev/tty
+  else
     printf '%b\n' "${RED}Error: No terminal for confirmation.${NC}" >&2
     printf '%b\n' "${DIM}Use: curl -fsSL .../uninstall.sh | sudo bash -s -- -y${NC}" >&2
     printf '%b\n' "${DIM}Or:  curl -fsSL .../uninstall.sh -o uninstall.sh && sudo bash uninstall.sh${NC}" >&2
     exit 1
   fi
-  # curl | bash feeds the script on stdin — read the answer from the real TTY.
-  printf '%b' "${YELLOW}${BOLD}Type yes to confirm uninstall (anything else aborts): ${NC}" >/dev/tty
-  read -r response </dev/tty || true
-  printf '%s' "${response}"
+  printf '%b\n' "${YELLOW}${BOLD}Uninstall this server?${NC}  ${DIM}yes / y to continue  ·  no / n to abort${NC}"
+  printf '%b' "${YELLOW}${BOLD}Choice [y/N]: ${NC}"
+  read -r response || true
+  case "${response}" in
+    [yY]|[yY][eE][sS]) return 0 ;;
+    [nN]|[nN][oO]|"")
+      printf '%b\n' "${DIM}Aborted.${NC}"
+      exit 1
+      ;;
+    *)
+      printf '%b\n' "${DIM}Aborted.${NC}"
+      exit 1
+      ;;
+  esac
 }
 
 if [[ "${FORCE}" -ne 1 ]]; then
-  response="$(read_confirm)"
-  printf '\n'
-  if [[ "${response}" != "yes" ]]; then
-    printf '%b\n' "${DIM}Aborted.${NC}"
-    exit 1
-  fi
+  confirm_uninstall
   printf '%b\n' ""
 else
   printf '%b\n' "${YELLOW}Force mode (-y): warnings shown above; confirmation skipped.${NC}"
