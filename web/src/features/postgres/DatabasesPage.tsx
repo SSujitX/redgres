@@ -28,6 +28,7 @@ import DuplicateDatabaseForm from "./DuplicateDatabaseForm";
 import RotatePasswordDialog from "./RotatePasswordDialog";
 import TruncateProjectDataDialog from "./TruncateProjectDataDialog";
 import { displayText } from "../../text/displayText";
+import { copyText, copyTextFromPromise } from "../../text/copyText";
 
 const maxRowQueryRunes = 128;
 const sessionExpired = "Your session has expired. Sign in again to continue.";
@@ -42,12 +43,6 @@ type ConnectionUrls = {
   maskedDirectUrl: string | null;
   maskedPooledUrl: string | null;
 };
-
-async function copyText(value: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-  }
-}
 
 function presentUrl(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
@@ -465,8 +460,47 @@ export default function DatabasesPage({
     }
   }
 
-  async function handleReveal() {
-    if (!selected || revealing || rotating || creating || duplicating || truncating || dropping || ticket) {
+  async function completeReveal(controller: AbortController): Promise<ShownCredential | null> {
+    const result = await revealPostgresConnection(selected!, csrf, { signal: controller.signal });
+    if (controller.signal.aborted) {
+      return null;
+    }
+    if (result.status === 401) {
+      setTicket(null);
+      setRevealError(sessionExpired);
+      return null;
+    }
+    if (result.status === 404) {
+      setTicket(null);
+      setRevealError(errorMessage(result.body, "Not found"));
+      return null;
+    }
+    if (result.status === 200) {
+      const shown = parsePostgresCredential(result.body.credential);
+      if (!shown) {
+        setRevealError(errorMessage(result.body, postgresUnavailable));
+        return null;
+      }
+      setTicket(shown);
+      setTicketRotateWarning(false);
+      setRevealError("");
+      return shown;
+    }
+    setTicket(null);
+    setRevealError(errorMessage(result.body, postgresUnavailable));
+    return null;
+  }
+
+  async function handleReveal(options?: { copyKind?: "direct" | "pooled" }) {
+    if (!selected || revealing || rotating || creating || duplicating || truncating || dropping) {
+      return;
+    }
+    if (ticket) {
+      if (options?.copyKind === "direct" && ticket.directUrl) {
+        await copyText(ticket.directUrl);
+      } else if (options?.copyKind === "pooled" && ticket.pooledUrl) {
+        await copyText(ticket.pooledUrl);
+      }
       return;
     }
     revealAbort.current?.abort();
@@ -475,35 +509,26 @@ export default function DatabasesPage({
     setRevealing(true);
     setRevealError("");
     try {
-      const result = await revealPostgresConnection(selected, csrf, { signal: controller.signal });
-      if (controller.signal.aborted) {
+      if (options?.copyKind) {
+        await copyTextFromPromise(async () => {
+          const shown = await completeReveal(controller);
+          if (!shown) {
+            throw new Error("reveal failed");
+          }
+          const url = options.copyKind === "direct" ? shown.directUrl : shown.pooledUrl;
+          if (!url) {
+            throw new Error("missing url");
+          }
+          return url;
+        });
         return;
       }
-      if (result.status === 401) {
-        setTicket(null);
-        setRevealError(sessionExpired);
-        return;
-      }
-      if (result.status === 404) {
-        setTicket(null);
-        setRevealError(errorMessage(result.body, "Not found"));
-        return;
-      }
-      if (result.status === 200) {
-        const shown = parsePostgresCredential(result.body.credential);
-        if (!shown) {
-          setRevealError(errorMessage(result.body, postgresUnavailable));
-          return;
-        }
-        setTicket(shown);
-        setTicketRotateWarning(false);
-        setRevealError("");
-        return;
-      }
-      setTicket(null);
-      setRevealError(errorMessage(result.body, postgresUnavailable));
+      await completeReveal(controller);
     } catch (err) {
       if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      if (err instanceof Error && err.message === "reveal failed") {
         return;
       }
       setTicket(null);
@@ -1293,6 +1318,8 @@ export default function DatabasesPage({
   const showTruncate = !loadingDetails && details !== null;
   const showDrop = !loadingDetails && details !== null;
   const showCreate = items !== null && listError === "";
+  const connectionCopyDisabled =
+    !showReveal || revealing || rotating || creating || duplicating || truncating || dropping;
   const mutationBusy = creating || revealing || rotating || duplicating || truncating || dropping || ticket !== null;
   const createDisabled = mutationBusy;
   const truncateDisabled = mutationBusy || deleting;
@@ -1510,7 +1537,14 @@ export default function DatabasesPage({
               {connectionError}
             </p>
           ) : null}
-          {connection ? <ConnectionFacts urls={connection} /> : null}
+          {connection ? (
+            <ConnectionFacts
+              urls={connection}
+              copyDisabled={connectionCopyDisabled}
+              onCopyDirect={() => void handleReveal({ copyKind: "direct" })}
+              onCopyPooled={() => void handleReveal({ copyKind: "pooled" })}
+            />
+          ) : null}
           {revealError ? (
             <p className="form-warning" role="alert">
               {revealError}
@@ -1946,7 +1980,17 @@ function formatCell(value: unknown): { text: string; nullish: boolean } {
   }
 }
 
-function ConnectionFacts({ urls }: { urls: ConnectionUrls }) {
+function ConnectionFacts({
+  urls,
+  copyDisabled,
+  onCopyDirect,
+  onCopyPooled,
+}: {
+  urls: ConnectionUrls;
+  copyDisabled: boolean;
+  onCopyDirect: () => void;
+  onCopyPooled: () => void;
+}) {
   const directUrl = urls.maskedDirectUrl;
   const pooledUrl = urls.maskedPooledUrl;
   if (!directUrl && !pooledUrl) {
@@ -1957,8 +2001,9 @@ function ConnectionFacts({ urls }: { urls: ConnectionUrls }) {
       {directUrl ? (
         <div>
           <dt>Direct URL</dt>
-          <dd className="bidi-isolate identifier">{displayText(directUrl)}</dd>
-          <button type="button" className="text-button" onClick={() => void copyText(directUrl)}>
+          <dd className="bidi-isolate identifier masked-connection-url">{displayText(directUrl)}</dd>
+          <p className="muted-copy">Use Copy Direct URL for the connection string with the real password.</p>
+          <button type="button" className="text-button" disabled={copyDisabled} onClick={onCopyDirect}>
             Copy Direct URL
           </button>
         </div>
@@ -1966,8 +2011,9 @@ function ConnectionFacts({ urls }: { urls: ConnectionUrls }) {
       {pooledUrl ? (
         <div>
           <dt>Pooled URL</dt>
-          <dd className="bidi-isolate identifier">{displayText(pooledUrl)}</dd>
-          <button type="button" className="text-button" onClick={() => void copyText(pooledUrl)}>
+          <dd className="bidi-isolate identifier masked-connection-url">{displayText(pooledUrl)}</dd>
+          <p className="muted-copy">Use Copy Pooled URL for the connection string with the real password.</p>
+          <button type="button" className="text-button" disabled={copyDisabled} onClick={onCopyPooled}>
             Copy Pooled URL
           </button>
         </div>
