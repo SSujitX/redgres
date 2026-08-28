@@ -14,6 +14,14 @@ Status: implemented in `internal/config`.
 | `REDGRES_BOOTSTRAP_TTL` | No | `30m` | Bootstrap hard-cap auto-close; must be positive. The listener closes itself after this duration even if setup is abandoned. |
 | `REDGRES_CLOUDFLARE_TOKEN_FILE` | No | `/var/lib/redgres/secrets/cloudflare-api-token` | Optional path where the per-zone Cloudflare API token is stored (server-side secret, PRD OPS-009). Empty disables the Domain & Network wizard. The value is a path, never the token itself; production must be under `/var/lib/redgres`. |
 | `REDGRES_TUNNEL_TOKEN_FILE` | No | `/var/lib/redgres/secrets/cloudflared-tunnel-token` | Path where apply stores the one-time cloudflared connector token (`0600`, never returned). Must match `LoadCredential=` in `deploy/systemd/cloudflared-redgres.service`. Production path must be under `/var/lib/redgres`. See [CLOUDFLARED.md](CLOUDFLARED.md). |
+| `REDGRES_CLOUDFLARE_OAUTH_CLIENT_FILE` | No | `/var/lib/redgres/secrets/cloudflare-oauth-client.json` | OAuth app `{client_id, client_secret}` pasted by operator (`0600`). |
+| `REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE` | No | `/var/lib/redgres/secrets/cloudflare-oauth-token.json` | Steady-state OAuth `{access_token, refresh_token, expires_at}` (`0600`, never returned). |
+| `REDGRES_CLOUDFLARE_OAUTH_AUTH_URL` | No | `https://dash.cloudflare.com/oauth2/auth` | OAuth authorization endpoint override. |
+| `REDGRES_CLOUDFLARE_OAUTH_TOKEN_URL` | No | `https://dash.cloudflare.com/oauth2/token` | OAuth token endpoint override. |
+| `REDGRES_CLOUDFLARE_OAUTH_REVOKE_URL` | No | `https://dash.cloudflare.com/oauth2/revoke` | OAuth revoke endpoint override. |
+| `REDGRES_CERTBOT_BIN` | No | `certbot` | Certbot executable for DNS-01 issuance (db/redis). |
+| `REDGRES_CERTBOT_DNS_TOKEN_FILE` | No | `/var/lib/redgres/secrets/certbot-dns.ini` | certbot-dns-cloudflare credentials file (never returned). |
+| `REDGRES_BOOTSTRAP_UFW_REMOVE_CMD` | No | *(empty)* | Optional absolute path to a helper script that removes the bootstrap UFW rule on confirm-reachable. |
 | `REDGRES_BASE_URL` | Yes | `https://console.onelifeltd.xyz` | Exact **browser page origin** for cookie/origin checks; production must be `https`. This is not the listen address. |
 | `REDGRES_SQLITE_PATH` | Yes | `/var/lib/redgres/redgres.db` | Must not contain `?`, `#`, `%`, or NUL. Production path must be a file beneath a verified real `/var/lib/redgres` directory (not a lexical prefix check alone); development keeps relative and temporary paths |
 | `REDGRES_SESSION_TTL` | No | `12h` | Idle expiry; minimum 5m, maximum 24h |
