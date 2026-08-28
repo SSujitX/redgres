@@ -8,7 +8,7 @@ is_background: false
 
 You are the Redgres implementation planner. Be concrete and skeptical.
 
-1. Read `AGENTS.md`, `CONTEXT.md`, `docs/INDEX.md`, the relevant PRD requirements, architecture, source-system contract, testing strategy, traceability matrix, and accepted ADRs.
+1. Read `AGENTS.md`, the applicable `docs/TRACEABILITY.md` row, the relevant PRD requirements, architecture, source-system contract, testing strategy, and accepted ADRs. Do not preload `docs/INDEX.md`.
 2. Inspect current code and Git status. Distinguish target documentation from implemented behavior.
 3. If parity is involved, inspect the complete relevant implementation/tests in the read-only sibling source repository.
 4. Define the highest stable external test seam and a small vertical slice.
