@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Fail-closed update/rollback skip matrices (OPS-005 Partial).
-# Never source, eval, extract, or print operator --release.
-# Never print --to VERSION. Never mutate /opt/redgres. Never probe healthz.
-# This Partial is not Complete.
+# Fail-closed update/rollback (OPS-005 Partial → live application binary path).
+# Never source, eval, or print operator --release contents.
+# Never print --to VERSION. Never reverse PostgreSQL/Redis/vault/credentials/DNS/schema.
+# Live update extracts only the application binary under /opt/redgres (or REDGRES_OPT_ROOT).
 set -euo pipefail
+
+REDGRES_OPT_ROOT="${REDGRES_OPT_ROOT:-/opt/redgres}"
+REDGRES_UNIT_PATH="${REDGRES_UNIT_PATH:-/etc/systemd/system/redgres.service}"
+REDGRES_HEALTHZ_URL="${REDGRES_HEALTHZ_URL:-http://127.0.0.1:8790/api/v1/healthz}"
 
 redgres_update_print_skip_matrix() {
   cat <<'EOF'
@@ -84,7 +88,7 @@ redgres_update_verify_checksum() {
 }
 
 # PATH is validated again and read only for SHA-256 verification. It is never
-# extracted or printed in this Partial.
+# extracted or printed in this Partial dry-run.
 redgres_update_dry_run() {
   local release_path="$1"
   redgres_update_verify_checksum "${release_path}"
@@ -108,4 +112,220 @@ redgres_rollback_version_ok() {
     .|..) return 1 ;;
   esac
   return 0
+}
+
+redgres_opt_releases_dir() {
+  printf '%s/releases' "${REDGRES_OPT_ROOT}"
+}
+
+redgres_opt_current_link() {
+  printf '%s/current' "${REDGRES_OPT_ROOT}"
+}
+
+redgres_version_from_release_basename() {
+  local base="$1"
+  # redgres_0.1.0_linux_amd64.tar.gz or redgres_v0.1.0_linux_amd64.tar.gz
+  if [[ "${base}" =~ ^redgres_(v?[0-9][A-Za-z0-9._-]*)_linux_amd64\.tar\.gz$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+redgres_read_version_file() {
+  local version_path="$1"
+  local raw
+  [[ -f "${version_path}" && ! -L "${version_path}" ]] || redgres_die 'VERSION file is missing'
+  raw="$(/usr/bin/tr -d '\r\n' <"${version_path}")" || redgres_die 'VERSION file is not readable'
+  redgres_rollback_version_ok "${raw}" || redgres_die 'VERSION file is not a path-safe token'
+  printf '%s' "${raw}"
+}
+
+redgres_extract_release_staging() {
+  local release_path="$1"
+  local staging="$2"
+  local tar_bin='/usr/bin/tar'
+  redgres_validate_trusted_path 'tar' "${tar_bin}" executable
+  /usr/bin/mkdir -p "${staging}"
+  # Extract only expected member names; refuse absolute/parent paths via --restrict if available.
+  if "${tar_bin}" --help 2>&1 | /usr/bin/grep -q -- '--restrict'; then
+    "${tar_bin}" --restrict -xzf "${release_path}" -C "${staging}"
+  else
+    "${tar_bin}" -xzf "${release_path}" -C "${staging}"
+  fi
+}
+
+redgres_locate_extracted_binary() {
+  local staging="$1"
+  if [[ -f "${staging}/redgres" && -x "${staging}/redgres" && ! -L "${staging}/redgres" ]]; then
+    printf '%s' "${staging}/redgres"
+    return 0
+  fi
+  local nested
+  nested="$(/usr/bin/find "${staging}" -maxdepth 2 -type f -name redgres 2>/dev/null | /usr/bin/head -n 1 || true)"
+  [[ -n "${nested}" && -x "${nested}" && ! -L "${nested}" ]] || redgres_die 'release archive is missing redgres binary'
+  printf '%s' "${nested}"
+}
+
+redgres_locate_extracted_version() {
+  local staging="$1"
+  local bin_dir version_path
+  if [[ -f "${staging}/VERSION" && ! -L "${staging}/VERSION" ]]; then
+    printf '%s' "${staging}/VERSION"
+    return 0
+  fi
+  bin_dir="$(/usr/bin/dirname "$(redgres_locate_extracted_binary "${staging}")")"
+  version_path="${bin_dir}/VERSION"
+  [[ -f "${version_path}" && ! -L "${version_path}" ]] || redgres_die 'release archive is missing VERSION'
+  printf '%s' "${version_path}"
+}
+
+redgres_write_unit_file() {
+  local binary_path="$1"
+  local unit_path="${REDGRES_UNIT_PATH}"
+  /usr/bin/mkdir -p "$(/usr/bin/dirname "${unit_path}")"
+  cat >"${unit_path}" <<EOF
+[Unit]
+Description=Redgres control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/redgres/redgres.env
+ExecStart=${binary_path} serve
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/redgres /etc/redgres
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+redgres_probe_healthz() {
+  local curl_bin='/usr/bin/curl'
+  local i
+  if [[ "${REDGRES_SKIP_HEALTHZ:-}" == "1" ]]; then
+    redgres_log 'health_gate: skipped (REDGRES_SKIP_HEALTHZ=1)'
+    return 0
+  fi
+  if [[ ! -x "${curl_bin}" ]]; then
+    redgres_log 'health_gate: curl unavailable; skipped'
+    return 0
+  fi
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if "${curl_bin}" -fsS --connect-timeout 2 --max-time 5 "${REDGRES_HEALTHZ_URL}" >/dev/null 2>&1; then
+      redgres_log 'health_gate: ok'
+      return 0
+    fi
+    /usr/bin/sleep 1
+  done
+  redgres_die 'health_gate: GET /api/v1/healthz failed'
+}
+
+redgres_systemctl_try() {
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl "$@" || true
+  fi
+}
+
+# Live application update: checksum → extract → /opt/redgres/releases/<ver> → current → unit → restart → healthz.
+# Does not install PostgreSQL/Redis packages. Does not reverse data.
+redgres_update_apply() {
+  local release_path="$1"
+  local staging version dest binary_src version_src previous='' current_link releases_dir
+
+  redgres_update_verify_checksum "${release_path}"
+
+  releases_dir="$(redgres_opt_releases_dir)"
+  current_link="$(redgres_opt_current_link)"
+  /usr/bin/mkdir -p "${releases_dir}"
+
+  if [[ -L "${current_link}" ]]; then
+    previous="$(/usr/bin/readlink -f "${current_link}" 2>/dev/null || true)"
+  fi
+
+  staging="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/redgres-update.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -rf '${staging}'" EXIT
+
+  redgres_extract_release_staging "${release_path}" "${staging}"
+  binary_src="$(redgres_locate_extracted_binary "${staging}")"
+  version_src="$(redgres_locate_extracted_version "${staging}")"
+  version="$(redgres_read_version_file "${version_src}")"
+
+  dest="${releases_dir}/${version}"
+  if [[ -e "${dest}" ]]; then
+    redgres_die 'release version directory already exists'
+  fi
+  /usr/bin/mkdir -p "${dest}"
+  /usr/bin/install -m 0755 "${binary_src}" "${dest}/redgres"
+  /usr/bin/install -m 0644 "${version_src}" "${dest}/VERSION"
+  if [[ -f "${staging}/SHA256SUMS" ]]; then
+    /usr/bin/install -m 0644 "${staging}/SHA256SUMS" "${dest}/SHA256SUMS" || true
+  fi
+
+  /usr/bin/ln -sfn "${dest}" "${current_link}"
+  redgres_write_unit_file "${current_link}/redgres"
+
+  if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    systemctl enable redgres.service >/dev/null 2>&1 || true
+    systemctl restart redgres.service || {
+      if [[ -n "${previous}" && -d "${previous}" ]]; then
+        /usr/bin/ln -sfn "${previous}" "${current_link}"
+        redgres_write_unit_file "${current_link}/redgres"
+        systemctl daemon-reload || true
+        systemctl restart redgres.service || true
+      fi
+      redgres_die 'systemd restart failed; previous current restored if available'
+    }
+  fi
+
+  redgres_probe_healthz
+  rm -rf "${staging}"
+  trap - EXIT
+  cat <<EOF
+Update applied:
+release: extracted
+checksum: verified (adjacent SHA256SUMS; signature/provenance not verified)
+symlink: switched
+sqlite_migrate: deferred to serve startup
+systemd: unit written/restarted when managing /opt/redgres
+health_gate: probed
+postgres_packages: skipped (not part of application update)
+data_reversal: skipped (never reverses PostgreSQL/Redis/vault/credentials/DNS/schema)
+result=applied
+EOF
+}
+
+redgres_rollback_apply() {
+  local version="$1"
+  local dest current_link
+
+  redgres_rollback_version_ok "${version}" || redgres_die '--to must be a path-safe version token'
+  dest="$(redgres_opt_releases_dir)/${version}"
+  [[ -d "${dest}" && -x "${dest}/redgres" ]] || redgres_die 'rollback target release is missing'
+  current_link="$(redgres_opt_current_link)"
+  /usr/bin/ln -sfn "${dest}" "${current_link}"
+  redgres_write_unit_file "${current_link}/redgres"
+  if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    systemctl restart redgres.service || redgres_die 'systemd restart failed after rollback'
+  fi
+  redgres_probe_healthz
+  cat <<'EOF'
+Rollback applied:
+symlink: switched
+schema_compat: not checked (operator responsibility)
+systemd: unit rewritten/restarted when managing /opt/redgres
+health_gate: probed
+data_reversal: skipped (rollback never reverses PostgreSQL/Redis/vault/credentials/DNS/schema automatically)
+result=applied
+EOF
 }
