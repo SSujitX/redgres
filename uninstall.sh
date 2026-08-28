@@ -2,7 +2,9 @@
 # Redgres uninstaller (DockLift-parity UX).
 # Default: remove every Redgres-owned resource so the host is clean for a fresh install.
 #
+# Interactive (type yes at prompt — works with curl | bash via /dev/tty):
 #   curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh | sudo bash
+# Non-interactive:
 #   curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh | sudo bash -s -- -y
 #
 # App binary only (preserve PostgreSQL, Redis, config, and data):
@@ -96,9 +98,23 @@ if [[ "${APP_ONLY}" -eq 1 && "${PURGE_STATE}" -eq 1 ]]; then
   printf '%b\n' "${YELLOW}--purge-state: will delete ${VAR_ROOT}${NC}"
 fi
 
+read_confirm() {
+  local response=""
+  if [[ ! -e /dev/tty ]]; then
+    printf '%b\n' "${RED}Error: No terminal for confirmation.${NC}" >&2
+    printf '%b\n' "${DIM}Use: curl -fsSL .../uninstall.sh | sudo bash -s -- -y${NC}" >&2
+    printf '%b\n' "${DIM}Or:  curl -fsSL .../uninstall.sh -o uninstall.sh && sudo bash uninstall.sh${NC}" >&2
+    exit 1
+  fi
+  # curl | bash feeds the script on stdin — read the answer from the real TTY.
+  printf '%b' "${YELLOW}${BOLD}Type yes to confirm uninstall (anything else aborts): ${NC}" >/dev/tty
+  read -r response </dev/tty || true
+  printf '%s' "${response}"
+}
+
 if [[ "${FORCE}" -ne 1 ]]; then
-  printf '%b\n' "${YELLOW}${BOLD}Type yes to confirm uninstall (anything else aborts):${NC}"
-  read -r response || true
+  response="$(read_confirm)"
+  printf '\n'
   if [[ "${response}" != "yes" ]]; then
     printf '%b\n' "${DIM}Aborted.${NC}"
     exit 1
