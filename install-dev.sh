@@ -19,6 +19,89 @@ UNIT_PATH="/etc/systemd/system/redgres.service"
 die() { printf '%b\n' "${RED}Error: $*${NC}" >&2; exit 1; }
 log() { printf '%b\n' "$*"; }
 
+env_value() {
+  local key="$1" file="${ETC_ROOT}/redgres.env" line
+  [[ -f "${file}" ]] || return 0
+  line="$(grep -E "^${key}=" "${file}" 2>/dev/null | tail -n1 || true)"
+  printf '%s' "${line#*=}"
+}
+
+public_ipv4() {
+  local ip=""
+  ip="$(curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null || true)"
+  if [[ -n "${ip}" ]]; then
+    printf '%s' "${ip}"
+    return 0
+  fi
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  printf '%s' "${ip}"
+}
+
+run_go_build() {
+  log "  ${CYAN}[4/5] Compiling redgres binary (Go)…${NC}"
+  log "  ${DIM}First build on this server: downloads modules, then compiles (often 3–10 min).${NC}"
+  log "  ${DIM}No output during compile is normal — do not interrupt.${NC}"
+  local started=$SECONDS pid
+  CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o redgres ./cmd/redgres &
+  pid=$!
+  while kill -0 "${pid}" 2>/dev/null; do
+    if (( SECONDS - started >= 30 && (SECONDS - started) % 30 == 0 )); then
+      log "  ${DIM}… still compiling ($((SECONDS - started))s)${NC}"
+    fi
+    sleep 5
+  done
+  wait "${pid}"
+  log "  ${GREEN}Go build finished${NC} ($((SECONDS - started))s)"
+}
+
+print_install_summary() {
+  local version="$1" listen bootstrap pub health_ok="" svc=""
+  listen="$(env_value REDGRES_ADDRESS)"
+  bootstrap="$(env_value REDGRES_BOOTSTRAP_ADDRESS)"
+  [[ -n "${listen}" ]] || listen="127.0.0.1:8790"
+  [[ -n "${bootstrap}" ]] || bootstrap="0.0.0.0:8989"
+  pub="$(public_ipv4)"
+  if curl -fsS --max-time 3 "http://${listen}/api/v1/healthz" >/dev/null 2>&1; then
+    health_ok="yes"
+  fi
+  if systemctl is-active --quiet redgres.service 2>/dev/null; then
+    svc="active"
+  else
+    svc="inactive"
+  fi
+
+  log ""
+  log "  ${GREEN}${BOLD}Development build installed${NC}"
+  log "  ${BOLD}Version${NC}     ${VERSION}  ${DIM}(git ${SHA} on master)${NC}"
+  log "  ${BOLD}Binary${NC}      ${OPT_ROOT}/current/redgres"
+  log "  ${BOLD}Config${NC}      ${ETC_ROOT}/redgres.env"
+  log "  ${BOLD}Service${NC}     redgres.service → ${svc}"
+  log ""
+  log "  ${BOLD}Endpoints on this server${NC}"
+  log "    ${CYAN}Loopback UI${NC}   http://${listen}  ${DIM}(cloudflared / tunnel only; not public)${NC}"
+  if [[ "${health_ok}" == "yes" ]]; then
+    log "    ${CYAN}Health${NC}        http://${listen}/api/v1/healthz  ${GREEN}OK${NC}"
+  else
+    log "    ${CYAN}Health${NC}        http://${listen}/api/v1/healthz  ${YELLOW}not ready yet${NC}"
+  fi
+  if [[ -n "${bootstrap}" && "${bootstrap}" != "0.0.0.0:0" && "${bootstrap}" != ":0" ]]; then
+    log "    ${CYAN}Bootstrap${NC}     http://${bootstrap/#0.0.0.0/${pub:-127.0.0.1}}  ${DIM}(temporary setup UI; firewall-restricted)${NC}"
+  fi
+  if [[ -n "${pub}" ]]; then
+    log "    ${CYAN}Public IP${NC}     ${pub}"
+  fi
+  log ""
+  log "  ${BOLD}If domain is already configured${NC}"
+  log "    Open your console hostname through Cloudflare Access (e.g. console.redgres.com)."
+  log "    Domain & Network → endpoint cards (console, db, rs, pgadmin, redis Insight)."
+  log ""
+  log "  ${BOLD}Commands${NC}"
+  log "    systemctl status redgres.service"
+  log "    /opt/redgres/current/redgres version"
+  log "    ${DIM}Stable updates (no Go/Node on server): upgrade.sh${NC}"
+  log ""
+}
+
 ensure_build_tools() {
   local missing=()
   command -v git >/dev/null || missing+=("git")
@@ -90,17 +173,25 @@ log ""
 ensure_build_tools
 export PATH="/usr/local/go/bin:${PATH}"
 
-log "  ${CYAN}Cloning master and building…${NC}"
+log "  ${CYAN}[1/5] Cloning master…${NC}"
 WORKDIR="$(mktemp -d /tmp/redgres-dev.XXXXXX)"
 trap 'rm -rf "${WORKDIR}"' EXIT
 git clone --depth 1 --branch master "${REPO_URL}" "${WORKDIR}/src"
 cd "${WORKDIR}/src"
 SHA="$(git rev-parse --short HEAD)"
 VERSION="0.0.0-dev.${SHA}"
+log "  ${GREEN}Source${NC} ${SHA} from master"
 
-(cd web && npm ci && npm run build)
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o redgres ./cmd/redgres
+log "  ${CYAN}[2/5] Web dependencies (npm ci)…${NC}"
+(cd web && npm ci)
+log "  ${CYAN}[3/5] Web production build…${NC}"
+(cd web && npm run build)
+log "  ${GREEN}Web UI built${NC}"
+
+run_go_build
 printf '%s\n' "${VERSION}" >VERSION
+
+log "  ${CYAN}[5/5] Installing under ${OPT_ROOT} and restarting service…${NC}"
 
 DEST="${OPT_ROOT}/releases/${VERSION}"
 mkdir -p "${DEST}" "${ETC_ROOT}" "${VAR_ROOT}/secrets"
@@ -140,9 +231,10 @@ EOF
 
 systemctl daemon-reload
 systemctl enable redgres.service >/dev/null
-systemctl restart redgres.service || log "  ${YELLOW}Service start deferred.${NC}"
+if systemctl restart redgres.service; then
+  log "  ${GREEN}redgres.service restarted${NC}"
+else
+  log "  ${YELLOW}Service restart deferred (check journalctl -u redgres).${NC}"
+fi
 
-log ""
-log "  ${GREEN}${BOLD}Development build installed${NC} (${VERSION})"
-log "  Prefer install.sh / upgrade.sh for release channels."
-log ""
+print_install_summary "${VERSION}"
