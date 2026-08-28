@@ -1449,6 +1449,240 @@ expect_status 'rollback --to absolute path exits 1' 1
 run_install rollback --non-interactive --dry-run --to ..
 expect_status 'rollback --to .. exits 1' 1
 
+# --- S2 OS gate + Redis digest pins (no host mutation) ---
+s2_lib_src() {
+  # shellcheck disable=SC1091
+  source "${deploy_dir}/lib/common.sh"
+  # shellcheck disable=SC1091
+  source "${deploy_dir}/lib/pins.sh"
+  # shellcheck disable=SC1091
+  source "${deploy_dir}/lib/mutate.sh"
+  source "${deploy_dir}/lib/app_install.sh"
+}
+
+os_gate_rc=0
+os_gate_err="$(
+  s2_lib_src
+  redgres_assert_pgdg_ubuntu ubuntu 24.04 noble
+  redgres_assert_pgdg_ubuntu ubuntu 26.04 resolute
+  pin82="$(redgres_redis_image_pin 8.2)"
+  pin88="$(redgres_redis_image_pin 8.8)"
+  [[ "${pin82}" == 'redis:8.2.9@sha256:7d1e4ce8b9395088377ab382d1f6cfdbd13b3690795198a0399ab8d683064d6d' ]]
+  [[ "${pin88}" == 'redis:8.8.2@sha256:c514823c0ec1a40764df434efc2dc4ab5ec669c71c1cb00e4f7b1a694cee9fc3' ]]
+) 2>&1" || os_gate_rc=$?
+if [[ "${os_gate_rc}" -eq 0 ]]; then
+  pass 'PGDG OS gate accepts noble/resolute and Redis digest pins'
+else
+  fail "PGDG OS gate / Redis pins (rc=${os_gate_rc})"
+  printf '%s\n' "${os_gate_err}" >&2
+fi
+
+expect_os_rejected() {
+  local desc="$1" os_id="$2" os_version_id="$3" os_codename="$4"
+  local rc=0
+  ( s2_lib_src; redgres_assert_pgdg_ubuntu "${os_id}" "${os_version_id}" "${os_codename}" ) >/dev/null 2>&1 || rc=$?
+  if [[ "${rc}" -eq 1 ]]; then
+    pass "${desc}"
+  else
+    fail "${desc} (rc=${rc})"
+  fi
+}
+expect_os_rejected 'PGDG OS gate rejects oracular (24.10)' ubuntu 24.10 oracular
+expect_os_rejected 'PGDG OS gate rejects jammy (22.04)' ubuntu 22.04 jammy
+expect_os_rejected 'PGDG OS gate rejects debian' debian 13 trixie
+
+apt_parse_rc=0
+apt_parse_err="$(
+  s2_lib_src
+  got="$(redgres_apt_candidate_from_policy $'postgresql-18:\n  Installed: (none)\n  Candidate: 18.6-1.pgdg24.04+1\n')"
+  [[ "${got}" == '18.6-1.pgdg24.04+1' ]]
+  got="$(redgres_apt_candidate_from_policy $'docker.io:\n  Installed: (none)\n  Candidate: 1:29.1.3-0ubuntu4.1\n')"
+  [[ "${got}" == '1:29.1.3-0ubuntu4.1' ]]
+  redgres_assert_redis_pong $'OK\nPONG\n'
+)" 2>&1 || apt_parse_rc=$?
+if [[ "${apt_parse_rc}" -eq 0 ]]; then
+  pass 'apt Candidate pin parser and redis PONG assertion'
+else
+  fail "apt Candidate pin parser (rc=${apt_parse_rc})"
+  printf '%s\n' "${apt_parse_err}" >&2
+fi
+
+expect_apt_candidate_rejected() {
+  local desc="$1" policy="$2"
+  local rc=0
+  ( s2_lib_src; redgres_apt_candidate_from_policy "${policy}" ) >/dev/null 2>&1 || rc=$?
+  if [[ "${rc}" -eq 1 ]]; then
+    pass "${desc}"
+  else
+    fail "${desc} (rc=${rc})"
+  fi
+}
+expect_apt_candidate_rejected 'apt Candidate (none) is rejected' $'pkg:\n  Candidate: (none)\n'
+expect_apt_candidate_rejected 'apt Candidate injection is rejected' $'pkg:\n  Candidate: 1.0;id\n'
+expect_apt_candidate_rejected 'apt Candidate missing is rejected' $'pkg:\n  Installed: (none)\n'
+
+pong_rc=0
+( s2_lib_src; redgres_assert_redis_pong $'NOAUTH Authentication required.\n' ) >/dev/null 2>&1 || pong_rc=$?
+if [[ "${pong_rc}" -eq 1 ]]; then
+  pass 'redis PONG assertion rejects NOAUTH'
+else
+  fail "redis PONG assertion should reject NOAUTH (rc=${pong_rc})"
+fi
+
+urls_rc=0
+urls_out="$(
+  s2_lib_src
+  json='{"tag_name":"v1.0.0","assets":[{"browser_download_url":"https://github.com/SSujitX/redgres/releases/download/v1.0.0/redgres_1.0.0_linux_amd64.tar.gz"},{"browser_download_url":"https://github.com/SSujitX/redgres/releases/download/v1.0.0/SHA256SUMS"}]}'
+  redgres_release_urls_from_json "${json}"
+) 2>&1" || urls_rc=$?
+if [[ "${urls_rc}" -eq 0 ]] && [[ "${urls_out}" == *"redgres_1.0.0_linux_amd64.tar.gz"* ]] && [[ "${urls_out}" == *"SHA256SUMS"* ]]; then
+  pass 'release URL parser extracts tarball and SHA256SUMS'
+else
+  fail "release URL parser (rc=${urls_rc})"
+fi
+
+missing_rc=0
+( s2_lib_src; redgres_release_urls_from_json '{"tag_name":"v1.0.0","assets":[]}' ) >/dev/null 2>&1 || missing_rc=$?
+if [[ "${missing_rc}" -eq 1 ]]; then
+  pass 'release URL parser rejects missing assets'
+else
+  fail "release URL parser should reject missing assets (rc=${missing_rc})"
+fi
+
+evil_rc=0
+( s2_lib_src; redgres_release_urls_from_json '{"tag_name":"v1.0.0","assets":[{"browser_download_url":"https://evil.example/redgres_1.0.0_linux_amd64.tar.gz"},{"browser_download_url":"https://github.com/SSujitX/redgres/releases/download/v1.0.0/SHA256SUMS"}]}' ) >/dev/null 2>&1 || evil_rc=$?
+if [[ "${evil_rc}" -eq 1 ]]; then
+  pass 'release URL parser rejects non-GitHub tarball URL'
+else
+  fail "release URL parser should reject non-GitHub tarball (rc=${evil_rc})"
+fi
+
+nested_rc=0
+( s2_lib_src; redgres_release_urls_from_json '{"tag_name":"v1.0.0","assets":[{"browser_download_url":"https://github.com/SSujitX/redgres/releases/download/v1.0.0/nested/redgres_1.0.0_linux_amd64.tar.gz"},{"browser_download_url":"https://github.com/SSujitX/redgres/releases/download/v1.0.0/SHA256SUMS"}]}' ) >/dev/null 2>&1 || nested_rc=$?
+if [[ "${nested_rc}" -eq 1 ]]; then
+  pass 'release URL parser rejects extra path under download/vX.Y.Z/'
+else
+  fail "release URL parser should reject nested download path (rc=${nested_rc})"
+fi
+
+http_rc=0
+( s2_lib_src; redgres_release_urls_from_json '{"tag_name":"v1.0.0","assets":[{"browser_download_url":"http://github.com/SSujitX/redgres/releases/download/v1.0.0/redgres_1.0.0_linux_amd64.tar.gz"},{"browser_download_url":"https://github.com/SSujitX/redgres/releases/download/v1.0.0/SHA256SUMS"}]}' ) >/dev/null 2>&1 || http_rc=$?
+if [[ "${http_rc}" -eq 1 ]]; then
+  pass 'release URL parser rejects http:// asset URL'
+else
+  fail "release URL parser should reject http:// (rc=${http_rc})"
+fi
+
+mock_bin="${tmpdir}/mock-redgres"
+cat >"${mock_bin}" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod 700 "${mock_bin}"
+owner_out="$(
+  s2_lib_src
+  redgres_have_owner_tty() { return 1; }
+  redgres_owner_bootstrap "${mock_bin}"
+) 2>&1" || true
+if [[ "${owner_out}" == *"create-owner --username admin"* ]]; then
+  pass 'owner bootstrap fallback prints create-owner command'
+else
+  fail "owner bootstrap fallback (out=${owner_out})"
+fi
+
+skip_marker="${tmpdir}/owner-generate-called"
+skip_bin="${tmpdir}/mock-redgres-skip"
+cat >"${skip_bin}" <<EOF
+#!/usr/bin/env bash
+: >"${skip_marker}"
+exit 0
+EOF
+chmod 700 "${skip_bin}"
+rm -f "${skip_marker}"
+skip_out="$(
+  s2_lib_src
+  redgres_have_owner_tty() { return 1; }
+  redgres_owner_bootstrap "${skip_bin}"
+) 2>&1" || true
+if [[ -e "${skip_marker}" ]]; then
+  fail 'owner bootstrap invoked create-owner without a TTY'
+elif [[ "${skip_out}" == *"no controlling terminal"* ]]; then
+  pass 'owner bootstrap skips generate when /dev/tty cannot be opened'
+else
+  fail "owner bootstrap TTY skip (out=${skip_out})"
+fi
+
+genfail_rc=0
+genfail_out="$(
+  s2_lib_src
+  redgres_have_owner_tty() { return 0; }
+  redgres_owner_bootstrap "${mock_bin}" 2>&1
+)" || genfail_rc=$?
+if [[ "${genfail_rc}" -eq 1 ]] && [[ "${genfail_out}" == *"create-owner --generate failed"* ]]; then
+  pass 'owner bootstrap generate failure exits 1'
+else
+  fail "owner bootstrap generate failure (rc=${genfail_rc} out=${genfail_out})"
+fi
+
+ip_rc=0
+( s2_lib_src
+  redgres_assert_bootstrap_allow_ip '203.0.113.10'
+  ! redgres_assert_bootstrap_allow_ip '0.0.0.0'
+  ! redgres_assert_bootstrap_allow_ip '127.0.0.1'
+  ! redgres_assert_bootstrap_allow_ip '0.0.0.0/0'
+  ! redgres_assert_bootstrap_allow_ip '203.0.113.10/32'
+  REDGRES_BOOTSTRAP_ALLOW_FROM=
+  SSH_CONNECTION='198.51.100.20 5555 203.0.113.10 22'
+  got="$(redgres_bootstrap_allow_from)"
+  [[ "${got}" == '198.51.100.20' ]]
+  argv="$(redgres_ufw_bootstrap_allow_argv "${got}")"
+  [[ "${argv}" == 'allow from 198.51.100.20 to any port 8989 proto tcp comment redgres-bootstrap' ]]
+  [[ "${argv}" != *'allow 8989/tcp'* ]]
+) >/dev/null 2>&1 || ip_rc=$?
+if [[ "${ip_rc}" -eq 0 ]]; then
+  pass 'bootstrap UFW allow-from is a single operator IP (never 8989/tcp world-open)'
+else
+  fail "bootstrap allow-from / UFW argv (rc=${ip_rc})"
+fi
+
+unit_rc=0
+unit_out="$(
+  s2_lib_src
+  redgres_app_unit_body '/opt/redgres/current/redgres'
+) 2>&1" || unit_rc=$?
+if [[ "${unit_rc}" -eq 0 ]] && [[ "${unit_out}" == *"User=redgres"* ]] && [[ "${unit_out}" == *"UMask=0077"* ]] && [[ "${unit_out}" == *"Group=redgres"* ]]; then
+  pass 'systemd unit body uses User=redgres and UMask=0077'
+else
+  fail "systemd unit body hardening (rc=${unit_rc})"
+fi
+if grep -q 'User=redgres' "${deploy_dir}/systemd/redgres.service" && grep -q 'UMask=0077' "${deploy_dir}/systemd/redgres.service"; then
+  pass 'deploy/systemd/redgres.service is User=redgres UMask=0077'
+else
+  fail 'deploy/systemd/redgres.service missing User=redgres or UMask=0077'
+fi
+# Live fresh as non-root must fail closed before inventory. Root is not exercised here
+# (absolute /usr/bin/apt-get would bypass STUB_NAMES).
+if [[ "${EUID}" -ne 0 ]]; then
+  run_install \
+    --non-interactive \
+    --mode fresh-postgres \
+    --postgres-version 18 \
+    --redis-mode fresh \
+    --redis-version 8.2 \
+    --pgbouncer-mode disabled
+  expect_status_keyword 'live fresh without root exits 1' 1 'live install requires root'
+  case "${output}" in
+    *'Inventory (read-only'*)
+      fail 'live fresh without root must not inventory'
+      ;;
+    *)
+      pass 'live fresh without root skips inventory'
+      ;;
+  esac
+else
+  pass 'live fresh without-root check skipped (dispatcher tests running as root)'
+fi
+
 # --- valid flags without --dry-run: mutation not implemented (before inventory) ---
 DETECT_POSTGRES="${fixtures_dir}/postgres-17.11.version"
 DETECT_REDIS="${fixtures_dir}/redis-8.2.0.version"
