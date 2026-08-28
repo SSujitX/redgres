@@ -210,6 +210,11 @@ input:focus-visible {
   color: var(--muted);
 }
 
+.masked-connection-url {
+  user-select: none;
+  cursor: default;
+}
+
 .ledger-list {
   list-style: none;
   padding: 0;
