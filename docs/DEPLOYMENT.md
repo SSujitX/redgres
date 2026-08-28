@@ -4,7 +4,7 @@ Status: target and provisional until verified against the live VPS.
 
 ## 1. Supported production profile
 
-- Ubuntu Server 24.04 LTS.
+- Ubuntu Server 24.04 LTS (production profile). Ubuntu 26.04 LTS uses the same live-installer package names via PGDG; it is not production-supported until [COMPATIBILITY.md](COMPATIBILITY.md) §6.
 - systemd for Redgres, a selected supported PostgreSQL 17/18 release, PgBouncer, cloudflared, timers, and log lifecycle.
 - Docker Engine + Compose plugin for a selected supported Redis 8.2/8.8 release and optional RedisInsight.
 - PostgreSQL and PgBouncer host-native to preserve existing cluster integration and simplify direct backup/recovery.
@@ -14,7 +14,7 @@ Status: target and provisional until verified against the live VPS.
 
 Kubernetes is out of scope. A fully containerized alternative may be documented later, but production should have one supported path, not two half-tested paths.
 
-The authoritative choices, defaults, detection rules, and required test combinations are in [COMPATIBILITY.md](COMPATIBILITY.md). Exact patch versions, package repositories, image tags, and image digests are pinned by each Redgres release; deployment never follows an upstream `latest` tag.
+The authoritative choices, defaults, detection rules, and required test combinations are in [COMPATIBILITY.md](COMPATIBILITY.md). Exact patch versions, package repositories, image tags, and image digests are pinned by each Redgres release; deployment never follows an upstream `latest` tag. The live installer path installs **named** Ubuntu/PGDG packages (`postgresql-17|18`, `docker.io`, `docker-compose-v2`) on 24.04 and 26.04 and records the resolved versions; that is not a COMPATIBILITY.md §6 widening of production support.
 
 PostgreSQL may be safely adopted when already installed or provisioned fresh on this host. PostgreSQL packages, optional extension packages, per-database extension state, preload/restart changes and PgBouncer are separate lifecycles governed by [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md); no production profile installs every optional capability.
 
