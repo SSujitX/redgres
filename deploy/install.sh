@@ -158,8 +158,8 @@ Usage:
       [--redis-version 8.2|8.8] [--expect-redis-series 8.2|8.8]
       [--config PATH] [--extension-plan PATH] [--approve-postgres-restart]
   deploy/install.sh verify --non-interactive --dry-run --config PATH
-  deploy/install.sh update --non-interactive --dry-run --release PATH
-  deploy/install.sh rollback --non-interactive --dry-run --to VERSION
+  deploy/install.sh update --non-interactive [--dry-run] --release PATH
+  deploy/install.sh rollback --non-interactive [--dry-run] --to VERSION
   deploy/install.sh backup --non-interactive --dry-run --config PATH
   deploy/install.sh postgres-plan --config PATH --extension-plan PATH
   deploy/install.sh postgres-extensions apply --non-interactive --dry-run --config PATH --extension-plan PATH [--approve-postgres-restart]
@@ -167,8 +167,11 @@ Usage:
 This Partial prints the planned stage list on --dry-run and inventories PATH
 host --version for existing PostgreSQL/Redis/PgBouncer. verify --dry-run prints
 a skip matrix (result=partial); it does not probe DNS/Cloudflare/public TLS.
-update/rollback --dry-run print skip matrices (result=partial); they do not
-extract, switch current, migrate SQLite, write systemd, or probe healthz.
+update/rollback --dry-run print skip matrices (result=partial). Live update
+(without --dry-run) verifies adjacent SHA256SUMS, extracts under
+/opt/redgres/releases/<VERSION>, switches current, writes systemd unit, and
+probes healthz. Live rollback switches current to --to VERSION only. Neither
+reverses PostgreSQL/Redis/vault/credentials/DNS/schema.
 postgres-plan --config PATH --extension-plan PATH is a read-only extension-plan
 validator: it checks policy, capability IDs, explicit databases, and scheduler
 rules, then prints a plan preview and skip matrix (result=partial). It never
@@ -186,7 +189,7 @@ or run SQL SHOW / Redis INFO.
 
 Exit 0: --help, valid --non-interactive --dry-run plan, skip matrix, valid postgres-plan, backup or postgres-extensions apply skip matrix
 Exit 1: unsupported, incomplete, missing, unparseable, mismatched selection, or invalid extension plan
-Exit 2: mutation install, live verify/update/rollback, or other subcommand not implemented
+Exit 2: mutation install, live verify, or other subcommand not implemented
 
 Majors/series only (not Hub tags). latest and latest-tested are rejected.
 EOF
@@ -323,12 +326,16 @@ if [[ "${1:-}" == "update" ]]; then
   if [[ -z "${update_release_path}" ]]; then
     redgres_die "--release is required"
   fi
-  # Trusted-path/identity check only. Never source, eval, extract, or print contents.
+  # Trusted-path/identity check only. Never source, eval, or print contents.
   redgres_require_trusted_unread_file '--release' "${update_release_path}"
-  if [[ "${update_dry_run}" -ne 1 ]]; then
-    redgres_not_implemented "update without --dry-run is not implemented"
+  if [[ "${update_dry_run}" -eq 1 ]]; then
+    redgres_update_dry_run "${update_release_path}"
+    exit 0
   fi
-  redgres_update_dry_run "${update_release_path}"
+  if [[ "${EUID}" -ne 0 && -z "${REDGRES_OPT_ROOT:-}" ]]; then
+    redgres_die 'live update requires root (or REDGRES_OPT_ROOT for tests)'
+  fi
+  redgres_update_apply "${update_release_path}"
   exit 0
 fi
 
@@ -374,10 +381,14 @@ if [[ "${1:-}" == "rollback" ]]; then
   if ! redgres_rollback_version_ok "${rollback_to}"; then
     redgres_die "--to must be a path-safe version token"
   fi
-  if [[ "${rollback_dry_run}" -ne 1 ]]; then
-    redgres_not_implemented "rollback without --dry-run is not implemented"
+  if [[ "${rollback_dry_run}" -eq 1 ]]; then
+    redgres_rollback_dry_run
+    exit 0
   fi
-  redgres_rollback_dry_run
+  if [[ "${EUID}" -ne 0 && -z "${REDGRES_OPT_ROOT:-}" ]]; then
+    redgres_die 'live rollback requires root (or REDGRES_OPT_ROOT for tests)'
+  fi
+  redgres_rollback_apply "${rollback_to}"
   exit 0
 fi
 
