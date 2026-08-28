@@ -81,3 +81,7 @@ Partial, not OPS-009 Complete. Added Cloudflare `CreateAccessPolicy` / `DeleteAc
 
 Partial, not OPS-009 Complete. Slices 1–6 plus review fixes (manual DNS end-to-end with GET instructions, OAuth TTL, UFW after audit, IPv6 verify normalization, docs). Commands: `go test ./internal/cloudflare ./internal/httpapi ./internal/config ./internal/database ./cmd/redgres`; `go build ./...`; `npm run test:run -- src/features/domain/DomainNetworkPage.test.tsx`; `npm run build`. Deferred: live Cloudflare e2e, Playwright wizard e2e, production sign-off checklist, security review sign-off, OPS-009 Complete.
 
+### OPS-009 Phase 0 — live acceptance pack (2026-08-28)
+
+Documentation-only, not OPS-009 Complete. Added [ADR-013](decisions/ADR-013-confirm-reachable-attestation.md) (v1 confirm-reachable = operator attestation, no automated probe). Added operator runbook [agents/OPS-009-LIVE-ACCEPTANCE.md](agents/OPS-009-LIVE-ACCEPTANCE.md) (gates G1–G8), [agents/PRODUCTION-ORCHESTRATION.md](agents/PRODUCTION-ORCHESTRATION.md) (multi-agent loop), and [evidence/ops-009-live/](evidence/ops-009-live/) scaffold (gitignored artifacts; README only in Git). Updated [DOMAIN_AND_NETWORK.md](DOMAIN_AND_NETWORK.md) links. **No live Cloudflare/certbot/UFW/cloudflared gates executed** — operator must run G1–G7 on throwaway Ubuntu + test zone before OPS-009 Complete claim.
+
