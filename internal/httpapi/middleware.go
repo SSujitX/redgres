@@ -58,7 +58,7 @@ func credentialBearingRequest(r *http.Request) bool {
 		return false
 	}
 	switch path {
-	case "/api/v1/auth/login", "/api/v1/redis/users", "/api/v1/postgres/databases":
+	case "/api/v1/auth/login", "/api/v1/auth/password", "/api/v1/redis/users", "/api/v1/postgres/databases":
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/redis/users/") {
