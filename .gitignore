@@ -38,3 +38,9 @@
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Local Python bytecode
+__pycache__/
+*.py[cod]
+
+
