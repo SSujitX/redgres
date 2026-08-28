@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -30,6 +31,7 @@ type fakeCF struct {
 	lastIngressHost   string
 	lastIngressOrigin string
 	lastPolicyEmails  []string
+	nextRecID         int
 }
 
 func newFakeCF() *fakeCF {
@@ -65,7 +67,13 @@ func (f *fakeCF) ConfigureIngress(_ context.Context, accountID, tunnelID, hostna
 }
 
 func (f *fakeCF) CreateRecord(_ context.Context, zoneID, name, content string, proxied bool) (cloudflare.Record, error) {
-	r := cloudflare.Record{ID: "rec-1", Name: name}
+	return f.CreateDNSRecord(context.Background(), zoneID, name, "CNAME", content, proxied)
+}
+
+func (f *fakeCF) CreateDNSRecord(_ context.Context, zoneID, name, recordType, content string, proxied bool) (cloudflare.Record, error) {
+	f.nextRecID++
+	id := fmt.Sprintf("rec-%d", f.nextRecID)
+	r := cloudflare.Record{ID: id, Name: name, Type: recordType, Proxied: proxied}
 	f.records[r.ID] = r
 	return r, nil
 }
@@ -166,6 +174,8 @@ func newDomainServer(t *testing.T) (*Server, http.Handler, string, string, strin
 	return srv, handler, cookie, csrf, tokenPath
 }
 
+const domainApplyBody = `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"console.example.com","db":"db.example.com","redis":"redis.example.com"}}`
+
 func auditRows(t *testing.T, srv *Server) []string {
 	t.Helper()
 	rows, err := srv.db.Query(`SELECT action, outcome, metadata FROM audit_events ORDER BY id`)
@@ -228,7 +238,7 @@ func TestDomainApplyCreatesPersistsAndDoesNotAutoClose(t *testing.T) {
 	boot := &fakeBootstrap{open: true}
 	srv.SetBootstrapCloser(boot)
 
-	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","hostname":"console.example.com"}`))
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
 	}
@@ -278,7 +288,7 @@ func TestDomainDisconnectDeletesOnlyCreated(t *testing.T) {
 	fake := newFakeCF()
 	srv.cloudflare = fake
 
-	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","hostname":"console.example.com"}`)); rec.Code != http.StatusOK {
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody)); rec.Code != http.StatusOK {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -289,7 +299,7 @@ func TestDomainDisconnectDeletesOnlyCreated(t *testing.T) {
 	if len(fake.deletedA) != 1 || fake.deletedA[0] != "app-1" {
 		t.Fatalf("deleted apps = %v", fake.deletedA)
 	}
-	if len(fake.deletedR) != 1 || fake.deletedR[0] != "rec-1" {
+	if len(fake.deletedR) != 3 {
 		t.Fatalf("deleted records = %v", fake.deletedR)
 	}
 	if len(fake.deletedT) != 1 || fake.deletedT[0] != "tun-1" {
@@ -307,7 +317,7 @@ func TestDomainApplyRequiresToken(t *testing.T) {
 	fake := newFakeCF()
 	srv.cloudflare = fake
 
-	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","hostname":"console.example.com"}`))
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("apply without token = %d %s", rec.Code, rec.Body.String())
 	}
@@ -321,7 +331,7 @@ func TestDomainApplyConflictsOnReapply(t *testing.T) {
 	fake := newFakeCF()
 	srv.cloudflare = fake
 
-	body := `{"zone":"example.com","hostname":"console.example.com"}`
+	body := domainApplyBody
 	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, body)); rec.Code != http.StatusOK {
 		t.Fatalf("first apply = %d %s", rec.Code, rec.Body.String())
 	}
@@ -340,15 +350,15 @@ func TestDomainApplyCompensatesOnVerifyFailure(t *testing.T) {
 	fake.verifyErr = cloudflare.ErrNotFound
 	srv.cloudflare = fake
 
-	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","hostname":"console.example.com"}`))
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
 	}
 	if len(fake.deletedA) != 1 || fake.deletedA[0] != "app-1" {
 		t.Fatalf("compensation did not delete access app: %v", fake.deletedA)
 	}
-	if len(fake.deletedR) != 1 || fake.deletedR[0] != "rec-1" {
-		t.Fatalf("compensation did not delete record: %v", fake.deletedR)
+	if len(fake.deletedR) != 3 {
+		t.Fatalf("compensation did not delete records: %v", fake.deletedR)
 	}
 	if len(fake.deletedT) != 1 || fake.deletedT[0] != "tun-1" {
 		t.Fatalf("compensation did not delete tunnel: %v", fake.deletedT)
@@ -378,7 +388,7 @@ func TestDomainAccessPolicyAndConfirmReachable(t *testing.T) {
 	boot := &fakeBootstrap{open: true}
 	srv.SetBootstrapCloser(boot)
 
-	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","hostname":"redgres.example.com"}`)); rec.Code != http.StatusOK {
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -441,7 +451,7 @@ func TestDomainAccessPolicyRejectsBadEmail(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.cloudflare = newFakeCF()
-	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","hostname":"redgres.example.com"}`)); rec.Code != http.StatusOK {
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
 	}
 	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/access-policy", cookie, csrf, `{"emails":["not-an-email"]}`))
@@ -464,7 +474,7 @@ func TestDomainConfirmReachableReturnsBodyOnBootstrapListener(t *testing.T) {
 	defer boot.Close()
 	srv.SetBootstrapCloser(boot)
 
-	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","hostname":"redgres.example.com"}`)); rec.Code != http.StatusOK {
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/access-policy", cookie, csrf, `{"emails":["owner@example.com"]}`)); rec.Code != http.StatusOK {
