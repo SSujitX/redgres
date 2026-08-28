@@ -1,0 +1,9 @@
+[Unit]
+Description=Remove Redgres bootstrap UFW rule when requested
+
+[Path]
+PathExists=/var/lib/redgres/bootstrap-ufw-remove.requested
+Unit=redgres-bootstrap-ufw-remove.service
+
+[Install]
+WantedBy=multi-user.target

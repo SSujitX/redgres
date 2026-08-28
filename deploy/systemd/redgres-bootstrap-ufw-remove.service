@@ -1,0 +1,7 @@
+[Unit]
+Description=Remove Redgres bootstrap :8989 UFW rule
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/libexec/redgres/bootstrap-ufw-remove.sh
