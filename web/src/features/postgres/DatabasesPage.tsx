@@ -1326,7 +1326,7 @@ export default function DatabasesPage({
   const dropDisabled = mutationBusy || deleting;
 
   return (
-    <article>
+    <article className="databases-page">
       <header className="page-header">
         <div className="page-header-row">
           <h1>Databases</h1>
