@@ -206,7 +206,10 @@ log "  ${GREEN}Web UI built${NC}"
 run_go_build
 printf '%s\n' "${VERSION}" >VERSION
 
-log "  ${CYAN}[5/5] Installing under ${OPT_ROOT} and restarting service…${NC}"
+  log "  ${CYAN}[5/5] Installing under ${OPT_ROOT} and restarting service…${NC}"
+  if [[ -x /usr/local/bin/redgres && "${OPT_ROOT}/current/redgres" != "$(readlink -f /usr/local/bin/redgres 2>/dev/null || true)" ]]; then
+    log "  ${YELLOW}Legacy binary detected at /usr/local/bin/redgres — switching systemd to ${OPT_ROOT}/current${NC}"
+  fi
 
 DEST="${OPT_ROOT}/releases/${VERSION}"
 mkdir -p "${DEST}" "${ETC_ROOT}" "${VAR_ROOT}/secrets"
