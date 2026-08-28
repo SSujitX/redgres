@@ -20,6 +20,7 @@ var allowedMetadataKeys = map[string]map[string]struct{}{
 	"owner.login":                 keySet("username"),
 	"owner.logout":                keySet("username"),
 	"owner.replace":               keySet("previous_username", "username"),
+	"owner.password_change":       keySet("username"),
 	"redis.user.create":           keySet("username", "preset", "key_pattern", "queue_kind"),
 	"redis.user.update":           keySet("username", "preset", "key_pattern", "queue_kind"),
 	"redis.user.enable":           keySet("username"),
