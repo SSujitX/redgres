@@ -64,9 +64,19 @@ if [[ "${APP_ONLY}" -eq 1 ]]; then
   printf '%b\n' "${YELLOW}${BOLD}This removes the Redgres application binary and systemd unit.${NC}"
   printf '%b\n' "${DIM}PostgreSQL and Redis are left alone unless you pass --purge-config / --purge-state.${NC}"
 else
-  printf '%b\n' "${RED}${BOLD}This removes ALL Redgres data, services, and databases on this host.${NC}"
-  printf '%b\n' "${DIM}Includes PostgreSQL clusters, Redis, PgBouncer, tunnel units, Docker workloads,${NC}"
-  printf '%b\n' "${DIM}${ETC_ROOT}, ${VAR_ROOT}, and ${BACKUP_ROOT}. Docker Engine stays installed.${NC}"
+  printf '%b\n' ""
+  printf '%b\n' "${RED}${BOLD}  WARNING: This permanently deletes ALL Redgres data on this host.${NC}"
+  printf '%b\n' "${RED}${BOLD}  PostgreSQL clusters, Redis, PgBouncer, config, SQLite state, and backups under ${BACKUP_ROOT} will be destroyed.${NC}"
+  printf '%b\n' ""
+  printf '%b\n' "${YELLOW}${BOLD}  Back up before continuing:${NC}"
+  printf '%b\n' "${YELLOW}    · PostgreSQL  pg_dumpall or your usual backup tool${NC}"
+  printf '%b\n' "${YELLOW}    · Redis       RDB/AOF copy or redis-cli SAVE + archive data dir${NC}"
+  printf '%b\n' "${YELLOW}    · Redgres     copy ${VAR_ROOT} and ${ETC_ROOT}${NC}"
+  printf '%b\n' "${DIM}  There is no undo. This script does not create or verify backups.${NC}"
+  printf '%b\n' ""
+  printf '%b\n' "${DIM}  Also removes: tunnel units, bootstrap :8989 firewall rule, Redgres Docker workloads.${NC}"
+  printf '%b\n' "${DIM}  Docker Engine stays installed.${NC}"
+  printf '%b\n' ""
 fi
 
 if [[ "${APP_ONLY}" -eq 1 && "${PURGE_CONFIG}" -eq 1 ]]; then
@@ -77,14 +87,14 @@ if [[ "${APP_ONLY}" -eq 1 && "${PURGE_STATE}" -eq 1 ]]; then
 fi
 
 if [[ "${FORCE}" -ne 1 ]]; then
-  printf '%b\n' "${YELLOW}Continue? (y/N)${NC}"
+  printf '%b\n' "${YELLOW}${BOLD}Type yes to confirm uninstall:${NC}"
   read -r response || true
   if [[ ! "${response}" =~ ^([yY][eE][sS]|[yY])$ ]]; then
     echo "Aborted."
     exit 1
   fi
 else
-  printf '%b\n' "${YELLOW}Force mode: skipping confirmation.${NC}"
+  printf '%b\n' "${YELLOW}Force mode (-y): warnings shown above; confirmation skipped.${NC}"
 fi
 
 redgres_docker_containers() {
