@@ -5,7 +5,7 @@ Date: 2026-08-27
 
 ## Context
 
-[ADR-003](ADR-003-network-boundaries.md) requires browser applications to bind loopback only and be reached through Cloudflare Tunnel + Access, and states that UI origin ports are not publicly exposed. In practice the first-time operator must reach the Redgres console *before* the tunnel and domain exist; otherwise setup forces an SSH tunnel or pre-configuring Cloudflare at install time, which the operator journey in [INSTALL_WALKTHROUGH.md](../INSTALL_WALKTHROUGH.md) deliberately avoids.
+[ADR-003](ADR-003-network-boundaries.md) requires browser applications to bind loopback only and be reached through Cloudflare Tunnel + Access, and states that UI origin ports are not publicly exposed. In practice the first-time operator must reach the Redgres console *before* the tunnel and domain exist; otherwise setup forces an SSH tunnel or pre-configuring Cloudflare at install time, which [DOMAIN_AND_NETWORK.md](../DOMAIN_AND_NETWORK.md) and [README.md](../../README.md) deliberately avoid (install first, domain wizard after login).
 
 ## Decision
 
@@ -20,4 +20,4 @@ Date: 2026-08-27
 - This is a bounded exception to ADR-003's "UI origin ports are not publicly exposed": a temporary, source-restricted, self-closing UI listener.
 - The bootstrap window still relies on the owner password plus rate limiting; the source restriction is the primary boundary.
 - Internet-wide scanning (Shodan/masscan) makes a permanently open UI port unacceptable, so the auto-close is mandatory, not optional.
-- The Domain & Network wizard and this bootstrap journey are recorded as PRD OPS-008/OPS-009; the operator journey is [INSTALL_WALKTHROUGH.md](../INSTALL_WALKTHROUGH.md).
+- The Domain & Network wizard and this bootstrap journey are recorded as PRD OPS-008/OPS-009; operator steps are [DOMAIN_AND_NETWORK.md](../DOMAIN_AND_NETWORK.md) and [README.md](../../README.md).
