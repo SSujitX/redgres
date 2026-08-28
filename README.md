@@ -11,3 +11,40 @@ Redgres is a self-hosted Go and React administration console for securely managi
 
 > [!WARNING]
 > Redgres is under active development and is **not production accepted**. Do not retire an existing database console until the migration, recovery, compatibility, staging, and production gates are complete. See the evidence-backed [implementation matrix](docs/TRACEABILITY.md) and [acceptance checklist](docs/ACCEPTANCE_CHECKLIST.md).
+
+## Install / upgrade (application release)
+
+After a GitHub Release exists (see below), on a Linux host:
+
+```bash
+# Latest release
+curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/install.sh | sudo bash
+
+# Pin a version (application replace; prefer upgrade.sh to move forward)
+curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/install.sh | sudo bash -s -- v=1.0.0
+
+# Upgrade to latest (preserves /etc/redgres, /var/lib/redgres, PostgreSQL, Redis)
+curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/upgrade.sh | sudo bash
+
+# Uninstall application only (-y); does not purge PostgreSQL/Redis by default
+curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh | sudo bash -s -- -y
+
+# Dev build from master (not a release)
+curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/install-dev.sh | sudo bash
+```
+
+Assets required on each release: `redgres_<version>_linux_amd64.tar.gz` and adjacent `SHA256SUMS`.
+
+## Publish a release (Actions → VERSION → assets)
+
+1. GitHub → **Actions** → **release** → **Run workflow**.
+2. Enter semver `X.Y.Z` (no `v` prefix).
+3. The workflow writes root [`VERSION`](VERSION), runs [`scripts/set-version.sh`](scripts/set-version.sh) / [`scripts/sync-version.sh`](scripts/sync-version.sh) (syncs `web/package*.json`), commits those files onto the branch so later commits keep that product version, creates tag `vX.Y.Z`, builds the linux/amd64 tarball, and attaches **`redgres_X.Y.Z_linux_amd64.tar.gz`** + **`SHA256SUMS`** to the GitHub Release.
+
+Local helpers:
+
+```bash
+./scripts/set-version.sh 1.0.1          # write VERSION + sync packages
+./scripts/sync-version.sh check         # fail if package files drift
+./deploy/build-release.sh               # reads VERSION; emits dist/release/*
+```
