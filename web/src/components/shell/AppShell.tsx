@@ -48,11 +48,12 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
   useFocusTrap(drawerRef, drawerOpen, menuButtonRef);
 
   useEffect(() => {
+    statusAbortRef.current?.abort();
     const controller = new AbortController();
     statusAbortRef.current = controller;
     void loadStatus(controller);
     return () => controller.abort();
-  }, []);
+  }, [section]);
 
   async function loadStatus(controller: AbortController) {
     setStatusLoading(true);
