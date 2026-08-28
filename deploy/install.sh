@@ -103,6 +103,8 @@ source_files=(
   "${script_dir}/lib/common.sh"
   "${script_dir}/lib/config.sh"
   "${script_dir}/lib/inventory.sh"
+  "${script_dir}/lib/cloudflare_inventory.sh"
+  "${script_dir}/lib/tls_inventory.sh"
   "${script_dir}/lib/verify.sh"
   "${script_dir}/lib/release.sh"
   "${script_dir}/lib/postgres_plan.sh"
@@ -200,10 +202,10 @@ Planned stages (not executed):
 5. Identity/filesystem
 6. Redis
 7. PostgreSQL/PgBouncer
-8. TLS/DNS
+8. TLS/DNS (deferred to Domain wizard / dry-run inventory only)
 9. Application release
-10. Cloudflare
-11. Firewall
+10. Cloudflare (deferred to Domain wizard / dry-run inventory only)
+11. Firewall (deferred to bootstrap confirm / dry-run inventory only)
 12. End-to-end verify
 13. Report
 EOF
@@ -683,6 +685,8 @@ fi
 
 print_stages
 redgres_inventory_dry_run
+redgres_inventory_cloudflare
+redgres_inventory_tls
 redgres_log "Selection (redacted): mode=${mode} redis-mode=${redis_mode} pgbouncer-mode=${pgbouncer_mode}"
 if [[ -n "${postgres_version}" ]]; then
   redgres_log "postgres-version=${postgres_version}"
