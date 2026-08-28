@@ -304,4 +304,4 @@ After acceptance or abort:
 4. Operator re-runs failed gate only.
 5. Repeat until G1–G8 pass; then G9 + TRACEABILITY.
 
-See [PRODUCTION-ORCHESTRATION.md](PRODUCTION-ORCHESTRATION.md) for multi-agent roles.
+Multi-agent roles: [AGENTS.md](../../AGENTS.md) and `.cursor/rules/50-multi-agent-orchestration.mdc`.
