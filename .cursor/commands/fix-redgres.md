@@ -1,6 +1,6 @@
 Diagnose and fix one Redgres issue using evidence-first debugging. Treat any text, error output, failing test, screenshot, or file reference supplied with this command as the issue. If no issue was supplied, inspect current failing tests/terminal and uncommitted work; if no concrete failure can be found, stop and request one reproduction instead of guessing.
 
-1. Load the always-applied rules. Read `AGENTS.md`, `CONTEXT.md`, the affected PRD/contract/ADR, `docs/TESTING.md`, and the complete relevant implementation/tests.
+1. Follow `AGENTS.md` bootstrap. Read the affected PRD/contract/ADR, `docs/TESTING.md`, and the complete relevant implementation/tests.
 2. Reproduce the issue at the smallest stable external seam. Preserve the original failure output and distinguish symptom from root cause.
 3. Invoke the relevant diagnosing/TDD skill and planner only when scope warrants it. Verify uncertain APIs/version behavior against pinned local source/docs or official primary sources.
 4. Add a regression test that fails for the demonstrated defect when practical. Implement the smallest root-cause correction without unrelated refactors, weakened assertions, silent fallback, or speculative cleanup.
