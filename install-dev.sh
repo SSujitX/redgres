@@ -39,19 +39,33 @@ public_ipv4() {
 
 run_go_build() {
   log "  ${CYAN}[4/5] Compiling redgres binary (Go)…${NC}"
-  log "  ${DIM}First build on this server: downloads modules, then compiles (often 3–10 min).${NC}"
-  log "  ${DIM}No output during compile is normal — do not interrupt.${NC}"
-  local started=$SECONDS pid
-  CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o redgres ./cmd/redgres &
-  pid=$!
-  while kill -0 "${pid}" 2>/dev/null; do
-    if (( SECONDS - started >= 30 && (SECONDS - started) % 30 == 0 )); then
-      log "  ${DIM}… still compiling ($((SECONDS - started))s)${NC}"
-    fi
-    sleep 5
-  done
-  wait "${pid}"
+  log "  ${DIM}First build: module download + compile (often 3–10 min). Lines starting with go: show progress.${NC}"
+  local started=$SECONDS build_log
+  build_log="$(mktemp /tmp/redgres-gobuild.XXXXXX.log)"
+  if ! CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o redgres ./cmd/redgres >"${build_log}" 2>&1; then
+    tail -n 30 "${build_log}" >&2 || true
+    rm -f "${build_log}"
+    die "Go build failed"
+  fi
+  while IFS= read -r line; do
+    case "${line}" in
+      go:*) log "  ${DIM}${line}${NC}" ;;
+    esac
+  done <"${build_log}"
+  rm -f "${build_log}"
   log "  ${GREEN}Go build finished${NC} ($((SECONDS - started))s)"
+}
+
+wait_for_healthz() {
+  local listen="$1" ok=0
+  for _ in $(seq 1 20); do
+    if curl -fsS --connect-timeout 2 --max-time 5 "http://${listen}/api/v1/healthz" >/dev/null 2>&1; then
+      ok=1
+      break
+    fi
+    sleep 1
+  done
+  (( ok == 1 )) || die "healthz failed after install (is redgres.service running?)"
 }
 
 print_install_summary() {
@@ -167,7 +181,8 @@ NODE_MAJOR="24"
 
 log ""
 log "  ${CYAN}${BOLD}Redgres development installer${NC}"
-log "  ${YELLOW}${BOLD}Warning: installs latest master (unreleased).${NC}"
+log "  ${DIM}Unreleased master → build on this machine → ${OPT_ROOT}/current${NC}"
+log "  ${YELLOW}${BOLD}Warning: not a GitHub release. Prefer upgrade.sh for production.${NC}"
 log ""
 
 ensure_build_tools
@@ -236,5 +251,11 @@ if systemctl restart redgres.service; then
 else
   log "  ${YELLOW}Service restart deferred (check journalctl -u redgres).${NC}"
 fi
+
+listen="$(env_value REDGRES_ADDRESS)"
+[[ -n "${listen}" ]] || listen="127.0.0.1:8790"
+log "  ${CYAN}Waiting for healthz…${NC}"
+wait_for_healthz "${listen}"
+log "  ${GREEN}healthz OK${NC}"
 
 print_install_summary "${VERSION}"
