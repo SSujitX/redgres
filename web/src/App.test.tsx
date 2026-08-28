@@ -2095,11 +2095,11 @@ describe("App session and login", () => {
     );
   });
 
-  it("shows copy-safe Direct URL and Pooled URL from the connection GET", async () => {
+  it("reveals and copies Direct URL and Pooled URL from the connection inspector", async () => {
     const writeText = vi.fn();
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     const localSet = vi.spyOn(Storage.prototype, "setItem");
-    const fetch = stubFetch((url) => {
+    const fetch = stubFetch((url, init) => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "conn-a".padEnd(64, "0") });
       }
@@ -2111,6 +2111,9 @@ describe("App session and login", () => {
       }
       if (isConnectionUrl(url, "project_a")) {
         return postgresConnectionPresent();
+      }
+      if (isConnectionRevealUrl(url, "project_a", init)) {
+        return postgresReveal200();
       }
       if (isDetailsUrl(url, "project_a")) {
         return jsonResponse(200, {
@@ -2137,10 +2140,18 @@ describe("App session and login", () => {
     expect(within(details).getByRole("button", { name: "Copy Pooled URL" })).toHaveClass("text-button");
     expect(writeText).not.toHaveBeenCalled();
     fireEvent.click(within(details).getByRole("button", { name: "Copy Direct URL" }));
+    await waitFor(() => {
+      expect(fetch.mock.calls.some((call) => isConnectionRevealUrl(String(call[0]), "project_a", call[1]))).toBe(true);
+    });
     expect(writeText).toHaveBeenCalledTimes(1);
-    expect(writeText).toHaveBeenCalledWith(maskedDirectUrl);
+    expect(writeText).toHaveBeenCalledWith(revealedDirectUrl);
+    expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
     fireEvent.click(within(details).getByRole("button", { name: "Copy Pooled URL" }));
-    expect(writeText).toHaveBeenCalledWith(maskedPooledUrl);
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(writeText).toHaveBeenLastCalledWith(revealedPooledUrl);
+    expect(
+      fetch.mock.calls.filter((call) => isConnectionRevealUrl(String(call[0]), "project_a", call[1])).length,
+    ).toBe(1);
     expect(screen.queryByText("YOUR_PASSWORD")).not.toBeInTheDocument();
     const reveal = within(details).getByRole("button", { name: "Reveal" });
     expect(reveal).toHaveClass("text-button");
