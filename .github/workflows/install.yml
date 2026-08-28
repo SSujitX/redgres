@@ -30,3 +30,9 @@ jobs:
             --redis-mode fresh \
             --redis-version 8.8 \
             --pgbouncer-mode disabled
+      - name: install summary embed drift
+        run: |
+          bash scripts/sync-install-summary-embed.sh
+          git diff --exit-code install.sh upgrade.sh install-dev.sh
+      - name: interactive selection logic
+        run: bash deploy/tests/interactive_logic_test.sh
