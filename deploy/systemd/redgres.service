@@ -6,6 +6,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=redgres
+Group=redgres
+UMask=0077
 EnvironmentFile=-/etc/redgres/redgres.env
 ExecStart=/opt/redgres/current/redgres serve
 Restart=on-failure
