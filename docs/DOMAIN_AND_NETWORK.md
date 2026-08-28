@@ -72,6 +72,8 @@ Runtime wizard (System → Domain & Network) implements token-first Cloudflare a
 
 Confirm-reachable is operator attestation only (no server-side HTTP probe) per [ADR-013](decisions/ADR-013-confirm-reachable-attestation.md). Live acceptance: [agents/OPS-009-LIVE-ACCEPTANCE.md](agents/OPS-009-LIVE-ACCEPTANCE.md).
 
+Wizard secrets stay server-side (`0600`); never SQLite, browser storage, logs, or audit. Token-first apply (bootstrap host is not a valid OAuth callback); OAuth runs on the live console hostname. Capability is `platform.network`. Disconnect deletes only wizard-created tunnel/DNS/Access objects. Bootstrap closes on confirm-reachable success, with a 30-minute hard-cap timer. Mutations: session + CSRF + origin + audit allow-list.
+
 Apply uses the API token file for bootstrap; steady-state Cloudflare mutations use OAuth when connected (`resolveCloudflareBearer`). OAuth callback is a session-bound GET with PKCE state (no CSRF header). See [API.md](API.md) and [CONFIGURATION.md](CONFIGURATION.md).
 
 
