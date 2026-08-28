@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SSujitX/redgres/internal/bootstrap"
 	"github.com/SSujitX/redgres/internal/cloudflare"
+	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/securefile"
 )
 
@@ -556,11 +558,30 @@ func (s *Server) handleDomainConfirmReachable(w http.ResponseWriter, r *http.Req
 	}
 	willClose := s.bootstrapCloser != nil && s.bootstrapCloser.Open()
 	ufwCmd := strings.TrimSpace(s.cfg.BootstrapUFWRemoveCmd)
+	envFile := s.cfg.EnvFile
+	if hostname := dep.consoleHostname(); hostname != "" {
+		origin := "https://" + hostname
+		rewritten, err := config.PersistBootstrapClosed(envFile, origin)
+		if err != nil {
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "Bootstrap close could not persist")
+			return
+		}
+		if s.cfg.Production() && !rewritten {
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "Bootstrap close could not persist")
+			return
+		}
+		if rewritten {
+			s.cfg.BaseURL = origin
+			s.cfg.CookieSecure = true
+			s.cfg.BootstrapAddress = ""
+		}
+	}
 	sess := sessionFrom(r)
 	if err := s.audit.Record(sess.Username, "domain.confirm_reachable", dep.consoleHostname(), "success", requestID(r), requestClientIP(r), map[string]any{"bootstrap_closed": willClose}); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
+	_ = bootstrap.WriteClosedState(s.cfg.SQLitePath)
 	ufwRemoved := false
 	if ufwCmd != "" {
 		ufwCtx, ufwCancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -569,9 +590,9 @@ func (s *Server) handleDomainConfirmReachable(w http.ResponseWriter, r *http.Req
 		}
 		ufwCancel()
 	}
-	// Schedule graceful shutdown after audit so a rare audit failure does not
-	// close :8989 while returning 503. Shutdown waits for this handler to finish
-	// writing the body (force Close remains the hard-cap timer path).
+	// Schedule graceful shutdown after persist so a persist failure does not
+	// close :8989. Shutdown waits for this handler to finish writing the body
+	// (force Close remains the hard-cap timer path).
 	if willClose {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

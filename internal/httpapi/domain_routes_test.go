@@ -9,12 +9,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/SSujitX/redgres/internal/bootstrap"
 	"github.com/SSujitX/redgres/internal/cloudflare"
+	"github.com/SSujitX/redgres/internal/config"
 )
 
 type fakeCF struct {
@@ -475,6 +477,9 @@ func TestDomainAccessPolicyRejectsBadEmail(t *testing.T) {
 }
 
 func TestDomainConfirmReachableReturnsBodyOnBootstrapListener(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("net/http.Server.Shutdown races the client read on Windows")
+	}
 	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
 	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
 		t.Fatal(err)
@@ -487,6 +492,11 @@ func TestDomainConfirmReachableReturnsBodyOnBootstrapListener(t *testing.T) {
 	}
 	defer boot.Close()
 	srv.SetBootstrapCloser(boot)
+	envFile := filepath.Join(t.TempDir(), "redgres.env")
+	if err := os.WriteFile(envFile, []byte("REDGRES_BOOTSTRAP_ADDRESS=0.0.0.0:8989\nREDGRES_COOKIE_SECURE=false\nREDGRES_BASE_URL=http://127.0.0.1:8790\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	srv.cfg.EnvFile = envFile
 
 	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","rs":"rs.example.com","pgadmin":"pgadmin.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
@@ -532,6 +542,117 @@ func TestDomainConfirmReachableReturnsBodyOnBootstrapListener(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("bootstrap %s still accepting after confirm", addr)
+}
+
+func TestDomainConfirmReachablePersistsClosedState(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	srv.cloudflare = newFakeCF()
+	boot := &fakeBootstrap{open: true}
+	srv.SetBootstrapCloser(boot)
+
+	envFile := filepath.Join(t.TempDir(), "redgres.env")
+	if err := os.WriteFile(envFile, []byte("REDGRES_BOOTSTRAP_ADDRESS=0.0.0.0:8989\nREDGRES_COOKIE_SECURE=false\nREDGRES_BASE_URL=http://203.0.113.10:8989\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	srv.cfg.EnvFile = envFile
+
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","rs":"rs.example.com","pgadmin":"pgadmin.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/access-policy", cookie, csrf, `{"emails":["owner@example.com"]}`)); rec.Code != http.StatusOK {
+		t.Fatalf("access policy = %d %s", rec.Code, rec.Body.String())
+	}
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/confirm-reachable", cookie, csrf, `{}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm = %d %s", rec.Code, rec.Body.String())
+	}
+	if !bootstrap.MarkerPresent(srv.cfg.SQLitePath) {
+		t.Fatal("confirm did not persist bootstrap.closed")
+	}
+	got, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	if strings.Contains(text, "0.0.0.0:8989") || strings.Contains(text, "COOKIE_SECURE=false") {
+		t.Fatalf("env still in bootstrap window: %s", text)
+	}
+	if !strings.Contains(text, "REDGRES_BASE_URL=https://redgres.example.com") {
+		t.Fatalf("env base URL: %s", text)
+	}
+	if srv.cfg.BaseURL != "https://redgres.example.com" || !srv.cfg.CookieSecure || srv.cfg.BootstrapAddress != "" {
+		t.Fatalf("in-memory cfg not hot-updated: base=%q secure=%v boot=%q", srv.cfg.BaseURL, srv.cfg.CookieSecure, srv.cfg.BootstrapAddress)
+	}
+}
+
+func TestDomainConfirmReachablePersistFailureDoesNotClose(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	srv.cloudflare = newFakeCF()
+	boot := &fakeBootstrap{open: true}
+	srv.SetBootstrapCloser(boot)
+
+	envFile := filepath.Join(t.TempDir(), "redgres.env")
+	if err := os.WriteFile(envFile, []byte("REDGRES_COOKIE_SECURE=false\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(envFile, os.O_WRONLY|os.O_TRUNC, 0)
+	if err == nil {
+		_ = f.Close()
+		t.Skip("platform allows write on 0400 env file")
+	}
+	srv.cfg.EnvFile = envFile
+
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","rs":"rs.example.com","pgadmin":"pgadmin.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/access-policy", cookie, csrf, `{"emails":["owner@example.com"]}`)); rec.Code != http.StatusOK {
+		t.Fatalf("access policy = %d %s", rec.Code, rec.Body.String())
+	}
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/confirm-reachable", cookie, csrf, `{}`))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("confirm persist fail = %d %s", rec.Code, rec.Body.String())
+	}
+	if bootstrap.MarkerPresent(srv.cfg.SQLitePath) {
+		t.Fatal("persist failure must not write bootstrap.closed")
+	}
+	if !boot.open {
+		t.Fatal("persist failure must not close bootstrap")
+	}
+}
+
+func TestDomainConfirmReachableProductionMissingEnvDoesNotClose(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	srv.cloudflare = newFakeCF()
+	boot := &fakeBootstrap{open: true}
+	srv.SetBootstrapCloser(boot)
+	srv.cfg.Environment = config.EnvironmentProduction
+	srv.cfg.EnvFile = filepath.Join(t.TempDir(), "missing.env")
+
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","rs":"rs.example.com","pgadmin":"pgadmin.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/access-policy", cookie, csrf, `{"emails":["owner@example.com"]}`)); rec.Code != http.StatusOK {
+		t.Fatalf("access policy = %d %s", rec.Code, rec.Body.String())
+	}
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/confirm-reachable", cookie, csrf, `{}`))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("confirm missing env = %d %s", rec.Code, rec.Body.String())
+	}
+	if bootstrap.MarkerPresent(srv.cfg.SQLitePath) {
+		t.Fatal("missing env must not write bootstrap.closed")
+	}
+	if !boot.open {
+		t.Fatal("missing env must not close bootstrap")
+	}
 }
 
 func serve(h http.Handler, r *http.Request) *httptest.ResponseRecorder {
