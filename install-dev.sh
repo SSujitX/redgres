@@ -83,19 +83,16 @@ bootstrap_public_url() {
   fi
 }
 
-# Reads domain_deployment from SQLite; prints DOMAIN_*= shell assignments.
-load_domain_config() {
+# Console origin from SQLite when domain was applied (one field only).
+load_console_url() {
   local sqlite db_path
   sqlite="$(env_value REDGRES_SQLITE_PATH)"
   [[ -n "${sqlite}" ]] || sqlite="${VAR_ROOT}/redgres.db"
-  [[ -f "${sqlite}" ]] || return 1
-  command -v python3 >/dev/null || return 1
+  [[ -f "${sqlite}" ]] || return 0
+  command -v python3 >/dev/null || return 0
   db_path="${sqlite}"
-  eval "$(python3 - "${db_path}" <<'PY'
+  printf '%s' "$(python3 - "${db_path}" <<'PY'
 import json, sqlite3, sys
-
-def q(value: str) -> str:
-    return "'" + value.replace("'", "'\\''") + "'"
 
 db = sys.argv[1]
 try:
@@ -111,62 +108,22 @@ zone = (d.get("zone_name") or "").strip()
 console = (d.get("console_hostname") or d.get("hostname") or "").strip()
 if not console and zone:
     console = f"console.{zone}"
-db_host = (d.get("db_hostname") or "").strip()
-if not db_host and zone:
-    db_host = f"db.{zone}"
-rs = (d.get("rs_hostname") or "").strip()
-redis_legacy = (d.get("redis_hostname") or "").strip()
-if not rs and redis_legacy:
-    rs = redis_legacy
-pgadmin = (d.get("pgadmin_hostname") or "").strip()
-if not pgadmin and zone:
-    pgadmin = f"pgadmin.{zone}"
-insight = (d.get("redis_insight_hostname") or "").strip()
-if not insight and zone:
-    insight = f"redis.{zone}"
-if redis_legacy and redis_legacy != rs and not d.get("redis_insight_hostname"):
-    insight = redis_legacy
-
-if not console:
-    raise SystemExit(0)
-
-print("DOMAIN_CONFIGURED=1")
-if zone:
-    print(f"DOMAIN_ZONE={q(zone)}")
-print(f"DOMAIN_CONSOLE={q(console)}")
-if db_host:
-    print(f"DOMAIN_DB={q(db_host)}")
-if rs:
-    print(f"DOMAIN_RS={q(rs)}")
-if pgadmin:
-    print(f"DOMAIN_PGADMIN={q(pgadmin)}")
-if insight:
-    print(f"DOMAIN_INSIGHT={q(insight)}")
+if console:
+    print(f"https://{console}")
 PY
 )"
 }
 
-print_endpoint_row() {
-  local label="$1" url="$2" note="$3"
-  printf '%b\n' "    ${BOLD}%-18s${NC} ${url}"
-  if [[ -n "${note}" ]]; then
-    printf '%b\n' "    ${DIM}%-18s  ${note}${NC}"
-  fi
-}
-
 print_summary() {
-  local version="$1" mode="${2:-installed}" listen pub health_ok="" svc=""
+  local version="$1" mode="${2:-installed}" listen pub base_url console_url boot_url health_ok="" svc=""
   listen="$(env_value REDGRES_ADDRESS)"
   [[ -n "${listen}" ]] || listen="127.0.0.1:8790"
   pub="$(public_ipv4)"
-  DOMAIN_CONFIGURED=""
-  DOMAIN_ZONE=""
-  DOMAIN_CONSOLE=""
-  DOMAIN_DB=""
-  DOMAIN_RS=""
-  DOMAIN_PGADMIN=""
-  DOMAIN_INSIGHT=""
-  load_domain_config || true
+  base_url="$(env_value REDGRES_BASE_URL)"
+  console_url="$(load_console_url || true)"
+  if [[ -z "${console_url}" && "${base_url}" == https://* ]]; then
+    console_url="${base_url}"
+  fi
 
   if curl -fsS --max-time 3 "${HEALTHZ}" >/dev/null 2>&1; then
     health_ok="yes"
@@ -181,58 +138,41 @@ print_summary() {
   if [[ "${mode}" == "unchanged" ]]; then
     log "  ${GREEN}${BOLD}Already on ${version}${NC} ${DIM}(restarted; config preserved)${NC}"
   else
-    log "  ${GREEN}${BOLD}Development install complete${NC} → ${version}"
+    log "  ${GREEN}${BOLD}Development install complete${NC} ${DIM}→ ${version}${NC}"
   fi
+  log "  ${BOLD}Binary${NC}     ${OPT_ROOT}/current/redgres"
+  log "  ${BOLD}Config${NC}     ${ETC_ROOT}/redgres.env"
   if [[ "${health_ok}" == "yes" ]]; then
-    log "  ${BOLD}Service${NC}  redgres.service → ${svc}  ·  ${BOLD}Health${NC}  ${GREEN}OK${NC}"
+    log "  ${BOLD}Service${NC}    redgres.service → ${svc}  ·  ${BOLD}Health${NC}  ${GREEN}OK${NC}"
   else
-    log "  ${BOLD}Service${NC}  redgres.service → ${svc}  ·  ${BOLD}Health${NC}  ${YELLOW}not ready${NC}"
+    log "  ${BOLD}Service${NC}    redgres.service → ${svc}  ·  ${BOLD}Health${NC}  ${YELLOW}not ready${NC}"
   fi
   log ""
-
-  if [[ "${DOMAIN_CONFIGURED:-}" == "1" && -n "${DOMAIN_CONSOLE:-}" ]]; then
-    log "  ${BOLD}Public endpoints${NC}  ${DIM}(zone ${DOMAIN_ZONE:-unknown})${NC}"
-    print_endpoint_row "Redgres UI" "https://${DOMAIN_CONSOLE}" "Tunnel + Cloudflare Access"
-    print_endpoint_row "Domain & Network" "https://${DOMAIN_CONSOLE}  →  System → Domain & Network" "change hostnames / Cloudflare / TLS"
-    if [[ -n "${DOMAIN_DB:-}" ]]; then
-      print_endpoint_row "PostgreSQL" "${DOMAIN_DB}:5432  ·  pooled ${DOMAIN_DB}:6432" "DNS-only (grey cloud) + TLS"
-    fi
-    if [[ -n "${DOMAIN_RS:-}" ]]; then
-      print_endpoint_row "Redis clients" "${DOMAIN_RS}:6380" "DNS-only (grey cloud) + TLS"
-    fi
-    if [[ -n "${DOMAIN_PGADMIN:-}" ]]; then
-      print_endpoint_row "pgAdmin UI" "https://${DOMAIN_PGADMIN}" "Tunnel + Cloudflare Access"
-    fi
-    if [[ -n "${DOMAIN_INSIGHT:-}" ]]; then
-      print_endpoint_row "Redis Insight UI" "https://${DOMAIN_INSIGHT}" "Tunnel + Cloudflare Access"
-    fi
-    log ""
-  fi
 
   if bootstrap_port_open; then
-    local boot_url
-    boot_url="$(bootstrap_public_url)"
-    log "  ${BOLD}Bootstrap (temporary)${NC}"
+    boot_url="$(bootstrap_public_url || true)"
     if [[ -n "${boot_url}" ]]; then
-      print_endpoint_row "Setup UI" "${boot_url}" "use until console opens through Access; then close in Domain & Network"
+      log "  ${BOLD}Open${NC}       ${boot_url}"
+    elif [[ -n "${pub}" ]]; then
+      log "  ${BOLD}Open${NC}       http://${pub}:8989"
     else
-      print_endpoint_row "Setup UI" "http://127.0.0.1:8989" "bootstrap listener (check firewall / REDGRES_BOOTSTRAP_ADDRESS)"
+      log "  ${BOLD}Open${NC}       http://127.0.0.1:8989"
     fi
-    log ""
-  elif [[ "${DOMAIN_CONFIGURED:-}" != "1" ]]; then
-    log "  ${BOLD}Bootstrap${NC}"
-    print_endpoint_row "Setup UI" "$(bootstrap_public_url || echo "not listening")" "sign in and open System → Domain & Network to configure Cloudflare"
-    log ""
+    if [[ -n "${console_url}" ]]; then
+      log "  ${BOLD}Console${NC}    ${console_url}  ${DIM}(Cloudflare Access)${NC}"
+    fi
+  elif [[ -n "${console_url}" ]]; then
+    log "  ${BOLD}Console${NC}    ${console_url}"
+  elif [[ -n "${pub}" ]]; then
+    log "  ${BOLD}Open${NC}       http://${pub}:8989"
+  else
+    log "  ${BOLD}Open${NC}       http://SERVER_IP:8989"
   fi
 
-  log "  ${BOLD}This server only${NC}  ${DIM}(not public; tunnel/cloudflared uses loopback)${NC}"
-  print_endpoint_row "Loopback UI" "http://${listen}"
-  print_endpoint_row "Health" "${HEALTHZ}"
-  if [[ -n "${pub}" ]]; then
-    print_endpoint_row "Origin IP" "${pub}" "grey-cloud A/AAAA for db + rs in Cloudflare"
-  fi
+  log "  ${DIM}Domains & TLS: System → Domain & Network in the console.${NC}"
   log ""
-  log "  ${DIM}Stable channel: upgrade.sh  ·  Dev channel: install-dev.sh${NC}"
+  log "  ${DIM}Loopback origin: http://${listen}  (tunnel only — not public)${NC}"
+  log "  ${DIM}Dev channel: install-dev.sh  ·  Stable: upgrade.sh${NC}"
   log ""
 }
 
@@ -304,8 +244,9 @@ install_from_dev_release() {
   if [[ -f "${OPT_ROOT}/current/VERSION" ]]; then
     CURRENT_VERSION="$(tr -d '\r\n' <"${OPT_ROOT}/current/VERSION" 2>/dev/null || true)"
   fi
-  if [[ -n "${CURRENT_VERSION}" && "${CURRENT_VERSION}" == "${REMOTE_VERSION}" && -x "${OPT_ROOT}/current/redgres" ]]; then
+  if [[ "${REDGRES_DEV_FORCE:-}" != "1" && -n "${CURRENT_VERSION}" && "${CURRENT_VERSION}" == "${REMOTE_VERSION}" && -x "${OPT_ROOT}/current/redgres" ]]; then
     log "  ${GREEN}Already on ${CURRENT_VERSION}${NC} — restarting service"
+    log "  ${DIM}New dev binary available after CI dev-build on master; force reinstall: REDGRES_DEV_FORCE=1${NC}"
     ensure_env_file
     write_unit
     systemctl daemon-reload
