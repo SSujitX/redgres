@@ -138,6 +138,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: bash deploy/tests/run.sh
+      - run: bash deploy/tests/interactive_logic_test.sh
 
   # Disposable CI only. Not production, not COMPATIBILITY.md §6.
   integration:
