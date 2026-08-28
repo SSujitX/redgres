@@ -1,0 +1,19 @@
+# Redgres
+
+> Self-hosted control plane for one PostgreSQL cluster and one Redis instance on an Ubuntu VPS.
+
+Redgres is a Go and React operator console plus a raw package installer. It is not a hosted DBaaS (Supabase, Neon) and not an ORM (Prisma, Drizzle). Client apps connect with psql, pgx, Prisma, Drizzle, or any PostgreSQL driver.
+
+Supported targets: Ubuntu 24.04 or 26.04, PostgreSQL 17 or 18, Redis 8.2 or 8.8. Not production-accepted.
+
+Canonical site: https://redgres.com/
+
+Looking for sponsorship: ssujitxx@gmail.com
+
+## Pages
+
+- [Home](https://redgres.com/): what Redgres is
+- [Raw install](https://redgres.com/install/): clone + deploy/install.sh
+- [Compare](https://redgres.com/compare/): vs Supabase, Neon, Prisma, Drizzle
+- [Sponsor](https://redgres.com/sponsor/): funding contact
+- [Source and operator commands](https://github.com/SSujitX/redgres): README, debug, logs, uninstall
