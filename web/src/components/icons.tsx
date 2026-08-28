@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { NavIconId } from "../nav";
 
-type IconName = NavIconId | "menu" | "search" | "help" | "owner";
+type IconName = NavIconId | "menu" | "search" | "help" | "owner" | "sun" | "moon";
 
 type IconProps = {
   name: IconName;
@@ -85,6 +85,15 @@ const paths: Record<IconName, ReactNode> = {
       <circle cx="12" cy="9" r="3.2" />
       <path d="M5.5 19c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5" />
     </>
+  ),
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" />
+    </>
+  ),
+  moon: (
+    <path d="M20 13.5A8 8 0 1 1 10.5 4a6.5 6.5 0 0 0 9.5 9.5Z" />
   ),
 };
 
