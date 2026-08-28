@@ -568,6 +568,8 @@ fi
 if command -v systemctl >/dev/null 2>&1; then
   step "  ${CYAN}[1/8]${NC} Stopping Redgres and tunnel services... "
   stop_systemd_unit redgres.service
+  stop_systemd_unit redgres-bootstrap-ufw-remove.path
+  stop_systemd_unit redgres-bootstrap-ufw-remove.service
   stop_systemd_unit cloudflared-redgres.service
   stop_systemd_unit cloudflared-redgres.path
   stop_systemd_unit cloudflared-redgres-restart.service
@@ -633,6 +635,8 @@ fi
 # ── 6. Systemd units + libexec ───────────────────────────────────────────────
 step "  ${CYAN}[6/8]${NC} Removing systemd units and helpers... "
 rm -f "${UNIT_PATH}" \
+  /etc/systemd/system/redgres-bootstrap-ufw-remove.service \
+  /etc/systemd/system/redgres-bootstrap-ufw-remove.path \
   /etc/systemd/system/cloudflared-redgres.service \
   /etc/systemd/system/cloudflared-redgres.path \
   /etc/systemd/system/cloudflared-redgres-restart.service \
