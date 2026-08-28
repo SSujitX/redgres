@@ -1,5 +1,5 @@
 #!/bin/bash -p
-# Fail-closed installer dispatcher. OPS-001 / OPS-002 / OPS-003 / OPS-004 / OPS-005 / OPS-006 / OPS-007 Partial: no host mutation.
+# Fail-closed installer dispatcher. OPS-001 / OPS-002 / OPS-003 / OPS-004 / OPS-005 / OPS-006 / OPS-007 Partial.
 set -euo pipefail
 
 case "$-" in
@@ -110,6 +110,9 @@ source_files=(
   "${script_dir}/lib/postgres_plan.sh"
   "${script_dir}/lib/backup.sh"
   "${script_dir}/lib/postgres_extensions.sh"
+  "${script_dir}/lib/pins.sh"
+  "${script_dir}/lib/mutate.sh"
+  "${script_dir}/lib/app_install.sh"
 )
 redgres_bootstrap_validate_source_tree "${entrypoint}" "${script_dir}" "${source_files[@]}"
 
@@ -184,12 +187,17 @@ postgres-extensions apply --non-interactive --dry-run validates the extension
 plan and prints a skip matrix (result=partial); it never resolves packages,
 reads live cluster state, merges preload, restarts PostgreSQL, or runs DDL.
 It does not install packages, pull images, write systemd, open a firewall, or
-change DNS/Cloudflare. It does not start servers, source --config, call curl,
-or run SQL SHOW / Redis INFO.
+change DNS/Cloudflare on --dry-run. Live install without --dry-run (fresh-postgres
++ fresh Redis) uses Ubuntu 24.04 (noble) and 26.04 (resolute): PGDG named packages
+resolved then installed as pkg=version, digest-pinned Redis images, then pg_isready
+and redis PING. It then writes /etc/redgres/redgres.env, downloads the latest GitHub
+release tarball + SHA256SUMS, applies it through update, and prints a finish report.
+Owner create-owner --generate runs only when /dev/tty can be opened.
 
 Exit 0: --help, valid --non-interactive --dry-run plan, skip matrix, valid postgres-plan, backup or postgres-extensions apply skip matrix
 Exit 1: unsupported, incomplete, missing, unparseable, mismatched selection, or invalid extension plan
-Exit 2: mutation install, live verify, or other subcommand not implemented
+Exit 2: live existing-mode install, live verify, or other subcommand not implemented
+Live install without --dry-run is Partial: fresh-postgres + fresh Redis + application tarball + TTY-safe owner bootstrap + finish report (bootstrap URL). Loopback DB listeners; no public UFW DB ports.
 
 Majors/series only (not Hub tags). latest and latest-tested are rejected.
 EOF
@@ -631,8 +639,44 @@ done
 : "${extension_plan:=}"
 : "${approve_restart:=0}"
 
+# Interactive selection (S1): without --non-interactive, prompt on a terminal for
+# the same choices the flags express. Answers flow through the identical validation
+# below (is_pg_major / is_redis_series / mode case statements), so an invalid answer
+# is rejected exactly like a bad flag. Only the tested matrix is offered; there is
+# no floating "latest".
+redgres_ask() {
+  local prompt="$1" default="$2" answer line
+  line="${prompt}"
+  [[ -n "${default}" ]] && line="${prompt} [${default}]"
+  read -r -p "  ${line}: " answer </dev/tty || redgres_die "interactive install requires a terminal; pass --non-interactive with explicit flags"
+  answer="$(printf "%s" "${answer}" | tr -d "[:space:]")"
+  [[ -n "${answer}" ]] || answer="${default}"
+  printf "%s" "${answer}"
+}
+
+redgres_interactive_selections() {
+  if [[ -z "${mode}" ]]; then
+    mode="$(redgres_ask "PostgreSQL mode (fresh-postgres|existing-postgres)" "fresh-postgres")"
+  fi
+  case "${mode}" in
+    fresh-postgres)
+      [[ -z "${postgres_version}" ]] && postgres_version="$(redgres_ask "PostgreSQL major (17|18)" "18")"
+      ;;
+    existing-postgres)
+      [[ -z "${expect_postgres_major}" ]] && expect_postgres_major="$(redgres_ask "Expected PostgreSQL major (17|18; blank to detect)" "")"
+      ;;
+  esac
+  [[ -z "${pgbouncer_mode}" ]] && pgbouncer_mode="$(redgres_ask "PgBouncer mode (fresh|existing|disabled)" "disabled")"
+  [[ -z "${redis_mode}" ]] && redis_mode="$(redgres_ask "Redis mode (fresh|existing)" "fresh")"
+  if [[ "${redis_mode}" == "fresh" ]]; then
+    [[ -z "${redis_version}" ]] && redis_version="$(redgres_ask "Redis series (8.2|8.8)" "8.2")"
+  else
+    [[ -z "${expect_redis_series}" ]] && expect_redis_series="$(redgres_ask "Expected Redis series (8.2|8.8; blank to detect)" "")"
+  fi
+}
+
 if [[ "${non_interactive}" -ne 1 ]]; then
-  redgres_die "--non-interactive is required"
+  redgres_interactive_selections
 fi
 
 case "${mode}" in
@@ -676,7 +720,11 @@ else
 fi
 
 if [[ "${dry_run}" -ne 1 ]]; then
-  redgres_not_implemented "install mutation is not implemented"
+  if [[ -n "${extension_plan}" || -n "${config_path}" ]]; then
+    redgres_not_implemented "live install with --config or --extension-plan is not implemented"
+  fi
+  redgres_live_install
+  exit 0
 fi
 
 # OPS-007: when an optional extension plan is supplied, validate it exactly
