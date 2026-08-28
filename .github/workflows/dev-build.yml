@@ -1,0 +1,59 @@
+# Rolling dev snapshot from master — consumed by install-dev.sh (no compile on the VPS).
+name: dev-build
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dev-release
+  cancel-in-progress: true
+
+jobs:
+  publish-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Resolve dev version
+        id: ver
+        run: echo "version=0.0.0-dev.$(git rev-parse --short HEAD)" >>"$GITHUB_OUTPUT"
+
+      - name: Build linux/amd64 tarball
+        run: |
+          set -euo pipefail
+          chmod +x deploy/build-release.sh
+          ./deploy/build-release.sh "${{ steps.ver.outputs.version }}"
+          ls -la dist/release
+
+      - name: Publish rolling dev release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          ASSET="dist/release/redgres_${VER}_linux_amd64.tar.gz"
+          test -f "${ASSET}"
+          test -f dist/release/SHA256SUMS
+          gh release delete dev -y 2>/dev/null || true
+          git push origin :refs/tags/dev 2>/dev/null || true
+          gh release create dev \
+            --prerelease \
+            --title "Redgres dev (master snapshot)" \
+            --notes "Rolling pre-release built from master. Install on a server with install-dev.sh (no Go/Node required)." \
+            "${ASSET}" \
+            dist/release/SHA256SUMS
