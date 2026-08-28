@@ -14,7 +14,8 @@ Read these before planning or editing UI:
 - `docs/UI_DESIGN_SYSTEM.md` for the visual and responsive contract;
 - `docs/UX.md` and the relevant `docs/PRD.md` requirements;
 - `docs/API.md`, `docs/SECURITY.md`, and `docs/DATA_AND_SECRETS.md` for behavior and secret boundaries;
-- `CONTEXT.md` for exact PostgreSQL/Redis vocabulary.
+- `AGENTS.md` Language and `docs/GLOSSARY.md` for exact PostgreSQL/Redis vocabulary;
+- `docs/UI_WORKLOG.md` (compact record of the current terminal theme, changed files, and the screenshot index in `web/screenshots/`) — read it before restyling so you reuse the established language and evidence.
 
 Treat target documentation as requirements, not implementation evidence.
 
