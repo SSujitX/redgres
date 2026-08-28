@@ -3,7 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Redgres</title>
+    <title>Redgres — Self-hosted PostgreSQL and Redis control plane</title>
+    <meta
+      name="description"
+      content="Self-hosted control plane for one PostgreSQL cluster and one Redis instance. Raw Ubuntu VPS install — not a hosted DBaaS like Supabase or Neon, not an ORM like Prisma or Drizzle."
+    />
     <link rel="icon" type="image/png" sizes="128x128" href="/assets/redgres-favicon-light.png" />
     <link
       rel="icon"
@@ -12,6 +16,26 @@
       media="(prefers-color-scheme: dark)"
       href="/assets/redgres-favicon-dark.png"
     />
+    <meta name="theme-color" content="#f4f6f8" />
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("redgres-theme");
+          var theme =
+            stored === "dark" || stored === "light"
+              ? stored
+              : window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) {
+            meta.setAttribute("content", theme === "dark" ? "#0e1217" : "#f4f6f8");
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
