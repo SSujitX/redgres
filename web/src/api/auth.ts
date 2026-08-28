@@ -9,6 +9,7 @@ export type SessionPayload = {
   owner?: { username?: string };
   csrf_token?: string;
   tool_links?: ToolLinks;
+  version?: string;
 };
 
 export type LoginSuccess = {
@@ -46,6 +47,14 @@ export async function logout(csrf: string) {
   return apiRequest<ApiErrorBody>("/api/v1/auth/logout", {
     method: "POST",
     csrf,
+  });
+}
+
+export async function changePassword(csrf: string, currentPassword: string, newPassword: string) {
+  return apiRequest<ApiErrorBody & { ok?: boolean }>("/api/v1/auth/password", {
+    method: "POST",
+    csrf,
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   });
 }
 
