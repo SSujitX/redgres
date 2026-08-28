@@ -120,6 +120,7 @@ func (s *Server) Handler() http.Handler {
 	r.With(s.requireSession, s.requireCapability("redis.destructive"), s.requireMutation).Delete("/api/v1/redis/users/{username}", s.handleRedisUserDelete)
 	r.Post("/api/v1/auth/login", s.handleLogin)
 	r.With(s.requireSession, s.requireMutation).Post("/api/v1/auth/logout", s.handleLogout)
+	r.With(s.requireSession, s.requireMutation).Post("/api/v1/auth/password", s.handleOwnerChangePassword)
 	r.With(s.requireSession).Get("/api/v1/session", s.handleSession)
 	r.With(s.requireSession, s.requireCapability("audit.read")).Get("/api/v1/audit", s.handleAuditEvents)
 	r.With(s.requireSession, s.requireCapability("postgres.read")).Get("/api/v1/postgres/databases", s.handlePostgresDatabases)

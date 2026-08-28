@@ -423,6 +423,29 @@ func TestLoginInvalidUsernameIsGenericAndNotAuditedRaw(t *testing.T) {
 	}
 }
 
+func TestSessionIncludesVersion(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, _ := login(t, h)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie})
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session %d %s", rec.Code, rec.Body.String())
+	}
+	var sess map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := sess["version"].(string)
+	if v == "" {
+		t.Fatalf("session version missing: %s", rec.Body.String())
+	}
+}
+
 func TestSessionToolLinksDefaultEmptyObject(t *testing.T) {
 	srv, _ := testServer(t, nil)
 	seedOwner(t, srv)

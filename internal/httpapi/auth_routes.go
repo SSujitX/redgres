@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/SSujitX/redgres/internal/auth"
+	"github.com/SSujitX/redgres/internal/version"
 )
 
 const (
@@ -230,8 +231,57 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		"csrf_token":   raw,
 		"capabilities": defaultCapabilities,
 		"tool_links":   s.sessionToolLinks(),
+		"version":      version.Version,
 		"request_id":   requestID(r),
 	})
+}
+
+func (s *Server) handleOwnerChangePassword(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r)
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		s.writeDecodeError(w, r, err)
+		return
+	}
+
+	ip := requestClientIP(r)
+	now := time.Now().UTC()
+	reqID := requestID(r)
+
+	err := auth.ChangeOwnerPassword(s.db, sess.Username, body.CurrentPassword, body.NewPassword, ip, reqID, now)
+	if err != nil {
+		if remaining := auth.RateLimitRemaining(err); remaining > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int(remaining.Seconds())+1))
+			_ = s.audit.Record(sess.Username, "owner.password_change", sess.Username, "rate_limited", reqID, ip, map[string]any{"username": sess.Username})
+			s.writeError(w, r, http.StatusTooManyRequests, CodeRateLimited, reauthLimitedMessage)
+			return
+		}
+		switch {
+		case errors.Is(err, auth.ErrReauthRequired):
+			_ = s.audit.Record(sess.Username, "owner.password_change", sess.Username, "failure", reqID, ip, map[string]any{"username": sess.Username})
+			s.writeError(w, r, http.StatusForbidden, CodeReauthRequired, "Current password is incorrect")
+		case errors.Is(err, auth.ErrSamePassword):
+			_ = s.audit.Record(sess.Username, "owner.password_change", sess.Username, "failure", reqID, ip, map[string]any{"username": sess.Username})
+			s.writeErrorFields(w, r, http.StatusUnprocessableEntity, CodeValidationError, "New password must differ from the current password", map[string]string{"new_password": "same_as_current"})
+		case errors.Is(err, auth.ErrWeakPassword):
+			_ = s.audit.Record(sess.Username, "owner.password_change", sess.Username, "failure", reqID, ip, map[string]any{"username": sess.Username})
+			s.writeErrorFields(w, r, http.StatusUnprocessableEntity, CodeValidationError, "New password does not meet the strength policy", map[string]string{"new_password": "too_weak"})
+		case errors.Is(err, auth.ErrPasswordTooLong):
+			_ = s.audit.Record(sess.Username, "owner.password_change", sess.Username, "failure", reqID, ip, map[string]any{"username": sess.Username})
+			s.writeErrorFields(w, r, http.StatusUnprocessableEntity, CodeValidationError, "New password is too long", map[string]string{"new_password": "too_long"})
+		default:
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		}
+		return
+	}
+
+	// Success: the audit was recorded in the same transaction as the hash update
+	// and session deletion, so clear the cookie only after that commit succeeded.
+	s.clearSessionCookie(w)
+	s.writeJSON(w, r, http.StatusOK, map[string]any{"ok": true, "request_id": reqID})
 }
 
 func (s *Server) sessionToolLinks() map[string]string {
