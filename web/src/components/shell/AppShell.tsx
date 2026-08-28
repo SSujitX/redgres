@@ -9,12 +9,17 @@ import NavigationSearch from "../search/NavigationSearch";
 import OverviewPage from "../../features/overview/OverviewPage";
 import DatabasesPage from "../../features/postgres/DatabasesPage";
 import { SectionPage } from "../../features/pages/Placeholders";
+import ChangePasswordDialog from "../../features/auth/ChangePasswordDialog";
+import { displayText } from "../../text/displayText";
+import ThemeToggle from "../ThemeToggle";
 
 type AppShellProps = {
   username: string;
   csrf: string;
   toolLinks: ToolLinks;
+  version?: string;
   onLogout: () => void;
+  onPasswordChanged: () => void;
   loggingOut: boolean;
 };
 
@@ -25,10 +30,11 @@ const HEALTH_COMPONENT_IDS: StatusComponent["id"][] = ["redgres_state", "postgre
 
 type AggregateHealthState = "loading" | "healthy" | "degraded" | "unavailable";
 
-export default function AppShell({ username, csrf, toolLinks, onLogout, loggingOut }: AppShellProps) {
+export default function AppShell({ username, csrf, toolLinks, version, onLogout, onPasswordChanged, loggingOut }: AppShellProps) {
   const [section, setSection] = useState<SectionId>("overview");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [ownerOpen, setOwnerOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [focusDatabase, setFocusDatabase] = useState<string | null>(null);
   const [focusUsername, setFocusUsername] = useState<string | null>(null);
@@ -46,6 +52,10 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
   const statusAbortRef = useRef<AbortController | null>(null);
 
   useFocusTrap(drawerRef, drawerOpen, menuButtonRef);
+
+  useEffect(() => {
+    document.title = `${sectionTitleSafe(section)} — Redgres`;
+  }, [section]);
 
   useEffect(() => {
     statusAbortRef.current?.abort();
@@ -190,11 +200,21 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
       <div className="shell-content" inert={drawerOpen || searchOpen}>
         <aside className="app-sidebar" aria-label="Redgres">
           <div className="brand">
-            <BrandLogo />
+            <button
+              type="button"
+              className="brand-home"
+              aria-label="Redgres home"
+              onClick={() => go("overview")}
+            >
+              <BrandLogo />
+            </button>
           </div>
           {nav}
           <div className="sidebar-footer">
-            <span>Redgres</span>
+            <span className="sidebar-footer-brand">
+              <span>Redgres</span>
+              {version ? <span className="sidebar-footer-version">{displayText(version)}</span> : null}
+            </span>
             <AggregateHealth state={aggregateHealth} />
           </div>
         </aside>
@@ -238,6 +258,7 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
               <Icon name="help" />
               <span className="button-label">Help</span>
             </button>
+            <ThemeToggle />
             <div className="owner-menu" ref={ownerMenuRef}>
               <button
                 type="button"
@@ -259,6 +280,16 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
               </button>
               {ownerOpen ? (
                 <div className="owner-dropdown" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setOwnerOpen(false);
+                      setPasswordOpen(true);
+                    }}
+                  >
+                    Change password
+                  </button>
                   <button
                     ref={logoutItemRef}
                     type="button"
@@ -333,6 +364,14 @@ export default function AppShell({ username, csrf, toolLinks, onLogout, loggingO
         onSelectArticle={selectArticle}
         restoreFocusRef={searchButtonRef}
       />
+
+      {passwordOpen ? (
+        <ChangePasswordDialog
+          csrf={csrf}
+          onClose={() => setPasswordOpen(false)}
+          onSuccess={onPasswordChanged}
+        />
+      ) : null}
     </div>
   );
 }
