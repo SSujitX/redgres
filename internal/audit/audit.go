@@ -38,6 +38,11 @@ var allowedMetadataKeys = map[string]map[string]struct{}{
 	"domain.access.allow":         keySet("email_count"),
 	"domain.confirm_reachable":    keySet("bootstrap_closed"),
 	"domain.disconnect":           keySet("zone"),
+	"domain.oauth.client":         keySet("configured"),
+	"domain.oauth.connect":        keySet("configured"),
+	"domain.tls.issue":            keySet("hostname_count"),
+	"domain.manual.apply":         keySet("instruction_count"),
+	"domain.manual.access":        keySet("confirmed"),
 }
 
 type Event struct {
