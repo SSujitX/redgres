@@ -1310,16 +1310,99 @@ printf '%s  %s\n' "${release_digest}" "${release_file##*/}" >"${checksum_file}"
 run_install update
 expect_status 'update without flags exits 1' 1
 
-run_install update --non-interactive --release "${release_file}"
-expect_status 'update without --dry-run exits 2' 2
+# Live update under REDGRES_OPT_ROOT (fixture tarball with stub binary + VERSION).
+live_stage="${tmpdir}/live-release-stage"
+live_opt="${tmpdir}/opt-redgres"
+live_unit="${tmpdir}/redgres.service"
+mkdir -p "${live_stage}"
+printf '#!/bin/sh\necho stub\n' >"${live_stage}/redgres"
+chmod 0755 "${live_stage}/redgres"
+printf '1.0.0\n' >"${live_stage}/VERSION"
+live_release="${tmpdir}/redgres_live_1.0.0_linux_amd64.tar.gz"
+/usr/bin/tar -C "${live_stage}" -czf "${live_release}" redgres VERSION
+live_digest="$(/usr/bin/sha256sum "${live_release}")"
+live_digest="${live_digest%% *}"
+printf '%s  %s\n' "${live_digest}" "${live_release##*/}" >"${checksum_file}"
+
+REDGRES_OPT_ROOT="${live_opt}" \
+REDGRES_UNIT_PATH="${live_unit}" \
+REDGRES_SKIP_HEALTHZ=1 \
+  run_install update --non-interactive --release "${live_release}"
+expect_status 'live update under REDGRES_OPT_ROOT exits 0' 0
+case "${output}" in
+  *'result=applied'*) pass 'live update prints result=applied' ;;
+  *) fail 'live update must print result=applied' ;;
+esac
 case "${output}" in
   *'Inventory (read-only'*)
-    fail 'update without --dry-run must not inventory'
+    fail 'live update must not inventory'
     ;;
   *)
-    pass 'update without --dry-run skips inventory'
+    pass 'live update skips inventory'
     ;;
 esac
+if [[ -x "${live_opt}/releases/1.0.0/redgres" && -f "${live_opt}/releases/1.0.0/VERSION" ]]; then
+  pass 'live update writes releases/1.0.0'
+else
+  fail 'live update missing releases/1.0.0'
+fi
+if [[ -L "${live_opt}/current" ]]; then
+  cur="$(readlink -f "${live_opt}/current" || true)"
+  case "${cur}" in
+    */releases/1.0.0) pass 'live update current symlink points at 1.0.0' ;;
+    *) fail "live update current is '${cur}', want .../releases/1.0.0" ;;
+  esac
+elif [[ -x "${live_opt}/current/redgres" ]]; then
+  pass 'live update current present (filesystem has no symlink semantics)'
+else
+  fail 'live update missing current'
+fi
+
+# Second version for rollback target
+live_stage2="${tmpdir}/live-release-stage-2"
+mkdir -p "${live_stage2}"
+printf '#!/bin/sh\necho stub2\n' >"${live_stage2}/redgres"
+chmod 0755 "${live_stage2}/redgres"
+printf '1.0.1\n' >"${live_stage2}/VERSION"
+live_release2="${tmpdir}/redgres_live_1.0.1_linux_amd64.tar.gz"
+/usr/bin/tar -C "${live_stage2}" -czf "${live_release2}" redgres VERSION
+live_digest2="$(/usr/bin/sha256sum "${live_release2}")"
+live_digest2="${live_digest2%% *}"
+printf '%s  %s\n' "${live_digest2}" "${live_release2##*/}" >"${checksum_file}"
+REDGRES_OPT_ROOT="${live_opt}" \
+REDGRES_UNIT_PATH="${live_unit}" \
+REDGRES_SKIP_HEALTHZ=1 \
+  run_install update --non-interactive --release "${live_release2}"
+expect_status 'live update 1.0.1 exits 0' 0
+
+REDGRES_OPT_ROOT="${live_opt}" \
+REDGRES_UNIT_PATH="${live_unit}" \
+REDGRES_SKIP_HEALTHZ=1 \
+  run_install rollback --non-interactive --to 1.0.0
+expect_status 'live rollback to 1.0.0 exits 0' 0
+case "${output}" in
+  *'result=applied'*) pass 'live rollback prints result=applied' ;;
+  *) fail 'live rollback must print result=applied' ;;
+esac
+cur="$(readlink -f "${live_opt}/current" || true)"
+if [[ -L "${live_opt}/current" ]]; then
+  case "${cur}" in
+    */releases/1.0.0) pass 'live rollback points current at 1.0.0' ;;
+    *) fail "live rollback current is '${cur}', want .../releases/1.0.0" ;;
+  esac
+elif [[ -f "${live_opt}/current/VERSION" ]]; then
+  rolled="$(tr -d '\r\n' <"${live_opt}/current/VERSION")"
+  if [[ "${rolled}" == "1.0.0" ]]; then
+    pass 'live rollback current VERSION is 1.0.0 (no symlink semantics)'
+  else
+    fail "live rollback current VERSION is '${rolled}', want 1.0.0"
+  fi
+else
+  fail "live rollback current missing ('${cur}')"
+fi
+
+# Restore checksum fixture for remaining dry-run negative tests that use release_file.
+printf '%s  %s\n' "${release_digest}" "${release_file##*/}" >"${checksum_file}"
 
 run_install update --non-interactive --dry-run
 expect_status 'update missing --release exits 1' 1
@@ -1346,14 +1429,14 @@ expect_rollback_partial 'rollback dry-run skip matrix exits 0'
 run_install rollback
 expect_status 'rollback without flags exits 1' 1
 
-run_install rollback --non-interactive --to rel-1
-expect_status 'rollback without --dry-run exits 2' 2
+run_install rollback --non-interactive --to missing-rel
+expect_status 'live rollback missing target exits 1' 1
 case "${output}" in
   *'Inventory (read-only'*)
-    fail 'rollback without --dry-run must not inventory'
+    fail 'live rollback must not inventory'
     ;;
   *)
-    pass 'rollback without --dry-run skips inventory'
+    pass 'live rollback skips inventory'
     ;;
 esac
 
