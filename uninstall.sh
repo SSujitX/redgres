@@ -101,21 +101,25 @@ fi
 confirm_uninstall() {
   local response=""
   if [[ -t 0 ]]; then
-    :
-  elif [[ -e /dev/tty ]]; then
-    # curl | bash (and curl | sudo bash) leaves stdin on the pipe — attach the real terminal.
-    exec 0</dev/tty
+    printf '%b\n' "${YELLOW}${BOLD}Uninstall this server?${NC}  ${DIM}yes / y to continue  ·  no / n to abort${NC}"
+    printf '%b' "${YELLOW}${BOLD}Choice [y/N]: ${NC}"
+    read -r response || true
+  elif [[ -r /dev/tty ]]; then
+    # curl | bash keeps stdin on the pipe — never exec stdin to /dev/tty (breaks later heredocs).
+    printf '%b\n' "${YELLOW}${BOLD}Uninstall this server?${NC}  ${DIM}yes / y to continue  ·  no / n to abort${NC}" >/dev/tty
+    printf '%b' "${YELLOW}${BOLD}Choice [y/N]: ${NC}" >/dev/tty
+    read -r response </dev/tty || true
   else
     printf '%b\n' "${RED}Error: No terminal for confirmation.${NC}" >&2
     printf '%b\n' "${DIM}Use: curl -fsSL .../uninstall.sh | sudo bash -s -- -y${NC}" >&2
     printf '%b\n' "${DIM}Or:  curl -fsSL .../uninstall.sh -o uninstall.sh && sudo bash uninstall.sh${NC}" >&2
     exit 1
   fi
-  printf '%b\n' "${YELLOW}${BOLD}Uninstall this server?${NC}  ${DIM}yes / y to continue  ·  no / n to abort${NC}"
-  printf '%b' "${YELLOW}${BOLD}Choice [y/N]: ${NC}"
-  read -r response || true
   case "${response}" in
-    [yY]|[yY][eE][sS]) return 0 ;;
+    [yY]|[yY][eE][sS])
+      printf '%b\n' "${GREEN}Confirmed — uninstalling…${NC}"
+      return 0
+      ;;
     [nN]|[nN][oO]|"")
       printf '%b\n' "${DIM}Aborted.${NC}"
       exit 1
