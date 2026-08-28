@@ -34,19 +34,27 @@ const (
 )
 
 type Config struct {
-	Environment         string
-	Address             string
-	BaseURL             string
-	BootstrapAddress    string
-	BootstrapTTL        time.Duration
-	CloudflareTokenFile string
-	TunnelTokenFile     string
-	SQLitePath          string
-	SessionTTL          time.Duration
-	AbsoluteSessionTTL  time.Duration
-	CookieSecure        bool
-	LogLevel            string
-	DevAssetDir         string
+	Environment               string
+	Address                   string
+	BaseURL                   string
+	BootstrapAddress          string
+	BootstrapTTL              time.Duration
+	CloudflareTokenFile       string
+	CloudflareOAuthClientFile string
+	CloudflareOAuthTokenFile  string
+	CloudflareOAuthAuthURL    string
+	CloudflareOAuthTokenURL   string
+	CloudflareOAuthRevokeURL  string
+	TunnelTokenFile           string
+	CertbotBin                string
+	CertbotDNSCredentialsFile string
+	BootstrapUFWRemoveCmd     string
+	SQLitePath                string
+	SessionTTL                time.Duration
+	AbsoluteSessionTTL        time.Duration
+	CookieSecure              bool
+	LogLevel                  string
+	DevAssetDir               string
 
 	PostgresHost               string
 	PostgresPort               string
@@ -89,18 +97,26 @@ func Load(args []string) (Config, error) {
 	}
 
 	cfg := Config{
-		Environment:         normalizeEnvironment(envOr("REDGRES_ENVIRONMENT", EnvironmentDevelopment)),
-		Address:             envOr("REDGRES_ADDRESS", DefaultAddress),
-		BaseURL:             envOr("REDGRES_BASE_URL", DefaultDevelopmentBaseURL),
-		BootstrapAddress:    envOr("REDGRES_BOOTSTRAP_ADDRESS", DefaultBootstrapAddress),
-		BootstrapTTL:        DefaultBootstrapTTL,
-		CloudflareTokenFile: envOr("REDGRES_CLOUDFLARE_TOKEN_FILE", ""),
-		TunnelTokenFile:     envOr("REDGRES_TUNNEL_TOKEN_FILE", ""),
-		SQLitePath:          envOr("REDGRES_SQLITE_PATH", DefaultSQLitePath),
-		SessionTTL:          DefaultSessionTTL,
-		AbsoluteSessionTTL:  DefaultAbsoluteSessionTTL,
-		CookieSecure:        envBoolDefaultFalse("REDGRES_COOKIE_SECURE"),
-		LogLevel:            strings.ToLower(envOr("REDGRES_LOG_LEVEL", DefaultLogLevel)),
+		Environment:               normalizeEnvironment(envOr("REDGRES_ENVIRONMENT", EnvironmentDevelopment)),
+		Address:                   envOr("REDGRES_ADDRESS", DefaultAddress),
+		BaseURL:                   envOr("REDGRES_BASE_URL", DefaultDevelopmentBaseURL),
+		BootstrapAddress:          envOr("REDGRES_BOOTSTRAP_ADDRESS", DefaultBootstrapAddress),
+		BootstrapTTL:              DefaultBootstrapTTL,
+		CloudflareTokenFile:       envOr("REDGRES_CLOUDFLARE_TOKEN_FILE", ""),
+		CloudflareOAuthClientFile: envOr("REDGRES_CLOUDFLARE_OAUTH_CLIENT_FILE", ""),
+		CloudflareOAuthTokenFile:  envOr("REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE", ""),
+		CloudflareOAuthAuthURL:    envOr("REDGRES_CLOUDFLARE_OAUTH_AUTH_URL", "https://dash.cloudflare.com/oauth2/auth"),
+		CloudflareOAuthTokenURL:   envOr("REDGRES_CLOUDFLARE_OAUTH_TOKEN_URL", "https://dash.cloudflare.com/oauth2/token"),
+		CloudflareOAuthRevokeURL:  envOr("REDGRES_CLOUDFLARE_OAUTH_REVOKE_URL", "https://dash.cloudflare.com/oauth2/revoke"),
+		TunnelTokenFile:           envOr("REDGRES_TUNNEL_TOKEN_FILE", ""),
+		CertbotBin:                envOr("REDGRES_CERTBOT_BIN", "certbot"),
+		CertbotDNSCredentialsFile: envOr("REDGRES_CERTBOT_DNS_TOKEN_FILE", ""),
+		BootstrapUFWRemoveCmd:     envOr("REDGRES_BOOTSTRAP_UFW_REMOVE_CMD", ""),
+		SQLitePath:                envOr("REDGRES_SQLITE_PATH", DefaultSQLitePath),
+		SessionTTL:                DefaultSessionTTL,
+		AbsoluteSessionTTL:        DefaultAbsoluteSessionTTL,
+		CookieSecure:              envBoolDefaultFalse("REDGRES_COOKIE_SECURE"),
+		LogLevel:                  strings.ToLower(envOr("REDGRES_LOG_LEVEL", DefaultLogLevel)),
 	}
 
 	var err error
@@ -127,7 +143,15 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&cfg.BootstrapAddress, "bootstrap-address", cfg.BootstrapAddress, "temporary first-run bootstrap listen address (empty disables)")
 	fs.DurationVar(&cfg.BootstrapTTL, "bootstrap-ttl", cfg.BootstrapTTL, "bootstrap auto-close hard cap")
 	fs.StringVar(&cfg.CloudflareTokenFile, "cloudflare-token-file", cfg.CloudflareTokenFile, "path to the per-zone Cloudflare API token file (server-side secret)")
+	fs.StringVar(&cfg.CloudflareOAuthClientFile, "cloudflare-oauth-client-file", cfg.CloudflareOAuthClientFile, "path to Cloudflare OAuth client credentials JSON")
+	fs.StringVar(&cfg.CloudflareOAuthTokenFile, "cloudflare-oauth-token-file", cfg.CloudflareOAuthTokenFile, "path to Cloudflare OAuth token JSON")
+	fs.StringVar(&cfg.CloudflareOAuthAuthURL, "cloudflare-oauth-auth-url", cfg.CloudflareOAuthAuthURL, "Cloudflare OAuth authorization URL")
+	fs.StringVar(&cfg.CloudflareOAuthTokenURL, "cloudflare-oauth-token-url", cfg.CloudflareOAuthTokenURL, "Cloudflare OAuth token URL")
+	fs.StringVar(&cfg.CloudflareOAuthRevokeURL, "cloudflare-oauth-revoke-url", cfg.CloudflareOAuthRevokeURL, "Cloudflare OAuth revoke URL")
 	fs.StringVar(&cfg.TunnelTokenFile, "tunnel-token-file", cfg.TunnelTokenFile, "path to the cloudflared tunnel token file (server-side secret)")
+	fs.StringVar(&cfg.CertbotBin, "certbot-bin", cfg.CertbotBin, "certbot executable for DNS-01 issuance")
+	fs.StringVar(&cfg.CertbotDNSCredentialsFile, "certbot-dns-token-file", cfg.CertbotDNSCredentialsFile, "certbot dns-cloudflare credentials file")
+	fs.StringVar(&cfg.BootstrapUFWRemoveCmd, "bootstrap-ufw-remove-cmd", cfg.BootstrapUFWRemoveCmd, "optional script to remove bootstrap UFW rule")
 	fs.StringVar(&cfg.SQLitePath, "sqlite-path", cfg.SQLitePath, "SQLite database path")
 	fs.DurationVar(&cfg.SessionTTL, "session-ttl", cfg.SessionTTL, "idle session TTL")
 	fs.DurationVar(&cfg.AbsoluteSessionTTL, "absolute-session-ttl", cfg.AbsoluteSessionTTL, "absolute session TTL")
@@ -285,6 +309,20 @@ func (c Config) validate() error {
 	if err := validateSecretFilePath(c.TunnelTokenFile, "REDGRES_TUNNEL_TOKEN_FILE", c.Production()); err != nil {
 		return err
 	}
+	if err := validateOptionalSecretFilePath(c.CloudflareOAuthClientFile, "REDGRES_CLOUDFLARE_OAUTH_CLIENT_FILE", c.Production()); err != nil {
+		return err
+	}
+	if err := validateOptionalSecretFilePath(c.CloudflareOAuthTokenFile, "REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE", c.Production()); err != nil {
+		return err
+	}
+	if err := validateOptionalSecretFilePath(c.CertbotDNSCredentialsFile, "REDGRES_CERTBOT_DNS_TOKEN_FILE", c.Production()); err != nil {
+		return err
+	}
+	if c.BootstrapUFWRemoveCmd != "" {
+		if err := validateOptionalScriptPath(c.BootstrapUFWRemoveCmd); err != nil {
+			return err
+		}
+	}
 	if err := validateBaseURL(c.BaseURL, c.Production()); err != nil {
 		return err
 	}
@@ -375,6 +413,26 @@ func validateSecretFilePath(path, varName string, production bool) error {
 		if !strings.HasPrefix(cleaned, ProductionStateDirectory+"/") {
 			return errors.New(varName + ": production path must be under /var/lib/redgres")
 		}
+	}
+	return nil
+}
+
+func validateOptionalSecretFilePath(path, varName string, production bool) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	return validateSecretFilePath(path, varName, production)
+}
+
+func validateOptionalScriptPath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	if strings.ContainsAny(path, "?#%") || strings.ContainsRune(path, 0) {
+		return errors.New("REDGRES_BOOTSTRAP_UFW_REMOVE_CMD: must not contain URI reserved characters")
+	}
+	if !pathpkg.IsAbs(path) {
+		return errors.New("REDGRES_BOOTSTRAP_UFW_REMOVE_CMD: must be an absolute path")
 	}
 	return nil
 }
