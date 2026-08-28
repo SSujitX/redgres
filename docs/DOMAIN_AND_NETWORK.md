@@ -63,7 +63,15 @@ HTTP UI origin ports must not appear in public firewall allow rules or bind to `
 - Tunnel token is a bearer credential and must be rotated if exposed.
 - Certificate renewal deploy hooks must copy/set ownership to service-readable paths and reload only after configuration validation.
 
-## Naming for open-source deployments
+## Domain & Network wizard (OPS-009 Partial)
+
+Runtime wizard (System → Domain & Network) implements token-first Cloudflare apply or manual DNS instructions:
+
+1. **Cloudflare path:** per-zone API token → apply `{zone, origin_ip, hostnames}` (console proxied CNAME + db/redis grey-cloud **A or AAAA**) → Access allow emails (API) → OAuth Connect on live console hostname → optional certbot DNS-01 for db/redis → operator confirms console reachable (human attestation; no automated probe) → bootstrap closes; optional `REDGRES_BOOTSTRAP_UFW_REMOVE_CMD`.
+2. **Manual DNS path:** apply with `dns_provider:manual` returns operator instructions; `POST /manual/confirm-access` attests Access configured manually; `POST /manual/verify` checks public DNS for db/redis; then confirm-reachable closes bootstrap.
+
+Apply uses the API token file for bootstrap; steady-state Cloudflare mutations use OAuth when connected (`resolveCloudflareBearer`). OAuth callback is a session-bound GET with PKCE state (no CSRF header). See [API.md](API.md) and [CONFIGURATION.md](CONFIGURATION.md).
+
 
 Documentation examples outside the OneLife profile use:
 
