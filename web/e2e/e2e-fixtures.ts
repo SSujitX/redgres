@@ -17,6 +17,7 @@ const SESSION_BODY = {
   csrf_token: CSRF_CANARY,
   capabilities: [
     "platform.read",
+    "platform.network",
     "audit.read",
     "postgres.read",
     "postgres.provision",
