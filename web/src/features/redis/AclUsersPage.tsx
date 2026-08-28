@@ -781,7 +781,10 @@ export default function AclUsersPage({ csrf, focusUsername = null, focusNonce = 
             </button>
           ) : null}
         </div>
-        <p>Create an ACL user with a named permission preset or custom allow-list and a project key prefix, inspect modeled rules, edit named or custom allow-list permissions, rotate a non-protected password, or delete a non-protected ACL user.</p>
+        <p>
+          Redis ACL users, their allowed commands and key prefixes. Create, inspect, edit, rotate, or delete a
+          non-protected ACL user; passwords are shown once on create and never stored in the browser.
+        </p>
       </header>
       {ticket ? <CredentialTicket credential={ticket} onDismiss={dismissTicket} /> : null}
       {createOpen ? (
