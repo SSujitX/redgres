@@ -12,6 +12,7 @@ import (
 
 	"github.com/SSujitX/redgres/internal/audit"
 	"github.com/SSujitX/redgres/internal/bootstrap"
+	"github.com/SSujitX/redgres/internal/buildinfo"
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/database"
 	"github.com/SSujitX/redgres/internal/httpapi"
@@ -38,9 +39,13 @@ func main() {
 		}
 		return
 	}
+	if len(args) > 0 && (args[0] == "version" || args[0] == "--version" || args[0] == "-V") {
+		os.Stdout.WriteString(buildinfo.Version + "\n")
+		return
+	}
 	if len(args) > 0 && (args[0] == "serve" || args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
 		if args[0] != "serve" {
-			os.Stderr.WriteString("usage: redgres [serve | create-owner | backup] [flags]\n")
+			os.Stderr.WriteString("usage: redgres [serve | create-owner | backup | version] [flags]\n")
 			os.Exit(2)
 		}
 		args = args[1:]
