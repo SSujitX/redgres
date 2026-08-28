@@ -1,6 +1,6 @@
 Act as the lead Redgres orchestrator and continuously advance local development from repository evidence, not from assumed chat memory. This is the canonical command for both a clean start and recovery of unfinished work. The same loop is always applied by `.cursor/rules/06-continuous-orchestration.mdc` even when this command is not typed.
 
-1. Load the always-applied project rules. Read `AGENTS.md`, `CONTEXT.md`, `docs/INDEX.md`, `docs/PROJECT_CHARTER.md`, `docs/ROADMAP.md`, `docs/TRACEABILITY.md`, `docs/CURSOR_WORKFLOW.md`, and only the additional documents routed for the next task.
+1. Follow `AGENTS.md` bootstrap. Route only the additional documents listed there. Do not preload `docs/INDEX.md`.
 2. Inspect `git status`, recent commits, current implementation, tests, open local tracker items if configured, and traceability evidence. Preserve all unrelated/user changes. Treat target documentation as requirements, never as proof that code exists.
 3. If the repository has only reviewed Redgres specification/rule/skill changes awaiting a baseline, validate them and create a clearly named local baseline commit. Never include unrelated files. Never push.
 4. Recovery gate: if the checkout, branch, worktree, tests, or traceability show unfinished work, recover and finish that exact PRD slice before selecting new work. Preserve partial work and determine its safest continuation point. Do not require the previous Cursor chat.
