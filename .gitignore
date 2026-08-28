@@ -1,6 +1,9 @@
 # Build outputs
 /redgres
 /redgres.exe
+/redgres-linux-*
+/redgres-windows-*
+/redgres-darwin-*
 /dist/
 /coverage/
 
