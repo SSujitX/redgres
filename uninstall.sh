@@ -2,14 +2,32 @@
 # Redgres uninstaller (DockLift-parity UX).
 # Default: remove every Redgres-owned resource so the host is clean for a fresh install.
 #
-# Interactive (type yes at prompt — works with curl | bash via /dev/tty):
-#   curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh | sudo bash
-# Non-interactive:
+# Non-interactive (recommended for scripts):
 #   curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh | sudo bash -s -- -y
+# Interactive (y/n prompt):
+#   curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh | sudo bash
 #
 # App binary only (preserve PostgreSQL, Redis, config, and data):
 #   curl ... | sudo bash -s -- -y --app-only [--purge-config] [--purge-state]
 set -uo pipefail
+
+REDGRES_UNINSTALL_URL="${REDGRES_UNINSTALL_URL:-https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh}"
+
+# curl | bash leaves stdin on a pipe — re-run from a real file so confirm + heredocs work.
+if [[ ! -t 0 && "${REDGRES_UNINSTALL_FROM_FILE:-}" != "1" ]]; then
+  export REDGRES_UNINSTALL_FROM_FILE=1
+  _uninstall_tmp="$(mktemp /tmp/redgres-uninstall.XXXXXX.sh)"
+  if ! curl -fsSL "${REDGRES_UNINSTALL_URL}" -o "${_uninstall_tmp}"; then
+    echo "Error: could not download uninstall script" >&2
+    exit 1
+  fi
+  chmod 700 "${_uninstall_tmp}"
+  if [[ -e /dev/tty ]]; then
+    exec bash "${_uninstall_tmp}" "$@" </dev/tty
+  else
+    exec bash "${_uninstall_tmp}" "$@" </dev/null
+  fi
+fi
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'
 BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
@@ -100,21 +118,10 @@ fi
 
 confirm_uninstall() {
   local response=""
-  if [[ -t 0 ]]; then
-    printf '%b\n' "${YELLOW}${BOLD}Uninstall this server?${NC}  ${DIM}yes / y to continue  ·  no / n to abort${NC}"
-    printf '%b' "${YELLOW}${BOLD}Choice [y/N]: ${NC}"
-    read -r response || true
-  elif [[ -r /dev/tty ]]; then
-    # curl | bash keeps stdin on the pipe — never exec stdin to /dev/tty (breaks later heredocs).
-    printf '%b\n' "${YELLOW}${BOLD}Uninstall this server?${NC}  ${DIM}yes / y to continue  ·  no / n to abort${NC}" >/dev/tty
-    printf '%b' "${YELLOW}${BOLD}Choice [y/N]: ${NC}" >/dev/tty
-    read -r response </dev/tty || true
-  else
-    printf '%b\n' "${RED}Error: No terminal for confirmation.${NC}" >&2
-    printf '%b\n' "${DIM}Use: curl -fsSL .../uninstall.sh | sudo bash -s -- -y${NC}" >&2
-    printf '%b\n' "${DIM}Or:  curl -fsSL .../uninstall.sh -o uninstall.sh && sudo bash uninstall.sh${NC}" >&2
-    exit 1
-  fi
+  printf '%b\n' "${YELLOW}${BOLD}Uninstall this server?${NC}  ${DIM}yes / y to continue  ·  no / n to abort${NC}"
+  printf '%b' "${YELLOW}${BOLD}Choice [y/N]: ${NC}"
+  read -r response || true
+  response="${response//$'\r'/}"
   case "${response}" in
     [yY]|[yY][eE][sS])
       printf '%b\n' "${GREEN}Confirmed — uninstalling…${NC}"
