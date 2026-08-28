@@ -39,6 +39,39 @@ func TestLoadBootstrapAddressNonLoopbackAllowedInProduction(t *testing.T) {
 	}
 }
 
+func TestLoadBootstrapHTTPAllowsCookieSecureFalse(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_ENVIRONMENT", "production")
+	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
+	t.Setenv("REDGRES_BASE_URL", "http://127.0.0.1:8989")
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
+	t.Setenv("REDGRES_COOKIE_SECURE", "false")
+	t.Setenv("REDGRES_BOOTSTRAP_ADDRESS", "0.0.0.0:8989")
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CookieSecure {
+		t.Fatal("CookieSecure should be false during bootstrap HTTP")
+	}
+	if cfg.BaseURL != "http://127.0.0.1:8989" {
+		t.Fatalf("BaseURL = %q", cfg.BaseURL)
+	}
+}
+
+func TestLoadProductionHTTPRejectedWithoutBootstrap(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_ENVIRONMENT", "production")
+	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:8790")
+	t.Setenv("REDGRES_BASE_URL", "http://127.0.0.1:8989")
+	t.Setenv("REDGRES_SQLITE_PATH", productionSQLitePath)
+	t.Setenv("REDGRES_COOKIE_SECURE", "true")
+	if _, err := Load(nil); err == nil || !strings.Contains(err.Error(), "REDGRES_BASE_URL") {
+		t.Fatalf("expected REDGRES_BASE_URL error, got %v", err)
+	}
+}
+
 func TestLoadBootstrapTTLFlag(t *testing.T) {
 	isolateConfig(t)
 

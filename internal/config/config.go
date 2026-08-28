@@ -26,6 +26,7 @@ const (
 	DefaultAbsoluteSessionTTL = 24 * time.Hour
 	DefaultLogLevel           = "info"
 	ProductionStateDirectory  = "/var/lib/redgres"
+	DefaultEnvFile            = "/etc/redgres/redgres.env"
 
 	MinSessionTTL     = 5 * time.Minute
 	MaxSessionTTL     = 24 * time.Hour
@@ -49,6 +50,7 @@ type Config struct {
 	CertbotBin                string
 	CertbotDNSCredentialsFile string
 	BootstrapUFWRemoveCmd     string
+	EnvFile                   string
 	SQLitePath                string
 	SessionTTL                time.Duration
 	AbsoluteSessionTTL        time.Duration
@@ -323,7 +325,7 @@ func (c Config) validate() error {
 			return err
 		}
 	}
-	if err := validateBaseURL(c.BaseURL, c.Production()); err != nil {
+	if err := validateBaseURL(c.BaseURL, c.Production(), c.BootstrapAddress != ""); err != nil {
 		return err
 	}
 	if err := validateSQLitePath(c.SQLitePath, c.Production()); err != nil {
@@ -335,7 +337,7 @@ func (c Config) validate() error {
 	if c.AbsoluteSessionTTL < c.SessionTTL || c.AbsoluteSessionTTL > MaxAbsoluteTTL {
 		return errors.New("REDGRES_ABSOLUTE_SESSION_TTL: must be at least the idle TTL and at most 168h")
 	}
-	if c.Production() && !c.CookieSecure {
+	if c.Production() && !c.CookieSecure && c.BootstrapAddress == "" {
 		return errors.New("REDGRES_COOKIE_SECURE: must be true in production")
 	}
 	return nil
@@ -379,7 +381,7 @@ func validateBootstrapAddress(address, mainAddress string) error {
 	return nil
 }
 
-func validateBaseURL(raw string, production bool) error {
+func validateBaseURL(raw string, production bool, bootstrapHTTP bool) error {
 	if strings.TrimSpace(raw) == "" {
 		return errors.New("REDGRES_BASE_URL: is required")
 	}
@@ -391,7 +393,9 @@ func validateBaseURL(raw string, production bool) error {
 		return errors.New("REDGRES_BASE_URL: must be an origin (scheme://host[:port])")
 	}
 	if production && parsed.Scheme != "https" {
-		return errors.New("REDGRES_BASE_URL: production origin must use https")
+		if !bootstrapHTTP || parsed.Scheme != "http" {
+			return errors.New("REDGRES_BASE_URL: production origin must use https")
+		}
 	}
 	if !production && parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return errors.New("REDGRES_BASE_URL: must use http or https")
