@@ -12,6 +12,13 @@ This runbook defines operator intent. Exact commands must be generated/validated
 - Redis memory, eviction, persistence errors, fragmentation, and rejected connections.
 - Failed Redgres logins and destructive/credential audit events.
 
+## Domain wizard bootstrap (OPS-009 Partial)
+
+- First-run console may listen on `:8989` until the operator completes Domain & Network steps ([ADR-012](decisions/ADR-012-ui-bootstrap.md)).
+- **Confirm reachable** is operator attestation only; Redgres does not HTTP-probe the console hostname.
+- On confirm, Redgres closes bootstrap gracefully and optionally runs `REDGRES_BOOTSTRAP_UFW_REMOVE_CMD` (absolute path, no shell). If the helper fails, check UFW manually — the API returns `bootstrap_ufw_removed: false`.
+- db/redis TLS: issue via wizard (`POST /api/v1/domain/tls/issue`) or certbot DNS-01 using `REDGRES_CERTBOT_DNS_TOKEN_FILE`; copy certs to service paths and reload per host policy (not automated in Partial).
+
 ## Weekly operator checks
 
 - Review failed audit events and unexpected source IPs.
