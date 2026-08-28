@@ -19,6 +19,56 @@ UNIT_PATH="/etc/systemd/system/redgres.service"
 die() { printf '%b\n' "${RED}Error: $*${NC}" >&2; exit 1; }
 log() { printf '%b\n' "$*"; }
 
+ensure_build_tools() {
+  local missing=()
+  command -v git >/dev/null || missing+=("git")
+  command -v go >/dev/null || missing+=("go")
+  command -v npm >/dev/null || missing+=("npm")
+  command -v tar >/dev/null || missing+=("tar")
+  if ((${#missing[@]} == 0)); then
+    return 0
+  fi
+  if ! command -v apt-get >/dev/null; then
+    die "Missing build tools (${missing[*]}). Install git, Go (see go.mod), Node ${NODE_MAJOR}.x, and tar, then re-run."
+  fi
+  log "  ${CYAN}Installing build tools (${missing[*]})…${NC}"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq ca-certificates curl git tar
+  if ! command -v npm >/dev/null; then
+    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
+    apt-get install -y -qq nodejs
+  fi
+  if ! command -v go >/dev/null; then
+    local go_ver="${GO_VERSION}"
+    local arch="amd64"
+    case "$(uname -m)" in
+      aarch64|arm64) arch="arm64" ;;
+      x86_64|amd64) arch="amd64" ;;
+      *) die "Unsupported CPU architecture for Go bootstrap: $(uname -m)" ;;
+    esac
+    local tarball="go${go_ver}.linux-${arch}.tar.gz"
+    local url="https://go.dev/dl/${tarball}"
+    curl -fsSL "${url}" -o "/tmp/${tarball}" || die "Could not download Go ${go_ver} from go.dev"
+    rm -rf /usr/local/go
+    tar -C /usr/local -xzf "/tmp/${tarball}"
+    rm -f "/tmp/${tarball}"
+    export PATH="/usr/local/go/bin:${PATH}"
+    if ! grep -q '/usr/local/go/bin' /etc/profile.d/redgres-go.sh 2>/dev/null; then
+      printf '%s\n' 'export PATH="/usr/local/go/bin:$PATH"' >/etc/profile.d/redgres-go.sh
+      chmod 0644 /etc/profile.d/redgres-go.sh
+    fi
+  fi
+  command -v git >/dev/null || die "git is required"
+  command -v go >/dev/null || die "go is required"
+  command -v npm >/dev/null || die "npm is required"
+  command -v tar >/dev/null || die "tar is required"
+}
+
+GO_VERSION="$(curl -fsSL "https://raw.githubusercontent.com/SSujitX/Redgres/master/go.mod" 2>/dev/null | awk '/^go / {print $2; exit}')"
+GO_VERSION="${GO_VERSION:-1.27.0}"
+NODE_MAJOR="24"
+
 [[ "${EUID}" -eq 0 ]] || die "Run with sudo"
 
 log ""
@@ -26,10 +76,7 @@ log "  ${CYAN}${BOLD}Redgres development installer${NC}"
 log "  ${YELLOW}${BOLD}Warning: installs latest master (unreleased).${NC}"
 log ""
 
-command -v git >/dev/null || die "git is required"
-command -v go >/dev/null || die "go is required"
-command -v npm >/dev/null || die "npm is required"
-command -v tar >/dev/null || die "tar is required"
+ensure_build_tools
 
 WORKDIR="$(mktemp -d /tmp/redgres-dev.XXXXXX)"
 trap 'rm -rf "${WORKDIR}"' EXIT
