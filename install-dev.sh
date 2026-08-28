@@ -32,12 +32,20 @@ ensure_build_tools() {
     die "Missing build tools (${missing[*]}). Install git, Go (see go.mod), Node ${NODE_MAJOR}.x, and tar, then re-run."
   fi
   log "  ${CYAN}Installing build tools (${missing[*]})…${NC}"
+  log "  ${DIM}Note: release install.sh/upgrade.sh use pre-built binaries and do not need Go/Node.${NC}"
+  log "  ${DIM}install-dev builds from Git master on this machine.${NC}"
   export DEBIAN_FRONTEND=noninteractive
+  export NEEDRESTART_MODE=a
+  export UCF_FORCE_CONFFOLD=1
   apt-get update -qq
-  apt-get install -y -qq ca-certificates curl git tar
+  apt-get install -y -qq --no-upgrade \
+    -o Dpkg::Options::=--force-confold \
+    ca-certificates curl git tar
   if ! command -v npm >/dev/null; then
     curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
-    apt-get install -y -qq nodejs
+    apt-get install -y -qq --no-upgrade \
+      -o Dpkg::Options::=--force-confold \
+      nodejs
   fi
   if ! command -v go >/dev/null; then
     local go_ver="${GO_VERSION}"
@@ -49,20 +57,23 @@ ensure_build_tools() {
     esac
     local tarball="go${go_ver}.linux-${arch}.tar.gz"
     local url="https://go.dev/dl/${tarball}"
-    curl -fsSL "${url}" -o "/tmp/${tarball}" || die "Could not download Go ${go_ver} from go.dev"
+    log "  ${CYAN}Downloading Go ${go_ver}…${NC}"
+    curl -fsSL "${url}" -o "/tmp/${tarball}" || die "Could not download Go ${go_ver} from ${url}"
     rm -rf /usr/local/go
     tar -C /usr/local -xzf "/tmp/${tarball}"
     rm -f "/tmp/${tarball}"
     export PATH="/usr/local/go/bin:${PATH}"
-    if ! grep -q '/usr/local/go/bin' /etc/profile.d/redgres-go.sh 2>/dev/null; then
+    if [[ ! -f /etc/profile.d/redgres-go.sh ]]; then
       printf '%s\n' 'export PATH="/usr/local/go/bin:$PATH"' >/etc/profile.d/redgres-go.sh
       chmod 0644 /etc/profile.d/redgres-go.sh
     fi
   fi
+  export PATH="/usr/local/go/bin:${PATH}"
   command -v git >/dev/null || die "git is required"
-  command -v go >/dev/null || die "go is required"
+  command -v go >/dev/null || die "go is required (expected /usr/local/go/bin/go)"
   command -v npm >/dev/null || die "npm is required"
   command -v tar >/dev/null || die "tar is required"
+  log "  ${GREEN}Build tools ready:${NC} go $(go version | awk '{print $3}'), node $(node -v), npm $(npm -v)"
 }
 
 GO_VERSION="$(curl -fsSL "https://raw.githubusercontent.com/SSujitX/Redgres/master/go.mod" 2>/dev/null | awk '/^go / {print $2; exit}')"
@@ -77,7 +88,9 @@ log "  ${YELLOW}${BOLD}Warning: installs latest master (unreleased).${NC}"
 log ""
 
 ensure_build_tools
+export PATH="/usr/local/go/bin:${PATH}"
 
+log "  ${CYAN}Cloning master and building…${NC}"
 WORKDIR="$(mktemp -d /tmp/redgres-dev.XXXXXX)"
 trap 'rm -rf "${WORKDIR}"' EXIT
 git clone --depth 1 --branch master "${REPO_URL}" "${WORKDIR}/src"
