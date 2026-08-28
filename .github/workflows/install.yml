@@ -20,4 +20,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: bash deploy/tests/run.sh
+      - name: installer dry-run
+        run: |
+          /bin/bash -p deploy/install.sh \
+            --non-interactive \
+            --dry-run \
+            --mode fresh-postgres \
+            --postgres-version 18 \
+            --redis-mode fresh \
+            --redis-version 8.8 \
+            --pgbouncer-mode disabled
