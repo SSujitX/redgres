@@ -1,5 +1,6 @@
 import { useId } from "react";
 import { displayText } from "../../text/displayText";
+import { copyText } from "../../text/copyText";
 
 export type ShownCredential = {
   username: string;
@@ -15,12 +16,6 @@ type CredentialTicketProps = {
   kind?: "redis" | "postgres";
   rotateWarning?: boolean;
 };
-
-async function copyText(value: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-  }
-}
 
 export default function CredentialTicket({
   credential,
