@@ -12,7 +12,8 @@
 #   5. Builds linux/amd64 tarball + SHA256SUMS
 #   6. Creates the GitHub Release with auto-generated commit notes + assets
 #      (install.sh / upgrade.sh download those assets)
-name: release
+name: Release
+run-name: "Release (${{ inputs.bump }}) — ${{ github.ref_name }}"
 
 on:
   workflow_dispatch:

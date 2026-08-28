@@ -14,14 +14,18 @@ TO_VER="${5:-}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+REPO_SLUG="${GITHUB_REPOSITORY:-SSujitX/redgres}"
+SERVER_URL="${GITHUB_SERVER_URL:-https://github.com}"
+COMMIT_BASE="${SERVER_URL}/${REPO_SLUG}/commit"
+
 if [[ -n "$PREV_TAG" ]]; then
   RANGE="${PREV_TAG}..HEAD"
 else
   RANGE="HEAD"
 fi
 
-# subject\thash  (newest first)
-mapfile -t COMMITS < <(git log "$RANGE" --pretty=format:'%s%x09%h' --no-merges)
+# subject\tshort\tfull  (newest first)
+mapfile -t COMMITS < <(git log "$RANGE" --pretty=format:'%s%x09%h%x09%H' --no-merges)
 
 feat=()
 fix=()
@@ -37,12 +41,15 @@ other=()
 for line in "${COMMITS[@]+"${COMMITS[@]}"}"; do
   [[ -n "$line" ]] || continue
   subject="${line%%$'\t'*}"
-  hash="${line#*$'\t'}"
+  rest="${line#*$'\t'}"
+  short="${rest%%$'\t'*}"
+  full="${rest#*$'\t'}"
   # Drop automated release VERSION bumps from the changelog body.
   if [[ "$subject" =~ ^chore\(release\): ]]; then
     continue
   fi
-  entry="- ${subject} (\`${hash}\`)"
+  # Explicit markdown links — backticks around SHAs disable GitHub auto-linking.
+  entry="- ${subject} ([${short}](${COMMIT_BASE}/${full}))"
   if [[ "$subject" =~ ^(feat)(\(.+\))?\!?: ]]; then
     feat+=("$entry")
   elif [[ "$subject" =~ ^(fix)(\(.+\))?\!?: ]]; then
