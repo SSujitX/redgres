@@ -585,7 +585,9 @@ expect_status_and_stages 'dry-run existing-postgres combo prints 13 stages' \
   'Inventory (read-only, host --version; not SQL SHOW/INFO):' \
   'postgres: detected=postgres (PostgreSQL) 17.11 major=17 expect=17 result=ok' \
   'redis: detected=Redis server v=8.2.0 sha=00000000:0 malloc=libc bits=64 build=0 series=8.2 expect=8.2 result=ok' \
-  'pgbouncer: detected=PgBouncer 1.24.1 result=recorded'
+  'pgbouncer: detected=PgBouncer 1.24.1 result=recorded' \
+  'Cloudflare inventory (read-only PATH scan; not live API):' \
+  'TLS inventory (read-only PATH scan; no secret read):'
 
 # --- happy dry-run (fresh services) ---
 run_install \
