@@ -1,10 +1,22 @@
 import { apiRequest, errorMessage, type ApiErrorBody } from "./client";
 
+export type DomainHostnames = {
+  console?: string;
+  db?: string;
+  redis?: string;
+};
+
 export type DomainStatusPayload = {
   configured?: boolean;
   zone?: string;
   hostname?: string;
+  hostnames?: DomainHostnames;
+  origin_ip?: string;
+  instructions?: string[];
   access?: string;
+  tls?: Record<string, string>;
+  credential?: "api_token" | "oauth" | "none";
+  dns_provider?: string;
   bootstrap_still_open?: boolean;
   request_id?: string;
 };
@@ -12,18 +24,36 @@ export type DomainStatusPayload = {
 export type DomainApplyPayload = {
   zone?: string;
   hostname?: string;
+  hostnames?: DomainHostnames;
+  origin_ip?: string;
   tunnel_id?: string;
+  instructions?: string[];
+  dns_provider?: string;
   bootstrap_still_open?: boolean;
   access?: string;
+  tls?: Record<string, string>;
   request_id?: string;
 };
 
 export type DomainOkPayload = {
   ok?: boolean;
   access?: string;
+  authorize_url?: string;
+  redirect_uri?: string;
+  scopes?: string[];
+  tls?: Record<string, string>;
   bootstrap_still_open?: boolean;
   bootstrap_closed?: boolean;
+  bootstrap_ufw_removed?: boolean;
+  bootstrap_ufw_attempted?: boolean;
   request_id?: string;
+};
+
+export type DomainApplyInput = {
+  zone: string;
+  originIP: string;
+  hostnames: DomainHostnames;
+  dnsProvider?: "cloudflare" | "manual";
 };
 
 export async function fetchDomain(init: RequestInit = {}) {
@@ -39,12 +69,20 @@ export async function setDomainToken(token: string, csrf: string, init: RequestI
   });
 }
 
-export async function applyDomain(zone: string, hostname: string, csrf: string, init: RequestInit = {}) {
+export async function applyDomain(input: DomainApplyInput, csrf: string, init: RequestInit = {}) {
+  const body: Record<string, unknown> = {
+    zone: input.zone,
+    origin_ip: input.originIP,
+    hostnames: input.hostnames,
+  };
+  if (input.dnsProvider === "manual") {
+    body.dns_provider = "manual";
+  }
   return apiRequest<DomainApplyPayload & ApiErrorBody>("/api/v1/domain/apply", {
     ...init,
     method: "POST",
     csrf,
-    body: JSON.stringify({ zone, hostname }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -54,6 +92,50 @@ export async function setDomainAccessPolicy(emails: string[], csrf: string, init
     method: "POST",
     csrf,
     body: JSON.stringify({ emails }),
+  });
+}
+
+export async function setDomainOAuthClient(clientID: string, clientSecret: string, csrf: string, init: RequestInit = {}) {
+  return apiRequest<DomainOkPayload & ApiErrorBody>("/api/v1/domain/oauth-client", {
+    ...init,
+    method: "POST",
+    csrf,
+    body: JSON.stringify({ client_id: clientID, client_secret: clientSecret }),
+  });
+}
+
+export async function startDomainOAuth(csrf: string, init: RequestInit = {}) {
+  return apiRequest<DomainOkPayload & ApiErrorBody>("/api/v1/domain/oauth/start", {
+    ...init,
+    method: "POST",
+    csrf,
+  });
+}
+
+export async function issueDomainTLS(csrf: string, init: RequestInit = {}) {
+  return apiRequest<DomainOkPayload & ApiErrorBody>("/api/v1/domain/tls/issue", {
+    ...init,
+    method: "POST",
+    csrf,
+  });
+}
+
+export async function verifyDomainManual(csrf: string, init: RequestInit = {}) {
+  return apiRequest<DomainOkPayload & { results?: Record<string, string> } & ApiErrorBody>(
+    "/api/v1/domain/manual/verify",
+    {
+      ...init,
+      method: "POST",
+      csrf,
+    },
+  );
+}
+
+export async function confirmDomainManualAccess(csrf: string, init: RequestInit = {}) {
+  return apiRequest<DomainOkPayload & ApiErrorBody>("/api/v1/domain/manual/confirm-access", {
+    ...init,
+    method: "POST",
+    csrf,
   });
 }
 
