@@ -117,8 +117,9 @@ func run(args []string) error {
 		errCh <- srv.ListenAndServe()
 	}()
 
-	if cfg.BootstrapAddress != "" {
+	if cfg.BootstrapAddress != "" && !bootstrap.MarkerPresent(cfg.SQLitePath) {
 		bootstrapLn := bootstrap.New(handler, cfg.BootstrapAddress, cfg.BootstrapTTL)
+		bootstrapLn.SetSQLitePath(cfg.SQLitePath)
 		defer bootstrapLn.Close()
 		if err := bootstrapLn.Start(); err != nil {
 			_ = srv.Close()
@@ -126,6 +127,8 @@ func run(args []string) error {
 		}
 		api.SetBootstrapCloser(bootstrapLn)
 		log.Info("bootstrap listening", slog.String("address", bootstrapLn.Addr()), slog.Duration("ttl", cfg.BootstrapTTL))
+	} else if cfg.BootstrapAddress != "" {
+		log.Info("bootstrap skipped (already closed)")
 	}
 
 	select {
