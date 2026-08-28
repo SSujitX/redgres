@@ -143,13 +143,13 @@ describe("DomainNetworkPage", () => {
     await screen.findByText("No");
 
     fireEvent.change(screen.getByLabelText("Zone"), { target: { value: "example.com" } });
-    expect((screen.getByLabelText("Console hostname") as HTMLInputElement).value).toBe("console.example.com");
+    expect((screen.getByPlaceholderText("console.example.com") as HTMLInputElement).value).toBe("console.example.com");
 
-    fireEvent.change(screen.getByLabelText("Console hostname"), {
+    fireEvent.change(screen.getByPlaceholderText("console.example.com"), {
       target: { value: "app.example.com" },
     });
     fireEvent.change(screen.getByLabelText("Zone"), { target: { value: "other.com" } });
-    expect((screen.getByLabelText("Console hostname") as HTMLInputElement).value).toBe("app.example.com");
+    expect((screen.getByPlaceholderText("console.example.com") as HTMLInputElement).value).toBe("app.example.com");
   });
 
   it("suggests console.<zone> and applies with CSRF", async () => {
@@ -176,6 +176,8 @@ describe("DomainNetworkPage", () => {
           hostnames: {
             console: "console.example.com",
             db: "db.example.com",
+            rs: "rs.example.com",
+            pgadmin: "pgadmin.example.com",
             redis: "redis.example.com",
           },
         });
@@ -197,10 +199,10 @@ describe("DomainNetworkPage", () => {
     await screen.findByText("No");
 
     fireEvent.change(screen.getByLabelText("Zone"), { target: { value: "example.com" } });
-    fireEvent.change(screen.getByLabelText("Origin IP (grey-cloud A or AAAA)"), {
+    fireEvent.change(screen.getByPlaceholderText("203.0.113.10"), {
       target: { value: "203.0.113.10" },
     });
-    expect((screen.getByLabelText("Console hostname") as HTMLInputElement).value).toBe("console.example.com");
+    expect((screen.getByPlaceholderText("console.example.com") as HTMLInputElement).value).toBe("console.example.com");
     expect(screen.getByRole("button", { name: "Apply domain" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Apply domain" }));
@@ -350,7 +352,7 @@ describe("DomainNetworkPage", () => {
     const manualInstructions = [
       "Create a proxied CNAME for console.example.com pointing to your cloudflared tunnel hostname.",
       "Create a DNS-only A record for db.example.com with content 203.0.113.10.",
-      "Configure Cloudflare Access on console.example.com (deny by default).",
+      "Configure Cloudflare Access on console.example.com, pgadmin.example.com, and redis.example.com (deny by default).",
     ];
     const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
       const url = String(input);
@@ -378,6 +380,8 @@ describe("DomainNetworkPage", () => {
           hostnames: {
             console: "console.example.com",
             db: "db.example.com",
+            rs: "rs.example.com",
+            pgadmin: "pgadmin.example.com",
             redis: "redis.example.com",
           },
         });
@@ -404,7 +408,7 @@ describe("DomainNetworkPage", () => {
 
     fireEvent.click(screen.getByLabelText("Manual DNS (instructions only)"));
     fireEvent.change(screen.getByLabelText("Zone"), { target: { value: "example.com" } });
-    fireEvent.change(screen.getByLabelText("Origin IP (grey-cloud A or AAAA)"), {
+    fireEvent.change(screen.getByPlaceholderText("203.0.113.10"), {
       target: { value: "203.0.113.10" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save manual plan" }));

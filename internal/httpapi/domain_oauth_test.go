@@ -239,8 +239,7 @@ func TestDomainTLSIssueWithFakeCertbot(t *testing.T) {
 	tlsops.CertLiveDir = live
 	t.Cleanup(func() { tlsops.CertLiveDir = prevLive })
 
-	writeTestLECert(t, live, "db.example.com")
-	writeTestLECert(t, live, "redis.example.com")
+	writeTestLECert(t, live, "db.example.com", "rs.example.com")
 
 	fakeBin := filepath.Join(tmp, "certbot.bat")
 	if err := os.WriteFile(fakeBin, []byte("@echo off\nexit /b 0\n"), 0o755); err != nil {
@@ -261,9 +260,23 @@ func TestDomainTLSIssueWithFakeCertbot(t *testing.T) {
 	}
 }
 
-func writeTestLECert(t *testing.T, liveRoot, host string) {
+func writeTestLECert(t *testing.T, liveRoot, primary string, sans ...string) {
 	t.Helper()
-	dir := filepath.Join(liveRoot, host)
+	if len(sans) == 0 {
+		sans = []string{primary}
+	} else {
+		found := false
+		for _, name := range sans {
+			if name == primary {
+				found = true
+				break
+			}
+		}
+		if !found {
+			sans = append([]string{primary}, sans...)
+		}
+	}
+	dir := filepath.Join(liveRoot, primary)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -273,10 +286,10 @@ func writeTestLECert(t *testing.T, liveRoot, host string) {
 	}
 	tmpl := x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: host},
+		Subject:      pkix.Name{CommonName: primary},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(24 * time.Hour),
-		DNSNames:     []string{host},
+		DNSNames:     sans,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
 	if err != nil {

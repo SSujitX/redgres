@@ -14,23 +14,12 @@ import (
 
 func (s *Server) handleDomainManualApplyBody(w http.ResponseWriter, r *http.Request, zoneRaw, originIPRaw string, hostnames map[string]string) {
 	zone := strings.ToLower(strings.TrimSpace(zoneRaw))
-	console := strings.ToLower(strings.TrimSpace(hostnames["console"]))
-	dbHost := strings.ToLower(strings.TrimSpace(hostnames["db"]))
-	redisHost := strings.ToLower(strings.TrimSpace(hostnames["redis"]))
-	if console == "" && zone != "" {
-		console = "console." + zone
-	}
-	if dbHost == "" && zone != "" {
-		dbHost = "db." + zone
-	}
-	if redisHost == "" && zone != "" {
-		redisHost = "redis." + zone
-	}
-	originIP := strings.TrimSpace(originIPRaw)
-	if !validHostname(zone) || !validHostname(console) || !validHostname(dbHost) || !validHostname(redisHost) {
+	hosts, err := parseDomainHostnames(zone, hostnames["console"], hostnames)
+	if err != nil {
 		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid zone or hostname")
 		return
 	}
+	originIP := strings.TrimSpace(originIPRaw)
 	if net.ParseIP(originIP) == nil {
 		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid origin IP")
 		return
@@ -44,16 +33,18 @@ func (s *Server) handleDomainManualApplyBody(w http.ResponseWriter, r *http.Requ
 		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid origin IP")
 		return
 	}
-	instructions := manualDNSInstructions(console, dbHost, redisHost, greySpecs)
+	instructions := manualDNSInstructions(hosts, greySpecs)
 	dep := deployment{
-		ZoneName:        zone,
-		Hostname:        console,
-		ConsoleHostname: console,
-		DBHostname:      dbHost,
-		RedisHostname:   redisHost,
-		OriginIP:        originIP,
-		TLSStatus:       "not_issued",
-		DNSProvider:     "manual",
+		ZoneName:             zone,
+		Hostname:             hosts.Console,
+		ConsoleHostname:      hosts.Console,
+		DBHostname:           hosts.DB,
+		RSHostname:           hosts.RS,
+		PgAdminHostname:      hosts.PgAdmin,
+		RedisInsightHostname: hosts.RedisInsight,
+		OriginIP:             originIP,
+		TLSStatus:            "not_issued",
+		DNSProvider:          "manual",
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -62,7 +53,7 @@ func (s *Server) handleDomainManualApplyBody(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	sess := sessionFrom(r)
-	if err := s.audit.Record(sess.Username, "domain.manual.apply", console, "success", requestID(r), requestClientIP(r), map[string]any{"instruction_count": len(instructions)}); err != nil {
+	if err := s.audit.Record(sess.Username, "domain.manual.apply", hosts.Console, "success", requestID(r), requestClientIP(r), map[string]any{"instruction_count": len(instructions)}); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
@@ -136,7 +127,7 @@ func (s *Server) handleDomainManualVerify(w http.ResponseWriter, r *http.Request
 	defer cancel()
 	results := map[string]string{}
 	originIP := net.ParseIP(dep.OriginIP)
-	for _, host := range []string{dep.DBHostname, dep.RedisHostname} {
+	for _, host := range []string{dep.DBHostname, dep.rsHostname()} {
 		addrs, err := net.DefaultResolver.LookupHost(ctx, host)
 		if err != nil || len(addrs) == 0 {
 			results[host] = "missing"
@@ -169,20 +160,42 @@ func manualInstructionsForDep(dep deployment) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return manualDNSInstructions(dep.consoleHostname(), dep.DBHostname, dep.RedisHostname, greySpecs), nil
+	hosts := domainHostnames{
+		Console:      dep.consoleHostname(),
+		DB:           dep.DBHostname,
+		RS:           dep.rsHostname(),
+		PgAdmin:      dep.PgAdminHostname,
+		RedisInsight: dep.RedisInsightHostname,
+	}
+	return manualDNSInstructions(hosts, greySpecs), nil
 }
 
-func manualDNSInstructions(console, dbHost, redisHost string, grey []struct {
+func manualDNSInstructions(hosts domainHostnames, grey []struct {
 	Type    string
 	Content string
 }) []string {
 	var out []string
-	out = append(out, fmt.Sprintf("Create a proxied CNAME for %s pointing to your cloudflared tunnel hostname.", console))
-	for _, host := range []string{dbHost, redisHost} {
+	for _, host := range []string{hosts.Console, hosts.PgAdmin, hosts.RedisInsight} {
+		if host == "" {
+			continue
+		}
+		out = append(out, fmt.Sprintf("Create a proxied CNAME for %s pointing to your cloudflared tunnel hostname.", host))
+	}
+	for _, host := range []string{hosts.DB, hosts.RS} {
+		if host == "" {
+			continue
+		}
 		for _, spec := range grey {
 			out = append(out, fmt.Sprintf("Create a DNS-only %s record for %s with content %s.", spec.Type, host, spec.Content))
 		}
 	}
-	out = append(out, fmt.Sprintf("Configure Cloudflare Access on %s (deny by default).", console))
+	tunnelHosts := hosts.Console
+	if hosts.PgAdmin != "" {
+		tunnelHosts += ", " + hosts.PgAdmin
+	}
+	if hosts.RedisInsight != "" {
+		tunnelHosts += ", " + hosts.RedisInsight
+	}
+	out = append(out, fmt.Sprintf("Configure Cloudflare Access on %s (deny by default).", tunnelHosts))
 	return out
 }

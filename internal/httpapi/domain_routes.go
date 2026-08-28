@@ -18,30 +18,64 @@ import (
 
 var errNoDeployment = errors.New("no domain deployment")
 
+type accessAppBinding struct {
+	Hostname string `json:"hostname,omitempty"`
+	AppID    string `json:"app_id"`
+	PolicyID string `json:"policy_id,omitempty"`
+}
+
 // deployment is the persisted, non-secret record of what the wizard created so
 // disconnect can delete exactly those resources.
 type deployment struct {
-	AccountID             string   `json:"account_id"`
-	ZoneID                string   `json:"zone_id"`
-	ZoneName              string   `json:"zone_name"`
-	TunnelID              string   `json:"tunnel_id"`
-	AccessAppID           string   `json:"access_app_id"`
-	AccessPolicyID        string   `json:"access_policy_id,omitempty"`
-	Records               []record `json:"records"`
-	Hostname              string   `json:"hostname"` // legacy alias for console
-	ConsoleHostname       string   `json:"console_hostname,omitempty"`
-	DBHostname            string   `json:"db_hostname,omitempty"`
-	RedisHostname         string   `json:"redis_hostname,omitempty"`
-	OriginIP              string   `json:"origin_ip,omitempty"`
-	TLSStatus             string   `json:"tls_status,omitempty"` // not_issued | issued | failed (legacy aggregate)
-	TLSDBStatus           string   `json:"tls_db_status,omitempty"`
-	TLSRedisStatus        string   `json:"tls_redis_status,omitempty"`
-	DNSProvider           string   `json:"dns_provider,omitempty"` // cloudflare | manual
-	AccessManualConfirmed bool     `json:"access_manual_confirmed,omitempty"`
+	AccountID             string             `json:"account_id"`
+	ZoneID                string             `json:"zone_id"`
+	ZoneName              string             `json:"zone_name"`
+	TunnelID              string             `json:"tunnel_id"`
+	AccessAppID           string             `json:"access_app_id"`
+	AccessPolicyID        string             `json:"access_policy_id,omitempty"`
+	AccessApps            []accessAppBinding `json:"access_apps,omitempty"`
+	Records               []record           `json:"records"`
+	Hostname              string             `json:"hostname"` // legacy alias for console
+	ConsoleHostname       string             `json:"console_hostname,omitempty"`
+	DBHostname            string             `json:"db_hostname,omitempty"`
+	RSHostname            string             `json:"rs_hostname,omitempty"`
+	RedisHostname         string             `json:"redis_hostname,omitempty"` // legacy raw Redis endpoint
+	PgAdminHostname       string             `json:"pgadmin_hostname,omitempty"`
+	RedisInsightHostname  string             `json:"redis_insight_hostname,omitempty"`
+	OriginIP              string             `json:"origin_ip,omitempty"`
+	TLSStatus             string             `json:"tls_status,omitempty"`
+	TLSDBStatus           string             `json:"tls_db_status,omitempty"`
+	TLSRSStatus           string             `json:"tls_rs_status,omitempty"`
+	TLSRedisStatus        string             `json:"tls_redis_status,omitempty"`
+	DNSProvider           string             `json:"dns_provider,omitempty"`
+	AccessManualConfirmed bool               `json:"access_manual_confirmed,omitempty"`
+}
+
+func (d deployment) hasAccessAllowPolicy() bool {
+	if d.AccessPolicyID != "" {
+		return true
+	}
+	for _, app := range d.AccessApps {
+		if app.PolicyID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (d deployment) accessAllow() bool {
-	return d.AccessPolicyID != "" || d.AccessManualConfirmed
+	if d.AccessManualConfirmed {
+		return true
+	}
+	if d.AccessPolicyID != "" {
+		return true
+	}
+	for _, app := range d.AccessApps {
+		if app.PolicyID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 type record struct {
@@ -56,40 +90,6 @@ func (d deployment) consoleHostname() string {
 		return d.ConsoleHostname
 	}
 	return d.Hostname
-}
-
-func (d deployment) hostnamesMap() map[string]string {
-	out := map[string]string{}
-	if h := d.consoleHostname(); h != "" {
-		out["console"] = h
-	}
-	if d.DBHostname != "" {
-		out["db"] = d.DBHostname
-	}
-	if d.RedisHostname != "" {
-		out["redis"] = d.RedisHostname
-	}
-	return out
-}
-
-func (d deployment) tlsMap() map[string]string {
-	db := d.TLSDBStatus
-	if db == "" {
-		if d.TLSStatus != "" {
-			db = d.TLSStatus
-		} else {
-			db = "not_issued"
-		}
-	}
-	redis := d.TLSRedisStatus
-	if redis == "" {
-		if d.TLSStatus != "" {
-			redis = d.TLSStatus
-		} else {
-			redis = "not_issued"
-		}
-	}
-	return map[string]string{"db": db, "redis": redis}
 }
 
 type domainStore struct{ db *sql.DB }
@@ -107,6 +107,7 @@ func (s domainStore) Get(ctx context.Context) (deployment, error) {
 	if err := json.Unmarshal([]byte(raw), &d); err != nil {
 		return deployment{}, err
 	}
+	d.normalizeLegacyHostnames()
 	return d, nil
 }
 
@@ -224,26 +225,12 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	zone := strings.ToLower(strings.TrimSpace(body.Zone))
-	console := strings.ToLower(strings.TrimSpace(body.Hostnames["console"]))
-	dbHost := strings.ToLower(strings.TrimSpace(body.Hostnames["db"]))
-	redisHost := strings.ToLower(strings.TrimSpace(body.Hostnames["redis"]))
-	if console == "" {
-		console = strings.ToLower(strings.TrimSpace(body.Hostname))
-	}
-	if console == "" && zone != "" {
-		console = "console." + zone
-	}
-	if dbHost == "" && zone != "" {
-		dbHost = "db." + zone
-	}
-	if redisHost == "" && zone != "" {
-		redisHost = "redis." + zone
-	}
-	originIP := strings.TrimSpace(body.OriginIP)
-	if !validHostname(zone) || !validHostname(console) || !validHostname(dbHost) || !validHostname(redisHost) {
+	hosts, err := parseDomainHostnames(zone, body.Hostname, body.Hostnames)
+	if err != nil {
 		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid zone or hostname")
 		return
 	}
+	originIP := strings.TrimSpace(body.OriginIP)
 	if net.ParseIP(originIP) == nil {
 		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid origin IP")
 		return
@@ -272,8 +259,21 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 	// on any failure after the first resource is created.
 	var dep deployment
 	compensate := func() {
+		deletedApps := map[string]struct{}{}
+		for _, binding := range dep.AccessApps {
+			if binding.AppID == "" {
+				continue
+			}
+			if _, ok := deletedApps[binding.AppID]; ok {
+				continue
+			}
+			_ = client.DeleteAccessApp(ctx, z.AccountID, binding.AppID)
+			deletedApps[binding.AppID] = struct{}{}
+		}
 		if dep.AccessAppID != "" {
-			_ = client.DeleteAccessApp(ctx, z.AccountID, dep.AccessAppID)
+			if _, ok := deletedApps[dep.AccessAppID]; !ok {
+				_ = client.DeleteAccessApp(ctx, z.AccountID, dep.AccessAppID)
+			}
 		}
 		for _, rec := range dep.Records {
 			_ = client.DeleteRecord(ctx, z.ID, rec.ID)
@@ -288,32 +288,41 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusInternalServerError, CodeInternal, "Internal server error")
 		return
 	}
-	tunnel, err := client.CreateTunnel(ctx, z.AccountID, "redgres-"+console)
+	tunnel, err := client.CreateTunnel(ctx, z.AccountID, "redgres-"+hosts.Console)
 	if err != nil {
 		s.writeCFError(w, r, err)
 		return
 	}
 	dep = deployment{
-		AccountID:       z.AccountID,
-		ZoneID:          z.ID,
-		ZoneName:        z.Name,
-		TunnelID:        tunnel.ID,
-		Hostname:        console,
-		ConsoleHostname: console,
-		DBHostname:      dbHost,
-		RedisHostname:   redisHost,
-		OriginIP:        originIP,
-		TLSStatus:       "not_issued",
-		DNSProvider:     "cloudflare",
+		AccountID:            z.AccountID,
+		ZoneID:               z.ID,
+		ZoneName:             z.Name,
+		TunnelID:             tunnel.ID,
+		Hostname:             hosts.Console,
+		ConsoleHostname:      hosts.Console,
+		DBHostname:           hosts.DB,
+		RSHostname:           hosts.RS,
+		PgAdminHostname:      hosts.PgAdmin,
+		RedisInsightHostname: hosts.RedisInsight,
+		OriginIP:             originIP,
+		TLSStatus:            "not_issued",
+		DNSProvider:          "cloudflare",
 	}
 
-	if err := client.ConfigureIngress(ctx, z.AccountID, tunnel.ID, console, origin); err != nil {
+	ingressRoutes := []cloudflare.IngressRoute{{Hostname: hosts.Console, Service: origin}}
+	if hosts.PgAdmin != "" {
+		ingressRoutes = append(ingressRoutes, cloudflare.IngressRoute{Hostname: hosts.PgAdmin, Service: defaultPgAdminTunnelOrigin})
+	}
+	if hosts.RedisInsight != "" {
+		ingressRoutes = append(ingressRoutes, cloudflare.IngressRoute{Hostname: hosts.RedisInsight, Service: defaultRedisInsightTunnelOrigin})
+	}
+	if err := client.ConfigureIngressRoutes(ctx, z.AccountID, tunnel.ID, ingressRoutes); err != nil {
 		compensate()
 		s.writeCFError(w, r, err)
 		return
 	}
 
-	rec, err := client.CreateRecord(ctx, z.ID, console, tunnel.ID+".cfargotunnel.com", true)
+	rec, err := client.CreateRecord(ctx, z.ID, hosts.Console, tunnel.ID+".cfargotunnel.com", true)
 	if err != nil {
 		compensate()
 		s.writeCFError(w, r, err)
@@ -327,7 +336,7 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid origin IP")
 		return
 	}
-	for _, host := range []string{dbHost, redisHost} {
+	for _, host := range []string{hosts.DB, hosts.RS} {
 		for _, spec := range greySpecs {
 			grec, err := client.CreateDNSRecord(ctx, z.ID, host, spec.Type, spec.Content, false)
 			if err != nil {
@@ -339,13 +348,38 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	app, err := client.CreateAccessApp(ctx, z.AccountID, console)
-	if err != nil {
+	for _, tunnelHost := range []string{hosts.PgAdmin, hosts.RedisInsight} {
+		if tunnelHost == "" {
+			continue
+		}
+		trec, err := client.CreateRecord(ctx, z.ID, tunnelHost, tunnel.ID+".cfargotunnel.com", true)
+		if err != nil {
+			compensate()
+			s.writeCFError(w, r, err)
+			return
+		}
+		dep.Records = append(dep.Records, record{ID: trec.ID, Name: trec.Name, Type: "CNAME", Proxied: true})
+	}
+
+	for _, tunnelHost := range dep.tunnelHostnames() {
+		app, err := client.CreateAccessApp(ctx, z.AccountID, tunnelHost)
+		if err != nil {
+			compensate()
+			s.writeCFError(w, r, err)
+			return
+		}
+		dep.AccessApps = append(dep.AccessApps, accessAppBinding{Hostname: tunnelHost, AppID: app.ID})
+		if dep.AccessAppID == "" {
+			dep.AccessAppID = app.ID
+		}
+	}
+
+	app := cloudflare.AccessApp{ID: dep.AccessAppID}
+	if dep.AccessAppID == "" {
 		compensate()
-		s.writeCFError(w, r, err)
+		s.writeError(w, r, http.StatusInternalServerError, CodeInternal, "Internal server error")
 		return
 	}
-	dep.AccessAppID = app.ID
 
 	// Verify the resources exist in Cloudflare (API reflection only until
 	// cloudflared + an Access policy are wired later).
@@ -371,6 +405,13 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		s.writeCFError(w, r, err)
 		return
 	}
+	for _, binding := range dep.AccessApps[1:] {
+		if err := client.VerifyAccessApp(ctx, z.AccountID, binding.AppID); err != nil {
+			compensate()
+			s.writeCFError(w, r, err)
+			return
+		}
+	}
 
 	// Persist the one-time tunnel connector credential server-side; it is never
 	// returned to the browser. cloudflared loads it later from this file.
@@ -387,13 +428,13 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := sessionFrom(r)
-	if err := s.audit.Record(sess.Username, "domain.apply", console, "success", requestID(r), requestClientIP(r), map[string]any{"zone": zone, "hostname_count": 3}); err != nil {
+	if err := s.audit.Record(sess.Username, "domain.apply", hosts.Console, "success", requestID(r), requestClientIP(r), map[string]any{"zone": zone, "hostname_count": len(dep.hostnamesMap())}); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
 		"zone":                 z.Name,
-		"hostname":             console,
+		"hostname":             hosts.Console,
 		"hostnames":            dep.hostnamesMap(),
 		"origin_ip":            originIP,
 		"tunnel_id":            tunnel.ID,
@@ -419,7 +460,11 @@ func (s *Server) handleDomainAccessPolicy(w http.ResponseWriter, r *http.Request
 		s.writeError(w, r, http.StatusConflict, CodeConflict, "Manual DNS mode uses POST /api/v1/domain/manual/confirm-access")
 		return
 	}
-	if dep.AccessPolicyID != "" {
+	if dep.AccessManualConfirmed {
+		s.writeError(w, r, http.StatusConflict, CodeConflict, "Manual Access is already confirmed")
+		return
+	}
+	if dep.hasAccessAllowPolicy() {
 		s.writeError(w, r, http.StatusConflict, CodeConflict, "An Access allow policy is already configured")
 		return
 	}
@@ -454,6 +499,28 @@ func (s *Server) handleDomainAccessPolicy(w http.ResponseWriter, r *http.Request
 		return
 	}
 	dep.AccessPolicyID = policy.ID
+	for i := range dep.AccessApps {
+		if dep.AccessApps[i].AppID == dep.AccessAppID {
+			dep.AccessApps[i].PolicyID = policy.ID
+			continue
+		}
+		if dep.AccessApps[i].PolicyID != "" {
+			continue
+		}
+		extra, err := client.CreateAccessPolicy(ctx, dep.AccountID, dep.AccessApps[i].AppID, emails)
+		if err != nil {
+			_ = client.DeleteAccessPolicy(ctx, dep.AccountID, dep.AccessAppID, policy.ID)
+			s.writeCFError(w, r, err)
+			return
+		}
+		if err := client.VerifyAccessPolicy(ctx, dep.AccountID, dep.AccessApps[i].AppID, extra.ID); err != nil {
+			_ = client.DeleteAccessPolicy(ctx, dep.AccountID, dep.AccessApps[i].AppID, extra.ID)
+			_ = client.DeleteAccessPolicy(ctx, dep.AccountID, dep.AccessAppID, policy.ID)
+			s.writeCFError(w, r, err)
+			return
+		}
+		dep.AccessApps[i].PolicyID = extra.ID
+	}
 	if err := store.Save(ctx, dep); err != nil {
 		_ = client.DeleteAccessPolicy(ctx, dep.AccountID, dep.AccessAppID, policy.ID)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
@@ -573,11 +640,19 @@ func (s *Server) handleDomainDisconnect(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		client := s.cloudflareClient(token)
-		if dep.AccessPolicyID != "" {
-			_ = client.DeleteAccessPolicy(ctx, dep.AccountID, dep.AccessAppID, dep.AccessPolicyID)
-		}
-		if dep.AccessAppID != "" {
-			_ = client.DeleteAccessApp(ctx, dep.AccountID, dep.AccessAppID)
+		deletedApps := map[string]struct{}{}
+		for _, binding := range dep.accessAppsForDisconnect() {
+			if binding.PolicyID != "" {
+				_ = client.DeleteAccessPolicy(ctx, dep.AccountID, binding.AppID, binding.PolicyID)
+			}
+			if binding.AppID == "" {
+				continue
+			}
+			if _, ok := deletedApps[binding.AppID]; ok {
+				continue
+			}
+			_ = client.DeleteAccessApp(ctx, dep.AccountID, binding.AppID)
+			deletedApps[binding.AppID] = struct{}{}
 		}
 		for _, rec := range dep.Records {
 			_ = client.DeleteRecord(ctx, dep.ZoneID, rec.ID)

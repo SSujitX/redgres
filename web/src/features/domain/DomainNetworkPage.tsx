@@ -34,6 +34,66 @@ export const CLOUDFLARE_TOKEN_PERMISSIONS = [
   "Zone · DNS · Edit",
 ] as const;
 
+export const CLOUDFLARE_DASHBOARD_LINKS = {
+  createToken: "https://dash.cloudflare.com/profile/api-tokens",
+  accessApps: "https://one.dash.cloudflare.com/?to=/:account/access/apps",
+  tunnels: "https://one.dash.cloudflare.com/?to=/:account/cfd_tunnel",
+} as const;
+
+export type DomainEndpointKey = "console" | "db" | "rs" | "pgadmin" | "redis";
+
+type DomainEndpointDef = {
+  key: DomainEndpointKey;
+  title: string;
+  description: string;
+  routing: string;
+  rail?: "postgres" | "redis" | "console";
+  placeholder: string;
+};
+
+export const DOMAIN_ENDPOINTS: DomainEndpointDef[] = [
+  {
+    key: "console",
+    title: "Redgres console",
+    description: "Main control-plane UI.",
+    routing: "Cloudflare Tunnel + Access",
+    rail: "console",
+    placeholder: "console.example.com",
+  },
+  {
+    key: "db",
+    title: "PostgreSQL access",
+    description: "Direct (5432) and pooled PgBouncer (6432) client connections.",
+    routing: "DNS-only (grey cloud) + Let's Encrypt TLS",
+    rail: "postgres",
+    placeholder: "db.example.com",
+  },
+  {
+    key: "rs",
+    title: "Redis connection",
+    description: "TLS client endpoint (6380) for applications.",
+    routing: "DNS-only (grey cloud) + Let's Encrypt TLS",
+    rail: "redis",
+    placeholder: "rs.example.com",
+  },
+  {
+    key: "pgadmin",
+    title: "pgAdmin UI",
+    description: "PostgreSQL web console served on loopback.",
+    routing: "Cloudflare Tunnel + Access",
+    rail: "postgres",
+    placeholder: "pgadmin.example.com",
+  },
+  {
+    key: "redis",
+    title: "Redis Insight UI",
+    description: "Redis web console served on loopback.",
+    routing: "Cloudflare Tunnel + Access",
+    rail: "redis",
+    placeholder: "redis.example.com",
+  },
+];
+
 function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === "AbortError";
 }
@@ -71,7 +131,9 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   const [zone, setZone] = useState("");
   const [hostname, setHostname] = useState("");
   const [dbHostname, setDbHostname] = useState("");
-  const [redisHostname, setRedisHostname] = useState("");
+  const [rsHostname, setRsHostname] = useState("");
+  const [pgadminHostname, setPgadminHostname] = useState("");
+  const [redisInsightHostname, setRedisInsightHostname] = useState("");
   const [originIP, setOriginIP] = useState("");
   const [dnsProvider, setDnsProvider] = useState<"cloudflare" | "manual">("cloudflare");
   const [manualInstructions, setManualInstructions] = useState<string[]>([]);
@@ -82,7 +144,9 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   const [manualAccessError, setManualAccessError] = useState("");
   const hostnameEdited = useRef(false);
   const dbEdited = useRef(false);
-  const redisEdited = useRef(false);
+  const rsEdited = useRef(false);
+  const pgadminEdited = useRef(false);
+  const redisInsightEdited = useRef(false);
   const [applyError, setApplyError] = useState("");
   const [applyBusy, setApplyBusy] = useState(false);
   const [applyResult, setApplyResult] = useState<DomainApplyPayload | null>(null);
@@ -188,8 +252,14 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
     if (!dbEdited.current) {
       setDbHostname(suggestedSubHostname("db", value));
     }
-    if (!redisEdited.current) {
-      setRedisHostname(suggestedSubHostname("redis", value));
+    if (!rsEdited.current) {
+      setRsHostname(suggestedSubHostname("rs", value));
+    }
+    if (!pgadminEdited.current) {
+      setPgadminHostname(suggestedSubHostname("pgadmin", value));
+    }
+    if (!redisInsightEdited.current) {
+      setRedisInsightHostname(suggestedSubHostname("redis", value));
     }
   }
 
@@ -228,10 +298,21 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
     const z = zone.trim().toLowerCase();
     const consoleHost = hostname.trim().toLowerCase();
     const dbHost = dbHostname.trim().toLowerCase();
-    const redisHost = redisHostname.trim().toLowerCase();
+    const rsHost = rsHostname.trim().toLowerCase();
+    const pgadminHost = pgadminHostname.trim().toLowerCase();
+    const redisHost = redisInsightHostname.trim().toLowerCase();
     const origin = originIP.trim();
-    if (z === "" || consoleHost === "" || dbHost === "" || redisHost === "" || origin === "" || applyBusy) {
-      setApplyError("Enter zone, all hostnames, and origin IP.");
+    if (
+      z === "" ||
+      consoleHost === "" ||
+      dbHost === "" ||
+      rsHost === "" ||
+      pgadminHost === "" ||
+      redisHost === "" ||
+      origin === "" ||
+      applyBusy
+    ) {
+      setApplyError("Enter zone, all endpoint hostnames, and origin IP.");
       return;
     }
     setApplyBusy(true);
@@ -242,7 +323,13 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
         {
           zone: z,
           originIP: origin,
-          hostnames: { console: consoleHost, db: dbHost, redis: redisHost },
+          hostnames: {
+            console: consoleHost,
+            db: dbHost,
+            rs: rsHost,
+            pgadmin: pgadminHost,
+            redis: redisHost,
+          },
           dnsProvider,
         },
         csrf,
@@ -295,11 +382,15 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
         setAllowEmails([""]);
         hostnameEdited.current = false;
         dbEdited.current = false;
-        redisEdited.current = false;
+        rsEdited.current = false;
+        pgadminEdited.current = false;
+        redisInsightEdited.current = false;
         setZone("");
         setHostname("");
         setDbHostname("");
-        setRedisHostname("");
+        setRsHostname("");
+        setPgadminHostname("");
+        setRedisInsightHostname("");
         setOriginIP("");
         refresh();
         return;
@@ -483,14 +574,16 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
     zone.trim() !== "" &&
     hostname.trim() !== "" &&
     dbHostname.trim() !== "" &&
-    redisHostname.trim() !== "" &&
+    rsHostname.trim() !== "" &&
+    pgadminHostname.trim() !== "" &&
+    redisInsightHostname.trim() !== "" &&
     originIP.trim() !== "" &&
     !applyBusy;
   const accessAllow = status?.access === "allow";
   const bootstrapOpen = status?.bootstrap_still_open === true;
   const credential = status?.credential ?? "none";
   const tlsDb = status?.tls?.db ?? "not_issued";
-  const tlsRedis = status?.tls?.redis ?? "not_issued";
+  const tlsRS = status?.tls?.rs ?? status?.tls?.redis ?? "not_issued";
 
   return (
     <article>
@@ -531,26 +624,6 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                 <dd className="bidi-isolate identifier">{displayText(status.zone)}</dd>
               </div>
             ) : null}
-            {configured && (status.hostname || status.hostnames?.console) ? (
-              <div>
-                <dt>Console hostname</dt>
-                <dd className="bidi-isolate identifier">
-                  {displayText(status.hostname ?? status.hostnames?.console ?? "")}
-                </dd>
-              </div>
-            ) : null}
-            {configured && status.hostnames?.db ? (
-              <div>
-                <dt>DB hostname</dt>
-                <dd className="bidi-isolate identifier">{displayText(status.hostnames.db)}</dd>
-              </div>
-            ) : null}
-            {configured && status.hostnames?.redis ? (
-              <div>
-                <dt>Redis hostname</dt>
-                <dd className="bidi-isolate identifier">{displayText(status.hostnames.redis)}</dd>
-              </div>
-            ) : null}
             {configured && status.origin_ip ? (
               <div>
                 <dt>Origin IP</dt>
@@ -561,14 +634,6 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               <div>
                 <dt>Credential</dt>
                 <dd>{credential === "oauth" ? "Cloudflare OAuth" : credential === "api_token" ? "API token" : "None"}</dd>
-              </div>
-            ) : null}
-            {configured ? (
-              <div>
-                <dt>TLS (db / redis)</dt>
-                <dd>
-                  {displayText(tlsDb)} / {displayText(tlsRedis)}
-                </dd>
               </div>
             ) : null}
             {configured ? (
@@ -586,6 +651,26 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               <dd>{bootstrapOpen ? "Still open" : "Closed or not configured"}</dd>
             </div>
           </dl>
+          {configured ? (
+            <ul className="domain-endpoint-cards" aria-label="Configured endpoints">
+              {DOMAIN_ENDPOINTS.map((endpoint) => {
+                const host =
+                  endpoint.key === "console"
+                    ? (status.hostname ?? status.hostnames?.console ?? "")
+                    : (status.hostnames?.[endpoint.key] ?? "");
+                const tlsStatus =
+                  endpoint.key === "db" ? tlsDb : endpoint.key === "rs" ? tlsRS : undefined;
+                return (
+                  <DomainEndpointStatusCard
+                    key={endpoint.key}
+                    endpoint={endpoint}
+                    hostname={host}
+                    tlsStatus={tlsStatus}
+                  />
+                );
+              })}
+            </ul>
+          ) : null}
           {configured && !accessAllow && isManual ? (
             <div>
               <h3>3. Manual DNS and Access</h3>
@@ -632,13 +717,8 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
             <form onSubmit={handleAccessAllow} autoComplete="off">
               <h3>3. Access allow policy</h3>
               <p className="muted-copy">
-                Add up to 8 emails allowed by Cloudflare Access for{" "}
-                {status.hostname ? (
-                  <span className="bidi-isolate identifier">{displayText(status.hostname)}</span>
-                ) : (
-                  "the console hostname"
-                )}
-                .
+                Add up to 8 emails allowed by Cloudflare Access for the tunnel hostnames (console, pgAdmin, Redis
+                Insight).
               </p>
               <div className="field-stack">
                 {allowEmails.map((email, index) => (
@@ -727,11 +807,11 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               </button>
             </form>
           ) : null}
-          {configured && accessAllow && tlsDb !== "issued" && status.dns_provider !== "manual" ? (
+          {configured && accessAllow && (tlsDb !== "issued" || tlsRS !== "issued") && status.dns_provider !== "manual" ? (
             <div>
-              <h3>5. Issue TLS certificates (db + redis)</h3>
+              <h3>5. Issue TLS certificates (db + rs)</h3>
               <p className="muted-copy">
-                Issues Let&apos;s Encrypt DNS-01 certificates for grey-cloud db and redis hostnames via certbot.
+                Issues Let&apos;s Encrypt DNS-01 certificates for grey-cloud db and rs hostnames via certbot.
               </p>
               {tlsError ? (
                 <p className="form-error" role="alert">
@@ -819,13 +899,29 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
           <section aria-labelledby="domain-token-heading">
             <h2 id="domain-token-heading">2. Cloudflare API token</h2>
             <p className="muted-copy">
-              Create a per-zone API token in Cloudflare with at least these permissions, then paste it once. Redgres
-              stores it server-side only.
+              Create a custom token scoped to your zone with the permissions below. Redgres stores it server-side only.
             </p>
             <ul className="muted-copy">
               {CLOUDFLARE_TOKEN_PERMISSIONS.map((item) => (
                 <li key={item}>{item}</li>
               ))}
+            </ul>
+            <ul className="cloudflare-token-links">
+              <li>
+                <a href={CLOUDFLARE_DASHBOARD_LINKS.createToken} target="_blank" rel="noreferrer">
+                  Create API token
+                </a>
+              </li>
+              <li>
+                <a href={CLOUDFLARE_DASHBOARD_LINKS.tunnels} target="_blank" rel="noreferrer">
+                  Cloudflare Tunnels
+                </a>
+              </li>
+              <li>
+                <a href={CLOUDFLARE_DASHBOARD_LINKS.accessApps} target="_blank" rel="noreferrer">
+                  Access applications
+                </a>
+              </li>
             </ul>
             <form onSubmit={handleTokenSubmit} autoComplete="off">
               <div className="field-stack">
@@ -869,7 +965,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
             <p className="muted-copy">
               {dnsProvider === "manual"
                 ? "Records and Access steps below as operator instructions; Redgres does not mutate Cloudflare in manual mode."
-                : "Creates a remotely managed tunnel, ingress to loopback Redgres, a proxied CNAME, grey-cloud db/redis A or AAAA records, and a deny-by-default Access app."}
+                : "Creates a remotely managed tunnel with ingress for console, pgAdmin, and Redis Insight; grey-cloud db/rs A or AAAA records; proxied CNAMEs for tunnel hostnames; and deny-by-default Access apps."}
             </p>
             <form onSubmit={handleApply} autoComplete="off">
               <div className="field-stack">
@@ -883,46 +979,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                   onChange={(event) => handleZoneChange(event.target.value)}
                   placeholder="example.com"
                 />
-                <label htmlFor="domain-hostname">Console hostname</label>
-                <input
-                  id="domain-hostname"
-                  name="hostname"
-                  autoComplete="off"
-                  value={hostname}
-                  disabled={applyBusy}
-                  onChange={(event) => {
-                    hostnameEdited.current = true;
-                    setHostname(event.target.value);
-                  }}
-                  placeholder="console.example.com"
-                />
-                <label htmlFor="domain-db-hostname">DB hostname</label>
-                <input
-                  id="domain-db-hostname"
-                  name="db_hostname"
-                  autoComplete="off"
-                  value={dbHostname}
-                  disabled={applyBusy}
-                  onChange={(event) => {
-                    dbEdited.current = true;
-                    setDbHostname(event.target.value);
-                  }}
-                  placeholder="db.example.com"
-                />
-                <label htmlFor="domain-redis-hostname">Redis hostname</label>
-                <input
-                  id="domain-redis-hostname"
-                  name="redis_hostname"
-                  autoComplete="off"
-                  value={redisHostname}
-                  disabled={applyBusy}
-                  onChange={(event) => {
-                    redisEdited.current = true;
-                    setRedisHostname(event.target.value);
-                  }}
-                  placeholder="redis.example.com"
-                />
-                <label htmlFor="domain-origin-ip">Origin IP (grey-cloud A or AAAA)</label>
+                <label htmlFor="domain-origin-ip">Origin IP (grey-cloud A or AAAA for db and rs)</label>
                 <input
                   id="domain-origin-ip"
                   name="origin_ip"
@@ -933,6 +990,44 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                   placeholder="203.0.113.10"
                 />
               </div>
+              <ul className="domain-endpoint-cards" aria-label="Endpoint hostnames">
+                {DOMAIN_ENDPOINTS.map((endpoint) => (
+                  <DomainEndpointWizardCard
+                    key={endpoint.key}
+                    endpoint={endpoint}
+                    value={
+                      endpoint.key === "console"
+                        ? hostname
+                        : endpoint.key === "db"
+                          ? dbHostname
+                          : endpoint.key === "rs"
+                            ? rsHostname
+                            : endpoint.key === "pgadmin"
+                              ? pgadminHostname
+                              : redisInsightHostname
+                    }
+                    disabled={applyBusy}
+                    onChange={(value) => {
+                      if (endpoint.key === "console") {
+                        hostnameEdited.current = true;
+                        setHostname(value);
+                      } else if (endpoint.key === "db") {
+                        dbEdited.current = true;
+                        setDbHostname(value);
+                      } else if (endpoint.key === "rs") {
+                        rsEdited.current = true;
+                        setRsHostname(value);
+                      } else if (endpoint.key === "pgadmin") {
+                        pgadminEdited.current = true;
+                        setPgadminHostname(value);
+                      } else {
+                        redisInsightEdited.current = true;
+                        setRedisInsightHostname(value);
+                      }
+                    }}
+                  />
+                ))}
+              </ul>
               {applyError ? (
                 <p className="form-error" role="alert">
                   {applyError}
@@ -1039,6 +1134,76 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
         />
       ) : null}
     </article>
+  );
+}
+
+function endpointCardClass(rail?: DomainEndpointDef["rail"]): string {
+  const classes = ["domain-endpoint-card"];
+  if (rail === "postgres") {
+    classes.push("domain-endpoint-card-postgres");
+  } else if (rail === "redis") {
+    classes.push("domain-endpoint-card-redis");
+  } else if (rail === "console") {
+    classes.push("domain-endpoint-card-console");
+  }
+  return classes.join(" ");
+}
+
+function DomainEndpointStatusCard({
+  endpoint,
+  hostname,
+  tlsStatus,
+}: {
+  endpoint: DomainEndpointDef;
+  hostname: string;
+  tlsStatus?: string;
+}) {
+  return (
+    <li className={endpointCardClass(endpoint.rail)}>
+      <h3>{endpoint.title}</h3>
+      <p className="endpoint-routing">{endpoint.routing}</p>
+      <p className="endpoint-hostname bidi-isolate identifier">
+        {hostname ? displayText(hostname) : "—"}
+      </p>
+      {tlsStatus ? (
+        <p className="muted-copy">
+          TLS: {displayText(tlsStatus)}
+        </p>
+      ) : null}
+    </li>
+  );
+}
+
+function DomainEndpointWizardCard({
+  endpoint,
+  value,
+  disabled,
+  onChange,
+}: {
+  endpoint: DomainEndpointDef;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const inputId = `domain-endpoint-${endpoint.key}`;
+  return (
+    <li className={endpointCardClass(endpoint.rail)}>
+      <h3>{endpoint.title}</h3>
+      <p className="muted-copy">{endpoint.description}</p>
+      <p className="endpoint-routing">{endpoint.routing}</p>
+      <label htmlFor={inputId}>
+        Hostname
+        <input
+          id={inputId}
+          name={`endpoint_${endpoint.key}`}
+          autoComplete="off"
+          value={value}
+          disabled={disabled}
+          placeholder={endpoint.placeholder}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </label>
+    </li>
   );
 }
 

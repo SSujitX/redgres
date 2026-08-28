@@ -69,6 +69,7 @@ type Client interface {
 	DiscoverZone(ctx context.Context, name string) (Zone, error)
 	CreateTunnel(ctx context.Context, accountID, name string) (Tunnel, error)
 	ConfigureIngress(ctx context.Context, accountID, tunnelID, hostname, originHTTP string) error
+	ConfigureIngressRoutes(ctx context.Context, accountID, tunnelID string, routes []IngressRoute) error
 	CreateRecord(ctx context.Context, zoneID, name, content string, proxied bool) (Record, error)
 	CreateDNSRecord(ctx context.Context, zoneID, name, recordType, content string, proxied bool) (Record, error)
 	CreateAccessApp(ctx context.Context, accountID, domain string) (AccessApp, error)
@@ -285,21 +286,39 @@ func isTunnelNameConflict(err error) bool {
 	return strings.Contains(strings.ToLower(apiErr.Message), "already exists")
 }
 
-// ConfigureIngress sets remote tunnel ingress: hostname → originHTTP, plus the
+// IngressRoute is one hostname → loopback HTTP service pair for tunnel ingress.
+type IngressRoute struct {
+	Hostname string
+	Service  string
+}
+
+// ConfigureIngress sets remote tunnel ingress for one or more hostnames plus the
 // required catch-all http_status:404 rule.
-// Primary source: PUT /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations
 func (c *HTTPClient) ConfigureIngress(ctx context.Context, accountID, tunnelID, hostname, originHTTP string) error {
-	hostname = strings.TrimSpace(strings.ToLower(hostname))
-	originHTTP = strings.TrimSpace(originHTTP)
-	if hostname == "" || !strings.HasPrefix(originHTTP, "http://") {
+	return c.ConfigureIngressRoutes(ctx, accountID, tunnelID, []IngressRoute{{Hostname: hostname, Service: originHTTP}})
+}
+
+func (c *HTTPClient) ConfigureIngressRoutes(ctx context.Context, accountID, tunnelID string, routes []IngressRoute) error {
+	if len(routes) == 0 {
 		return errors.New("invalid tunnel ingress hostname or origin")
 	}
+	ingress := make([]map[string]any, 0, len(routes)+1)
+	for _, route := range routes {
+		hostname := strings.TrimSpace(strings.ToLower(route.Hostname))
+		originHTTP := strings.TrimSpace(route.Service)
+		if hostname == "" || !strings.HasPrefix(originHTTP, "http://") {
+			return errors.New("invalid tunnel ingress hostname or origin")
+		}
+		ingress = append(ingress, map[string]any{
+			"hostname":      hostname,
+			"service":       originHTTP,
+			"originRequest": map[string]any{},
+		})
+	}
+	ingress = append(ingress, map[string]any{"service": "http_status:404"})
 	body := map[string]any{
 		"config": map[string]any{
-			"ingress": []map[string]any{
-				{"hostname": hostname, "service": originHTTP, "originRequest": map[string]any{}},
-				{"service": "http_status:404"},
-			},
+			"ingress": ingress,
 		},
 	}
 	var result any

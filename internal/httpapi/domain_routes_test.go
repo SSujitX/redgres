@@ -18,20 +18,22 @@ import (
 )
 
 type fakeCF struct {
-	zone              cloudflare.Zone
-	tunnels           map[string]cloudflare.Tunnel
-	records           map[string]cloudflare.Record
-	apps              map[string]cloudflare.AccessApp
-	policies          map[string]cloudflare.AccessPolicy
-	deletedT          []string
-	deletedR          []string
-	deletedA          []string
-	deletedP          []string
-	verifyErr         error
-	lastIngressHost   string
-	lastIngressOrigin string
-	lastPolicyEmails  []string
-	nextRecID         int
+	zone               cloudflare.Zone
+	tunnels            map[string]cloudflare.Tunnel
+	records            map[string]cloudflare.Record
+	apps               map[string]cloudflare.AccessApp
+	policies           map[string]cloudflare.AccessPolicy
+	deletedT           []string
+	deletedR           []string
+	deletedA           []string
+	deletedP           []string
+	verifyErr          error
+	lastIngressHost    string
+	lastIngressOrigin  string
+	lastIngressRoutes  []cloudflare.IngressRoute
+	lastPolicyEmails   []string
+	nextRecID          int
+	nextAppID          int
 }
 
 func newFakeCF() *fakeCF {
@@ -58,11 +60,18 @@ func (f *fakeCF) CreateTunnel(_ context.Context, accountID, name string) (cloudf
 }
 
 func (f *fakeCF) ConfigureIngress(_ context.Context, accountID, tunnelID, hostname, originHTTP string) error {
+	return f.ConfigureIngressRoutes(context.Background(), accountID, tunnelID, []cloudflare.IngressRoute{{Hostname: hostname, Service: originHTTP}})
+}
+
+func (f *fakeCF) ConfigureIngressRoutes(_ context.Context, accountID, tunnelID string, routes []cloudflare.IngressRoute) error {
 	if _, ok := f.tunnels[tunnelID]; !ok {
 		return cloudflare.ErrNotFound
 	}
-	f.lastIngressHost = hostname
-	f.lastIngressOrigin = originHTTP
+	f.lastIngressRoutes = append([]cloudflare.IngressRoute{}, routes...)
+	if len(routes) > 0 {
+		f.lastIngressHost = routes[0].Hostname
+		f.lastIngressOrigin = routes[0].Service
+	}
 	return nil
 }
 
@@ -79,7 +88,9 @@ func (f *fakeCF) CreateDNSRecord(_ context.Context, zoneID, name, recordType, co
 }
 
 func (f *fakeCF) CreateAccessApp(_ context.Context, accountID, domain string) (cloudflare.AccessApp, error) {
-	a := cloudflare.AccessApp{ID: "app-1", Domain: domain}
+	f.nextAppID++
+	id := fmt.Sprintf("app-%d", f.nextAppID)
+	a := cloudflare.AccessApp{ID: id, Domain: domain}
 	f.apps[a.ID] = a
 	return a, nil
 }
@@ -174,7 +185,7 @@ func newDomainServer(t *testing.T) (*Server, http.Handler, string, string, strin
 	return srv, handler, cookie, csrf, tokenPath
 }
 
-const domainApplyBody = `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"console.example.com","db":"db.example.com","redis":"redis.example.com"}}`
+const domainApplyBody = `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"console.example.com","db":"db.example.com","rs":"rs.example.com","pgadmin":"pgadmin.example.com","redis":"redis.example.com"}}`
 
 func auditRows(t *testing.T, srv *Server) []string {
 	t.Helper()
@@ -267,6 +278,9 @@ func TestDomainApplyCreatesPersistsAndDoesNotAutoClose(t *testing.T) {
 	if _, ok := fake.apps["app-1"]; !ok {
 		t.Fatal("access app was not created")
 	}
+	if len(fake.lastIngressRoutes) != 3 {
+		t.Fatalf("ingress routes = %d", len(fake.lastIngressRoutes))
+	}
 	if fake.lastIngressHost != "console.example.com" || fake.lastIngressOrigin != "http://127.0.0.1:8790" {
 		t.Fatalf("ingress host=%q origin=%q", fake.lastIngressHost, fake.lastIngressOrigin)
 	}
@@ -296,10 +310,10 @@ func TestDomainDisconnectDeletesOnlyCreated(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("disconnect = %d %s", rec.Code, rec.Body.String())
 	}
-	if len(fake.deletedA) != 1 || fake.deletedA[0] != "app-1" {
+	if len(fake.deletedA) != 3 {
 		t.Fatalf("deleted apps = %v", fake.deletedA)
 	}
-	if len(fake.deletedR) != 3 {
+	if len(fake.deletedR) != 5 {
 		t.Fatalf("deleted records = %v", fake.deletedR)
 	}
 	if len(fake.deletedT) != 1 || fake.deletedT[0] != "tun-1" {
@@ -354,10 +368,10 @@ func TestDomainApplyCompensatesOnVerifyFailure(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
 	}
-	if len(fake.deletedA) != 1 || fake.deletedA[0] != "app-1" {
-		t.Fatalf("compensation did not delete access app: %v", fake.deletedA)
+	if len(fake.deletedA) != 3 {
+		t.Fatalf("compensation did not delete access apps: %v", fake.deletedA)
 	}
-	if len(fake.deletedR) != 3 {
+	if len(fake.deletedR) != 5 {
 		t.Fatalf("compensation did not delete records: %v", fake.deletedR)
 	}
 	if len(fake.deletedT) != 1 || fake.deletedT[0] != "tun-1" {
@@ -388,7 +402,7 @@ func TestDomainAccessPolicyAndConfirmReachable(t *testing.T) {
 	boot := &fakeBootstrap{open: true}
 	srv.SetBootstrapCloser(boot)
 
-	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","rs":"rs.example.com","pgadmin":"pgadmin.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -440,8 +454,8 @@ func TestDomainAccessPolicyAndConfirmReachable(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("disconnect = %d %s", rec.Code, rec.Body.String())
 	}
-	if len(fake.deletedP) != 1 || fake.deletedP[0] != "pol-1" {
-		t.Fatalf("disconnect did not delete policy: %v", fake.deletedP)
+	if len(fake.deletedP) != 3 || fake.deletedP[0] != "pol-1" {
+		t.Fatalf("disconnect did not delete policies: %v", fake.deletedP)
 	}
 }
 
@@ -451,7 +465,7 @@ func TestDomainAccessPolicyRejectsBadEmail(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.cloudflare = newFakeCF()
-	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","rs":"rs.example.com","pgadmin":"pgadmin.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
 	}
 	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/access-policy", cookie, csrf, `{"emails":["not-an-email"]}`))
@@ -474,7 +488,7 @@ func TestDomainConfirmReachableReturnsBodyOnBootstrapListener(t *testing.T) {
 	defer boot.Close()
 	srv.SetBootstrapCloser(boot)
 
-	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, `{"zone":"example.com","origin_ip":"203.0.113.10","hostnames":{"console":"redgres.example.com","db":"db.example.com","rs":"rs.example.com","pgadmin":"pgadmin.example.com","redis":"redis.example.com"}}`)); rec.Code != http.StatusOK {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/access-policy", cookie, csrf, `{"emails":["owner@example.com"]}`)); rec.Code != http.StatusOK {

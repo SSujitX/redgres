@@ -25,8 +25,8 @@ func (s *Server) handleDomainTLSIssue(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusConflict, CodeConflict, "TLS issue is not available for manual DNS mode")
 		return
 	}
-	if dep.DBHostname == "" || dep.RedisHostname == "" {
-		s.writeError(w, r, http.StatusConflict, CodeConflict, "DB and Redis hostnames are required")
+	if dep.DBHostname == "" || dep.rsHostname() == "" {
+		s.writeError(w, r, http.StatusConflict, CodeConflict, "DB and RS hostnames are required")
 		return
 	}
 	creds := s.cfg.CertbotDNSCredentialsFile
@@ -52,11 +52,11 @@ func (s *Server) handleDomainTLSIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	issuer := tlsops.Issuer{Bin: s.cfg.CertbotBin, DNSCredentialsFile: creds}
-	hostnames := []string{dep.DBHostname, dep.RedisHostname}
+	hostnames := []string{dep.DBHostname, dep.rsHostname()}
 	if err := issuer.Issue(ctx, hostnames); err != nil {
 		dep.TLSStatus = "failed"
 		dep.TLSDBStatus = "failed"
-		dep.TLSRedisStatus = "failed"
+		dep.TLSRSStatus = "failed"
 		_ = store.Save(ctx, dep)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS issuance failed")
 		return
@@ -64,14 +64,14 @@ func (s *Server) handleDomainTLSIssue(w http.ResponseWriter, r *http.Request) {
 	if err := tlsops.VerifyCertFiles(hostnames, time.Now().UTC()); err != nil {
 		dep.TLSStatus = "failed"
 		dep.TLSDBStatus = "failed"
-		dep.TLSRedisStatus = "failed"
+		dep.TLSRSStatus = "failed"
 		_ = store.Save(ctx, dep)
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS verification failed")
 		return
 	}
 	dep.TLSStatus = "issued"
 	dep.TLSDBStatus = "issued"
-	dep.TLSRedisStatus = "issued"
+	dep.TLSRSStatus = "issued"
 	if err := store.Save(ctx, dep); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return

@@ -3,6 +3,8 @@ import { apiRequest, errorMessage, type ApiErrorBody } from "./client";
 export type DomainHostnames = {
   console?: string;
   db?: string;
+  rs?: string;
+  pgadmin?: string;
   redis?: string;
 };
 

@@ -308,6 +308,84 @@
   margin-inline-end: var(--space-2);
 }
 
+.domain-endpoint-cards {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-4) 0 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+@media (min-width: 768px) {
+  .domain-endpoint-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1200px) {
+  .domain-endpoint-cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.domain-endpoint-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-surface);
+  padding: var(--space-4);
+  min-width: 0;
+}
+
+.domain-endpoint-card-postgres {
+  box-shadow: inset 3px 0 0 var(--postgres);
+}
+
+.domain-endpoint-card-redis {
+  box-shadow: inset 3px 0 0 var(--redis);
+}
+
+.domain-endpoint-card-console {
+  box-shadow: inset 3px 0 0 var(--accent, var(--line));
+}
+
+.domain-endpoint-card h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 1rem;
+}
+
+.domain-endpoint-card .endpoint-routing {
+  margin: 0 0 var(--space-3);
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.domain-endpoint-card .endpoint-hostname {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.domain-endpoint-card label {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.cloudflare-token-links {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+.cloudflare-token-links a {
+  color: inherit;
+}
+
 .overview-quick-create {
   display: flex;
   flex-wrap: wrap;
