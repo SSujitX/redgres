@@ -50,7 +50,7 @@ VALUES ('postgres.database', 'project_copy', '0123456789abcdef0123456789abcdef')
 		t.Fatalf("VerifySQLiteSnapshotRestore: %v", err)
 	}
 	want := SQLiteRestoreCheck{
-		SchemaVersion: 3,
+		SchemaVersion: 4,
 		OwnerCount:    1, SessionCount: 1, LoginAttemptCount: 1,
 		AuditEventCount: 1, OperationCount: 1, OperationLockCount: 1,
 	}
@@ -225,7 +225,7 @@ func TestVerifySQLiteSnapshotRestoreRejectsMigrationDrift(t *testing.T) {
 		{
 			name: "excessive versions",
 			mutate: func(t *testing.T, db *sql.DB) {
-				for version := 4; version <= 100; version++ {
+				for version := 5; version <= 100; version++ {
 					if _, err := db.Exec(
 						`INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES (?, 'future', 'canary-secret', '2026-08-27T00:00:00Z')`,
 						version,
