@@ -1,0 +1,45 @@
+# Public marketing site only (`site/`). Never publish docs/ (operator/agent material).
+name: pages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "site/**"
+      - "web/public/assets/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: assemble site
+        run: |
+          mkdir -p _site/assets
+          cp -a site/. _site/
+          cp -a web/public/assets/redgres-logo-light.png \
+            web/public/assets/redgres-logo-dark.png \
+            web/public/assets/redgres-favicon-light.png \
+            web/public/assets/redgres-favicon-dark.png \
+            _site/assets/
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
