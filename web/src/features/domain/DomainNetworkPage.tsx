@@ -1,12 +1,17 @@
 import { FormEvent, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   applyDomain,
+  confirmDomainManualAccess,
   confirmDomainReachable,
   disconnectDomain,
   errorMessage,
   fetchDomain,
+  issueDomainTLS,
   setDomainAccessPolicy,
+  setDomainOAuthClient,
   setDomainToken,
+  startDomainOAuth,
+  verifyDomainManual,
   type DomainApplyPayload,
   type DomainStatusPayload,
 } from "../../api/domain";
@@ -33,12 +38,20 @@ function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === "AbortError";
 }
 
-function suggestedHostname(zone: string): string {
+function suggestedConsoleHostname(zone: string): string {
   const z = zone.trim().toLowerCase();
   if (z === "" || z.includes(" ") || !z.includes(".")) {
     return "";
   }
-  return `redgres.${z}`;
+  return `console.${z}`;
+}
+
+function suggestedSubHostname(prefix: string, zone: string): string {
+  const z = zone.trim().toLowerCase();
+  if (z === "" || z.includes(" ") || !z.includes(".")) {
+    return "";
+  }
+  return `${prefix}.${z}`;
 }
 
 function isDomainStatus(body: DomainStatusPayload): body is DomainStatusPayload & { configured: boolean } {
@@ -57,7 +70,19 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
 
   const [zone, setZone] = useState("");
   const [hostname, setHostname] = useState("");
+  const [dbHostname, setDbHostname] = useState("");
+  const [redisHostname, setRedisHostname] = useState("");
+  const [originIP, setOriginIP] = useState("");
+  const [dnsProvider, setDnsProvider] = useState<"cloudflare" | "manual">("cloudflare");
+  const [manualInstructions, setManualInstructions] = useState<string[]>([]);
+  const [manualVerifyBusy, setManualVerifyBusy] = useState(false);
+  const [manualVerifyError, setManualVerifyError] = useState("");
+  const [manualVerifyResults, setManualVerifyResults] = useState<Record<string, string> | null>(null);
+  const [manualAccessBusy, setManualAccessBusy] = useState(false);
+  const [manualAccessError, setManualAccessError] = useState("");
   const hostnameEdited = useRef(false);
+  const dbEdited = useRef(false);
+  const redisEdited = useRef(false);
   const [applyError, setApplyError] = useState("");
   const [applyBusy, setApplyBusy] = useState(false);
   const [applyResult, setApplyResult] = useState<DomainApplyPayload | null>(null);
@@ -67,9 +92,17 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   const [disconnectError, setDisconnectError] = useState("");
   const [disconnectBusy, setDisconnectBusy] = useState(false);
 
-  const [allowEmail, setAllowEmail] = useState("");
+  const [allowEmails, setAllowEmails] = useState<string[]>([""]);
   const [allowError, setAllowError] = useState("");
   const [allowBusy, setAllowBusy] = useState(false);
+
+  const [oauthClientID, setOauthClientID] = useState("");
+  const [oauthClientSecret, setOauthClientSecret] = useState("");
+  const [oauthError, setOauthError] = useState("");
+  const [oauthBusy, setOauthBusy] = useState(false);
+
+  const [tlsError, setTlsError] = useState("");
+  const [tlsBusy, setTlsBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTyped, setConfirmTyped] = useState("");
   const [confirmError, setConfirmError] = useState("");
@@ -114,6 +147,9 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
           setHostname(result.body.hostname);
           hostnameEdited.current = true;
         }
+        if (result.body.configured && Array.isArray(result.body.instructions)) {
+          setManualInstructions(result.body.instructions);
+        }
         return;
       }
       if (result.status === 401) {
@@ -147,7 +183,13 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   function handleZoneChange(value: string) {
     setZone(value);
     if (!hostnameEdited.current) {
-      setHostname(suggestedHostname(value));
+      setHostname(suggestedConsoleHostname(value));
+    }
+    if (!dbEdited.current) {
+      setDbHostname(suggestedSubHostname("db", value));
+    }
+    if (!redisEdited.current) {
+      setRedisHostname(suggestedSubHostname("redis", value));
     }
   }
 
@@ -184,17 +226,39 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   async function handleApply(event: FormEvent) {
     event.preventDefault();
     const z = zone.trim().toLowerCase();
-    const h = hostname.trim().toLowerCase();
-    if (z === "" || h === "" || applyBusy) {
-      setApplyError("Enter both zone and hostname.");
+    const consoleHost = hostname.trim().toLowerCase();
+    const dbHost = dbHostname.trim().toLowerCase();
+    const redisHost = redisHostname.trim().toLowerCase();
+    const origin = originIP.trim();
+    if (z === "" || consoleHost === "" || dbHost === "" || redisHost === "" || origin === "" || applyBusy) {
+      setApplyError("Enter zone, all hostnames, and origin IP.");
       return;
     }
     setApplyBusy(true);
     setApplyError("");
     setApplyResult(null);
     try {
-      const result = await applyDomain(z, h, csrf);
+      const result = await applyDomain(
+        {
+          zone: z,
+          originIP: origin,
+          hostnames: { console: consoleHost, db: dbHost, redis: redisHost },
+          dnsProvider,
+        },
+        csrf,
+      );
+      if (result.status === 200 && Array.isArray(result.body.instructions)) {
+        setManualInstructions(result.body.instructions);
+        setApplyResult(result.body);
+        refresh();
+        return;
+      }
       if (result.status === 200 && typeof result.body.hostname === "string") {
+        setApplyResult(result.body);
+        refresh();
+        return;
+      }
+      if (result.status === 200 && result.body.hostnames?.console) {
         setApplyResult(result.body);
         refresh();
         return;
@@ -228,10 +292,15 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
         setDisconnectOpen(false);
         setDisconnectConfirm("");
         setApplyResult(null);
-        setAllowEmail("");
+        setAllowEmails([""]);
         hostnameEdited.current = false;
+        dbEdited.current = false;
+        redisEdited.current = false;
         setZone("");
         setHostname("");
+        setDbHostname("");
+        setRedisHostname("");
+        setOriginIP("");
         refresh();
         return;
       }
@@ -249,16 +318,20 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
 
   async function handleAccessAllow(event: FormEvent) {
     event.preventDefault();
-    const email = allowEmail.trim();
-    if (email === "" || allowBusy) {
-      setAllowError("Enter an email allowed by Cloudflare Access.");
+    const emails = allowEmails.map((e) => e.trim()).filter((e) => e !== "");
+    if (emails.length === 0 || allowBusy) {
+      setAllowError("Enter at least one email allowed by Cloudflare Access.");
+      return;
+    }
+    if (emails.length > 8) {
+      setAllowError("At most 8 emails are allowed.");
       return;
     }
     setAllowBusy(true);
     setAllowError("");
     try {
-      const result = await setDomainAccessPolicy([email], csrf);
-      setAllowEmail("");
+      const result = await setDomainAccessPolicy(emails, csrf);
+      setAllowEmails([""]);
       if (result.status === 200 && result.body.ok === true) {
         refresh();
         return;
@@ -269,10 +342,101 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
       }
       setAllowError(errorMessage(result.body, "Access allow policy could not be created."));
     } catch {
-      setAllowEmail("");
+      setAllowEmails([""]);
       setAllowError("Access allow policy could not be created.");
     } finally {
       setAllowBusy(false);
+    }
+  }
+
+  async function handleOAuthConnect(event: FormEvent) {
+    event.preventDefault();
+    const clientID = oauthClientID.trim();
+    const clientSecret = oauthClientSecret.trim();
+    if (clientID === "" || clientSecret === "" || oauthBusy) {
+      setOauthError("Enter OAuth client ID and secret.");
+      return;
+    }
+    setOauthBusy(true);
+    setOauthError("");
+    try {
+      const storeResult = await setDomainOAuthClient(clientID, clientSecret, csrf);
+      setOauthClientSecret("");
+      if (storeResult.status !== 200) {
+        setOauthError(errorMessage(storeResult.body, "OAuth client could not be stored."));
+        return;
+      }
+      const startResult = await startDomainOAuth(csrf);
+      if (startResult.status === 200 && typeof startResult.body.authorize_url === "string") {
+        window.location.assign(startResult.body.authorize_url);
+        return;
+      }
+      setOauthError(errorMessage(startResult.body, "OAuth connect could not start."));
+    } catch {
+      setOauthClientSecret("");
+      setOauthError("OAuth connect could not start.");
+    } finally {
+      setOauthBusy(false);
+    }
+  }
+
+  async function handleTLSIssue() {
+    if (tlsBusy) {
+      return;
+    }
+    setTlsBusy(true);
+    setTlsError("");
+    try {
+      const result = await issueDomainTLS(csrf);
+      if (result.status === 200 && result.body.ok === true) {
+        refresh();
+        return;
+      }
+      setTlsError(errorMessage(result.body, "TLS issuance failed."));
+    } catch {
+      setTlsError("TLS issuance failed.");
+    } finally {
+      setTlsBusy(false);
+    }
+  }
+
+  async function handleManualVerify() {
+    if (manualVerifyBusy) {
+      return;
+    }
+    setManualVerifyBusy(true);
+    setManualVerifyError("");
+    try {
+      const result = await verifyDomainManual(csrf);
+      if (result.status === 200 && result.body.results) {
+        setManualVerifyResults(result.body.results);
+        return;
+      }
+      setManualVerifyError(errorMessage(result.body, "Manual DNS verification failed."));
+    } catch {
+      setManualVerifyError("Manual DNS verification failed.");
+    } finally {
+      setManualVerifyBusy(false);
+    }
+  }
+
+  async function handleManualConfirmAccess() {
+    if (manualAccessBusy) {
+      return;
+    }
+    setManualAccessBusy(true);
+    setManualAccessError("");
+    try {
+      const result = await confirmDomainManualAccess(csrf);
+      if (result.status === 200 && result.body.ok === true) {
+        refresh();
+        return;
+      }
+      setManualAccessError(errorMessage(result.body, "Could not confirm manual Access."));
+    } catch {
+      setManualAccessError("Could not confirm manual Access.");
+    } finally {
+      setManualAccessBusy(false);
     }
   }
 
@@ -292,6 +456,9 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
       if (result.status === 200 && result.body.ok === true) {
         setConfirmOpen(false);
         setConfirmTyped("");
+        if (result.body.bootstrap_ufw_attempted && result.body.bootstrap_ufw_removed === false) {
+          setConfirmError("Bootstrap closed, but the UFW removal helper did not succeed. Check firewall rules manually.");
+        }
         refresh();
         return;
       }
@@ -308,16 +475,31 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   }
 
   const configured = status?.configured === true;
+  const isManual = status?.dns_provider === "manual" || dnsProvider === "manual";
   const showWizard = status?.configured === false && !statusError;
-  const canApply = showWizard && zone.trim() !== "" && hostname.trim() !== "" && !applyBusy;
+  const showCloudflareTokenWizard = showWizard && dnsProvider === "cloudflare";
+  const canApply =
+    showWizard &&
+    zone.trim() !== "" &&
+    hostname.trim() !== "" &&
+    dbHostname.trim() !== "" &&
+    redisHostname.trim() !== "" &&
+    originIP.trim() !== "" &&
+    !applyBusy;
   const accessAllow = status?.access === "allow";
   const bootstrapOpen = status?.bootstrap_still_open === true;
+  const credential = status?.credential ?? "none";
+  const tlsDb = status?.tls?.db ?? "not_issued";
+  const tlsRedis = status?.tls?.redis ?? "not_issued";
 
   return (
     <article>
       <header className="page-header">
         <h1>Domain & Network</h1>
-        <p>Connect a Cloudflare zone with a per-zone API token. Tokens stay on the server and are never returned.</p>
+        <p>
+          Connect Cloudflare (automated) or save a manual DNS plan. Credentials stay on the server and are never
+          returned.
+        </p>
         <button type="button" className="text-button" onClick={refresh}>
           Refresh
         </button>
@@ -349,10 +531,44 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                 <dd className="bidi-isolate identifier">{displayText(status.zone)}</dd>
               </div>
             ) : null}
-            {configured && status.hostname ? (
+            {configured && (status.hostname || status.hostnames?.console) ? (
               <div>
-                <dt>Hostname</dt>
-                <dd className="bidi-isolate identifier">{displayText(status.hostname)}</dd>
+                <dt>Console hostname</dt>
+                <dd className="bidi-isolate identifier">
+                  {displayText(status.hostname ?? status.hostnames?.console ?? "")}
+                </dd>
+              </div>
+            ) : null}
+            {configured && status.hostnames?.db ? (
+              <div>
+                <dt>DB hostname</dt>
+                <dd className="bidi-isolate identifier">{displayText(status.hostnames.db)}</dd>
+              </div>
+            ) : null}
+            {configured && status.hostnames?.redis ? (
+              <div>
+                <dt>Redis hostname</dt>
+                <dd className="bidi-isolate identifier">{displayText(status.hostnames.redis)}</dd>
+              </div>
+            ) : null}
+            {configured && status.origin_ip ? (
+              <div>
+                <dt>Origin IP</dt>
+                <dd className="bidi-isolate identifier">{displayText(status.origin_ip)}</dd>
+              </div>
+            ) : null}
+            {configured ? (
+              <div>
+                <dt>Credential</dt>
+                <dd>{credential === "oauth" ? "Cloudflare OAuth" : credential === "api_token" ? "API token" : "None"}</dd>
+              </div>
+            ) : null}
+            {configured ? (
+              <div>
+                <dt>TLS (db / redis)</dt>
+                <dd>
+                  {displayText(tlsDb)} / {displayText(tlsRedis)}
+                </dd>
               </div>
             ) : null}
             {configured ? (
@@ -370,11 +586,53 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               <dd>{bootstrapOpen ? "Still open" : "Closed or not configured"}</dd>
             </div>
           </dl>
-          {configured && !accessAllow ? (
+          {configured && !accessAllow && isManual ? (
+            <div>
+              <h3>3. Manual DNS and Access</h3>
+              <p className="muted-copy">
+                Complete the DNS records and Cloudflare Access steps below outside Redgres, then confirm when done.
+              </p>
+              {manualInstructions.length > 0 ? (
+                <ol className="muted-copy">
+                  {manualInstructions.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ol>
+              ) : null}
+              {manualVerifyError ? (
+                <p className="form-error" role="alert">
+                  {manualVerifyError}
+                </p>
+              ) : null}
+              {manualVerifyResults ? (
+                <ul className="muted-copy">
+                  {Object.entries(manualVerifyResults).map(([host, result]) => (
+                    <li key={host}>
+                      <span className="bidi-isolate identifier">{displayText(host)}</span>: {displayText(result)}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <div className="form-actions">
+                <button type="button" disabled={manualVerifyBusy} onClick={() => void handleManualVerify()}>
+                  Verify public DNS
+                </button>
+                <button type="button" disabled={manualAccessBusy} onClick={() => void handleManualConfirmAccess()}>
+                  Access configured manually
+                </button>
+              </div>
+              {manualAccessError ? (
+                <p className="form-error" role="alert">
+                  {manualAccessError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {configured && !accessAllow && !isManual ? (
             <form onSubmit={handleAccessAllow} autoComplete="off">
               <h3>3. Access allow policy</h3>
               <p className="muted-copy">
-                Add your email so Cloudflare Access allows you through to{" "}
+                Add up to 8 emails allowed by Cloudflare Access for{" "}
                 {status.hostname ? (
                   <span className="bidi-isolate identifier">{displayText(status.hostname)}</span>
                 ) : (
@@ -383,33 +641,111 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                 .
               </p>
               <div className="field-stack">
-                <label htmlFor="domain-access-email">Allowed email</label>
-                <input
-                  id="domain-access-email"
-                  name="access_email"
-                  type="email"
-                  autoComplete="off"
-                  value={allowEmail}
-                  disabled={allowBusy}
-                  onChange={(event) => {
-                    setAllowEmail(event.target.value);
-                    setAllowError("");
-                  }}
-                />
+                {allowEmails.map((email, index) => (
+                  <label key={`access-email-${index}`} htmlFor={`domain-access-email-${index}`}>
+                    Allowed email {index + 1}
+                    <input
+                      id={`domain-access-email-${index}`}
+                      name={`access_email_${index}`}
+                      type="email"
+                      autoComplete="off"
+                      value={email}
+                      disabled={allowBusy}
+                      onChange={(event) => {
+                        const next = [...allowEmails];
+                        next[index] = event.target.value;
+                        setAllowEmails(next);
+                        setAllowError("");
+                      }}
+                    />
+                  </label>
+                ))}
+                {allowEmails.length < 8 ? (
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={allowBusy}
+                    onClick={() => setAllowEmails([...allowEmails, ""])}
+                  >
+                    Add another email
+                  </button>
+                ) : null}
               </div>
               {allowError ? (
                 <p className="form-error" role="alert">
                   {allowError}
                 </p>
               ) : null}
-              <button type="submit" disabled={allowBusy || allowEmail.trim() === ""}>
+              <button type="submit" disabled={allowBusy || allowEmails.every((e) => e.trim() === "")}>
                 Add Access allow policy
               </button>
             </form>
           ) : null}
+          {configured && accessAllow && credential !== "oauth" && !isManual ? (
+            <form onSubmit={handleOAuthConnect} autoComplete="off">
+              <h3>4. Connect Cloudflare OAuth</h3>
+              <p className="muted-copy">
+                Create a self-hosted OAuth app in Cloudflare, paste client ID and secret, then connect. Redirect URI:{" "}
+                <span className="bidi-isolate identifier">
+                  https://{displayText(status.hostname ?? "console.example.com")}/api/v1/domain/oauth/callback
+                </span>
+              </p>
+              <div className="field-stack">
+                <label htmlFor="domain-oauth-client-id">OAuth client ID</label>
+                <input
+                  id="domain-oauth-client-id"
+                  name="oauth_client_id"
+                  autoComplete="off"
+                  value={oauthClientID}
+                  disabled={oauthBusy}
+                  onChange={(event) => {
+                    setOauthClientID(event.target.value);
+                    setOauthError("");
+                  }}
+                />
+                <label htmlFor="domain-oauth-client-secret">OAuth client secret</label>
+                <input
+                  id="domain-oauth-client-secret"
+                  name="oauth_client_secret"
+                  type="password"
+                  autoComplete="off"
+                  value={oauthClientSecret}
+                  disabled={oauthBusy}
+                  onChange={(event) => {
+                    setOauthClientSecret(event.target.value);
+                    setOauthError("");
+                  }}
+                />
+              </div>
+              {oauthError ? (
+                <p className="form-error" role="alert">
+                  {oauthError}
+                </p>
+              ) : null}
+              <button type="submit" disabled={oauthBusy || oauthClientID.trim() === "" || oauthClientSecret.trim() === ""}>
+                Connect Cloudflare
+              </button>
+            </form>
+          ) : null}
+          {configured && accessAllow && tlsDb !== "issued" && status.dns_provider !== "manual" ? (
+            <div>
+              <h3>5. Issue TLS certificates (db + redis)</h3>
+              <p className="muted-copy">
+                Issues Let&apos;s Encrypt DNS-01 certificates for grey-cloud db and redis hostnames via certbot.
+              </p>
+              {tlsError ? (
+                <p className="form-error" role="alert">
+                  {tlsError}
+                </p>
+              ) : null}
+              <button type="button" disabled={tlsBusy} onClick={() => void handleTLSIssue()}>
+                Issue TLS certificates
+              </button>
+            </div>
+          ) : null}
           {configured && accessAllow && bootstrapOpen ? (
             <div>
-              <h3>4. Close bootstrap</h3>
+              <h3>6. Close bootstrap</h3>
               <p className="muted-copy">
                 After you can open the console hostname through Tunnel + Access, close the temporary public bootstrap
                 listener. This cannot be undone from the UI.
@@ -452,8 +788,36 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
 
       {showWizard ? (
         <>
+          <section aria-labelledby="domain-provider-heading">
+            <h2 id="domain-provider-heading">1. DNS provider</h2>
+            <fieldset className="field-stack">
+              <legend className="sr-only">DNS provider</legend>
+              <label>
+                <input
+                  type="radio"
+                  name="dns_provider"
+                  value="cloudflare"
+                  checked={dnsProvider === "cloudflare"}
+                  onChange={() => setDnsProvider("cloudflare")}
+                />
+                Cloudflare API (automated tunnel + DNS)
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="dns_provider"
+                  value="manual"
+                  checked={dnsProvider === "manual"}
+                  onChange={() => setDnsProvider("manual")}
+                />
+                Manual DNS (instructions only)
+              </label>
+            </fieldset>
+          </section>
+
+          {showCloudflareTokenWizard ? (
           <section aria-labelledby="domain-token-heading">
-            <h2 id="domain-token-heading">1. Cloudflare API token</h2>
+            <h2 id="domain-token-heading">2. Cloudflare API token</h2>
             <p className="muted-copy">
               Create a per-zone API token in Cloudflare with at least these permissions, then paste it once. Redgres
               stores it server-side only.
@@ -498,12 +862,14 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               </button>
             </form>
           </section>
+          ) : null}
 
           <section aria-labelledby="domain-apply-heading">
-            <h2 id="domain-apply-heading">2. Apply tunnel and DNS</h2>
+            <h2 id="domain-apply-heading">{dnsProvider === "manual" ? "2. Save hostname plan" : "3. Apply tunnel and DNS"}</h2>
             <p className="muted-copy">
-              Creates a remotely managed tunnel, ingress to loopback Redgres, a proxied CNAME, and a deny-by-default
-              Access app. Run <code>cloudflared</code> on the host afterward (see operator docs).
+              {dnsProvider === "manual"
+                ? "Records and Access steps below as operator instructions; Redgres does not mutate Cloudflare in manual mode."
+                : "Creates a remotely managed tunnel, ingress to loopback Redgres, a proxied CNAME, grey-cloud db/redis A or AAAA records, and a deny-by-default Access app."}
             </p>
             <form onSubmit={handleApply} autoComplete="off">
               <div className="field-stack">
@@ -528,7 +894,43 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                     hostnameEdited.current = true;
                     setHostname(event.target.value);
                   }}
-                  placeholder="redgres.example.com"
+                  placeholder="console.example.com"
+                />
+                <label htmlFor="domain-db-hostname">DB hostname</label>
+                <input
+                  id="domain-db-hostname"
+                  name="db_hostname"
+                  autoComplete="off"
+                  value={dbHostname}
+                  disabled={applyBusy}
+                  onChange={(event) => {
+                    dbEdited.current = true;
+                    setDbHostname(event.target.value);
+                  }}
+                  placeholder="db.example.com"
+                />
+                <label htmlFor="domain-redis-hostname">Redis hostname</label>
+                <input
+                  id="domain-redis-hostname"
+                  name="redis_hostname"
+                  autoComplete="off"
+                  value={redisHostname}
+                  disabled={applyBusy}
+                  onChange={(event) => {
+                    redisEdited.current = true;
+                    setRedisHostname(event.target.value);
+                  }}
+                  placeholder="redis.example.com"
+                />
+                <label htmlFor="domain-origin-ip">Origin IP (grey-cloud A or AAAA)</label>
+                <input
+                  id="domain-origin-ip"
+                  name="origin_ip"
+                  autoComplete="off"
+                  value={originIP}
+                  disabled={applyBusy}
+                  onChange={(event) => setOriginIP(event.target.value)}
+                  placeholder="203.0.113.10"
                 />
               </div>
               {applyError ? (
@@ -536,14 +938,14 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                   {applyError}
                 </p>
               ) : null}
-              {!tokenSaved ? (
+              {!tokenSaved && dnsProvider === "cloudflare" ? (
                 <p className="muted-copy">
                   If this host has no Cloudflare API token yet, store one above first. Apply uses the server-side file
                   (it is not re-checked in this browser session).
                 </p>
               ) : null}
               <button type="submit" disabled={!canApply}>
-                Apply domain
+                {dnsProvider === "manual" ? "Save manual plan" : "Apply domain"}
               </button>
             </form>
           </section>
