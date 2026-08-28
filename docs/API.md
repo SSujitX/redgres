@@ -255,38 +255,63 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 
 ## Domain & Network endpoints (OPS-009 Partial, token-first)
 
-UI: System → **Domain & Network** (`web/src/features/domain/DomainNetworkPage.tsx`) drives these endpoints (token paste, apply, Access allow email, confirm-reachable bootstrap close, status, disconnect). OAuth, DB LE, and manual DNS remain deferred.
+UI: System → **Domain & Network** drives these endpoints (token paste, full hostname apply, Access allow emails, OAuth connect, TLS issue, confirm-reachable bootstrap close, status, disconnect). Live Cloudflare e2e and Playwright full wizard flow remain deferred.
 
-All require a session cookie and the `platform.network` capability; mutations also require `X-CSRF-Token` (origin + CSRF). The per-zone Cloudflare API token is pasted once and stored server-side at `REDGRES_CLOUDFLARE_TOKEN_FILE`; the one-time cloudflared tunnel token is stored at `REDGRES_TUNNEL_TOKEN_FILE`. Neither is ever returned by the API. Responses are `Cache-Control: no-store`.
+All require a session cookie and the `platform.network` capability; mutations also require `X-CSRF-Token` (origin + CSRF). OAuth callback requires session cookie only. The per-zone Cloudflare API token is pasted once for bootstrap apply; steady-state mutations prefer OAuth when connected. Neither token nor OAuth secrets are ever returned by the API. Responses are `Cache-Control: no-store`.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/v1/domain` | Deployment status (`configured`, `zone`/`hostname` when set, `access` `deny_by_default`\|`allow`, `bootstrap_still_open`) |
-| POST | `/api/v1/domain/token` | Paste Cloudflare API token → server-side 0600 file; `{ok:true}` |
-| POST | `/api/v1/domain/apply` | `{zone, hostname}` → remote tunnel + ingress to loopback Redgres + proxied CNAME + deny-by-default Access app; persist IDs + tunnel token; audit |
-| POST | `/api/v1/domain/access-policy` | `{emails:[…]}` → Access allow policy on the wizard app (exact emails, deduped); persist policy id; audit |
-| POST | `/api/v1/domain/confirm-reachable` | Operator confirms console hostname works; closes bootstrap listener if open; requires Access allow first |
-| DELETE | `/api/v1/domain` | Delete exactly the persisted policy/tunnel/record/Access app; clear state; remove the tunnel token file |
+| GET | `/api/v1/domain` | Status: `hostnames`, `origin_ip`, `access`, `tls`, `credential`, `dns_provider`, `instructions` (manual), `bootstrap_still_open` |
+| POST | `/api/v1/domain/token` | Paste Cloudflare API token → server-side 0600 file |
+| POST | `/api/v1/domain/apply` | `{zone, origin_ip, hostnames:{console,db,redis}}` or `dns_provider:manual` → tunnel + proxied CNAME + grey-cloud db/redis A or AAAA + Access app (Cloudflare) or manual instructions |
+| POST | `/api/v1/domain/access-policy` | `{emails:[…]}` (max 8) → Access allow policy |
+| POST | `/api/v1/domain/oauth-client` | Store OAuth `{client_id, client_secret}` |
+| POST | `/api/v1/domain/oauth/start` | PKCE start → `{authorize_url, redirect_uri, scopes}` |
+| GET | `/api/v1/domain/oauth/callback` | OAuth callback (session); redirects to `/` |
+| POST | `/api/v1/domain/tls/issue` | certbot DNS-01 for db + redis hostnames |
+| POST | `/api/v1/domain/manual/verify` | Public DNS check for manual mode db/redis |
+| POST | `/api/v1/domain/manual/confirm-access` | Operator attests manual Access configured (manual DNS only) |
+| POST | `/api/v1/domain/confirm-reachable` | Close bootstrap; optional UFW helper |
+| DELETE | `/api/v1/domain` | Delete persisted resources; revoke OAuth if present |
 
-**POST `/api/v1/domain/token`** body `{"token":"<per-zone token>"}`. Success `200` `{"ok":true,"request_id":"…"}`. The token is never echoed. Empty, whitespace, or >512-char token → `400` `validation_error`.
-
-**POST `/api/v1/domain/apply`** body `{"zone":"example.com","hostname":"redgres.example.com"}`. Creates a remotely managed tunnel (`config_src=cloudflare`), sets ingress `hostname` → `http://127.0.0.1:<REDGRES_ADDRESS port>`, creates the proxied CNAME, creates a deny-by-default Access app, verifies via API reflection, persists IDs + tunnel token. Success `200`:
+**POST `/api/v1/domain/apply`** body (Cloudflare):
 
 ```json
 {
   "zone": "example.com",
-  "hostname": "console.example.com",
-  "tunnel_id": "<cloudflare tunnel id>",
-  "bootstrap_still_open": true,
-  "access": "deny_by_default",
+  "origin_ip": "203.0.113.10",
+  "hostnames": {
+    "console": "console.example.com",
+    "db": "db.example.com",
+    "redis": "redis.example.com"
+  }
+}
+```
+
+Defaults: `console.<zone>`, `db.<zone>`, `redis.<zone>`. Creates proxied CNAME for console, DNS-only **A or AAAA** (one record type per origin IP) for db/redis, deny-by-default Access app. Success includes `hostnames`, `origin_ip`, `tls`, `access: deny_by_default`, `bootstrap_still_open: true`.
+
+Manual mode: `"dns_provider":"manual"` with the same hostname map returns `{instructions:[…]}` without Cloudflare mutations.
+
+**POST `/api/v1/domain/oauth/start`** returns `{authorize_url, redirect_uri, scopes}`. Callback redirect URI: `https://{console_hostname}/api/v1/domain/oauth/callback`. On success the API token file is removed and `credential` becomes `oauth`.
+
+**POST `/api/v1/domain/tls/issue`** runs certbot DNS-01 for persisted db/redis hostnames; success `{ok:true, tls:{db:"issued",redis:"issued"}}`. Failure → `503` without success audit.
+
+**POST `/api/v1/domain/manual/confirm-access`** operator attests Access was configured manually (manual DNS mode only). Success `{ok:true, access:"allow"}`.
+
+**POST `/api/v1/domain/confirm-reachable`** body `{}`. Operator attests the console hostname works through Tunnel + Access; **does not probe reachability automatically**. Requires Cloudflare Access allow policy **or** manual Access confirmation (`POST /manual/confirm-access`). Schedules graceful bootstrap shutdown when open. Success `200`:
+
+```json
+{
+  "ok": true,
+  "bootstrap_still_open": false,
+  "bootstrap_closed": true,
+  "bootstrap_ufw_removed": false,
+  "bootstrap_ufw_attempted": false,
   "request_id": "…"
 }
 ```
 
-- `bootstrap_still_open` reflects whether the optional bootstrap listener is still open on this process (`false` when bootstrap was not configured).
-- `access: "deny_by_default"` means the Access app exists but has **no allow policy**; login through it fails until an identity policy is added.
-- Any failure after the tunnel is created compensates: the created Access app, DNS record, and tunnel are deleted in reverse creation order (same order as disconnect).
-- Re-apply while configured → `409` `conflict`.
+`bootstrap_closed` is `true` when this call scheduled close of an open bootstrap listener (force Close remains the hard-cap timer path). Response includes `bootstrap_ufw_removed` and `bootstrap_ufw_attempted` when `REDGRES_BOOTSTRAP_UFW_REMOVE_CMD` is set. No Access allow yet → `409` `conflict`. No deployment → `404`. The UI requires typing the exact hostname before calling this endpoint.
 
 **POST `/api/v1/domain/access-policy`** body `{"emails":["owner@example.com"]}`. Creates an Access **allow** policy on the wizard’s Access app (exact email selectors; trimmed/lowercased; deduped; max 8), verifies the policy via API reflection, then persists the policy id. Success `200`:
 
@@ -300,19 +325,6 @@ All require a session cookie and the `platform.network` capability; mutations al
 ```
 
 Emails are never returned. Empty/invalid email → `400` `validation_error`. No deployment → `404`. Policy already set → `409` `conflict`. Verify failure compensates by deleting the created policy.
-
-**POST `/api/v1/domain/confirm-reachable`** body `{}`. Operator asserts the console hostname is reachable through Tunnel + Access; schedules a **graceful** bootstrap shutdown so an in-flight confirm on `:8989` can finish writing `200` before the port closes. Requires an Access allow policy first. Success `200`:
-
-```json
-{
-  "ok": true,
-  "bootstrap_still_open": false,
-  "bootstrap_closed": true,
-  "request_id": "…"
-}
-```
-
-`bootstrap_closed` is `true` when this call scheduled close of an open bootstrap listener (force Close remains the hard-cap timer path). No Access allow yet → `409` `conflict`. No deployment → `404`. The UI requires typing the exact hostname before calling this endpoint.
 
 **DELETE `/api/v1/domain`** success `200` `{"ok":true,"request_id":"…"}`. No deployment → `404` `not_found`. Deletes Access policy (if any), Access app, DNS records, and tunnel.
 
