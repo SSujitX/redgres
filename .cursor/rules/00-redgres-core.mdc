@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Redgres core
 
-Before work, read `AGENTS.md` and `CONTEXT.md`; inspect Git and preserve dirty/user work. Read `docs/PROJECT_CHARTER.md` for product scope/acceptance decisions and `docs/INDEX.md` only when `AGENTS.md` does not route the task. Derive implementation truth from code, tests, Git, and the relevant `docs/TRACEABILITY.md` row—not target prose or chat memory.
+Before work, read `AGENTS.md`; inspect Git and preserve dirty/user work. Read `docs/PROJECT_CHARTER.md` for product scope/acceptance decisions and `docs/INDEX.md` only when `AGENTS.md` does not route the task. Derive implementation truth from code, tests, Git, and the relevant `docs/TRACEABILITY.md` row—not target prose or chat memory.
 
 Load only routed headings/endpoints from `AGENTS.md`. Identify governing PRD IDs, acceptance criteria, invariants, and ADRs before editing. Implementation/review work also reads `.cursor/rules/05-evidence-first-engineering.mdc`; autonomous coding reads `.cursor/rules/06-continuous-orchestration.mdc`.
 
