@@ -1,6 +1,5 @@
-# Full Wave 0 check list (backup). Not run on push/PR — invoke manually via workflow_dispatch.
-# Active push/PR CI is .github/workflows/install.yml (installer dry-run only).
-# Makefile and CONTRIBUTING.md still mirror the full local command set below.
+# Full Wave 0 check list. Manual only (workflow_dispatch).
+# Push/PR uses install.yml (installer dry-run). Restore push/PR here when Wave 0 is green.
 name: ci
 
 on:
