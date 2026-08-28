@@ -18,5 +18,12 @@ if [[ -z "$TUNNEL_TOKEN" ]]; then
 fi
 export TUNNEL_TOKEN
 
-CLOUDFLARED="${CLOUDFLARED_BIN:-/usr/bin/cloudflared}"
+CLOUDFLARED="${CLOUDFLARED_BIN:-}"
+if [[ -z "$CLOUDFLARED" ]]; then
+  if command -v cloudflared >/dev/null 2>&1; then
+    CLOUDFLARED="$(command -v cloudflared)"
+  else
+    CLOUDFLARED="/usr/bin/cloudflared"
+  fi
+fi
 exec "$CLOUDFLARED" tunnel --no-autoupdate run

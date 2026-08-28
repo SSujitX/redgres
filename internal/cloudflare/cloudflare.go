@@ -15,6 +15,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -23,6 +24,9 @@ const BaseURL = "https://api.cloudflare.com/client/v4"
 
 // ErrNotFound is returned when Cloudflare reports the resource does not exist.
 var ErrNotFound = errors.New("cloudflare resource not found")
+
+// ErrTunnelNameInUse is returned when a non-orphan tunnel already uses the name.
+var ErrTunnelNameInUse = errors.New("cloudflare tunnel name already in use")
 
 // Zone is the minimal zone identity the wizard needs.
 type Zone struct {
@@ -174,7 +178,7 @@ func (c *HTTPClient) DiscoverZone(ctx context.Context, name string) (Zone, error
 			ID string `json:"id"`
 		} `json:"account"`
 	}
-	if err := c.call(ctx, http.MethodGet, "/zones?name="+name, nil, &result); err != nil {
+	if err := c.call(ctx, http.MethodGet, "/zones?name="+url.QueryEscape(name), nil, &result); err != nil {
 		return Zone{}, err
 	}
 	for _, z := range result {
@@ -190,6 +194,71 @@ func (c *HTTPClient) DiscoverZone(ctx context.Context, name string) (Zone, error
 // server-side for cloudflared (never returned to the browser).
 // Primary source: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel-api/
 func (c *HTTPClient) CreateTunnel(ctx context.Context, accountID, name string) (Tunnel, error) {
+	t, err := c.createTunnelOnce(ctx, accountID, name)
+	if err == nil {
+		return t, nil
+	}
+	if !isTunnelNameConflict(err) {
+		return Tunnel{}, err
+	}
+	if delErr := c.deleteOrphanTunnelByName(ctx, accountID, name); delErr != nil {
+		if errors.Is(delErr, ErrTunnelNameInUse) {
+			return Tunnel{}, err
+		}
+		return Tunnel{}, err
+	}
+	return c.createTunnelOnce(ctx, accountID, name)
+}
+
+type tunnelListItem struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Connections []any  `json:"connections"`
+}
+
+func (c *HTTPClient) listTunnelsByName(ctx context.Context, accountID, name string) ([]tunnelListItem, error) {
+	var result []tunnelListItem
+	path := "/accounts/" + accountID + "/cfd_tunnel?name=" + url.QueryEscape(name)
+	if err := c.call(ctx, http.MethodGet, path, nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func tunnelOrphan(item tunnelListItem) bool {
+	if item.ID == "" || len(item.Connections) > 0 {
+		return false
+	}
+	return strings.EqualFold(item.Status, "inactive") || item.Status == ""
+}
+
+func (c *HTTPClient) deleteOrphanTunnelByName(ctx context.Context, accountID, name string) error {
+	tunnels, err := c.listTunnelsByName(ctx, accountID, name)
+	if err != nil {
+		return err
+	}
+	var orphans []tunnelListItem
+	for _, item := range tunnels {
+		if item.Name != name {
+			continue
+		}
+		if tunnelOrphan(item) {
+			orphans = append(orphans, item)
+			continue
+		}
+		return ErrTunnelNameInUse
+	}
+	var lastErr error
+	for _, item := range orphans {
+		if err := c.DeleteTunnel(ctx, accountID, item.ID); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
+func (c *HTTPClient) createTunnelOnce(ctx context.Context, accountID, name string) (Tunnel, error) {
 	var result struct {
 		ID    string `json:"id"`
 		Name  string `json:"name"`
@@ -203,6 +272,17 @@ func (c *HTTPClient) CreateTunnel(ctx context.Context, accountID, name string) (
 		return Tunnel{}, errors.New("cloudflare tunnel create returned empty id or token")
 	}
 	return Tunnel{ID: result.ID, Name: result.Name, Token: result.Token}, nil
+}
+
+func isTunnelNameConflict(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.StatusCode == http.StatusConflict {
+		return true
+	}
+	return strings.Contains(strings.ToLower(apiErr.Message), "already exists")
 }
 
 // ConfigureIngress sets remote tunnel ingress: hostname → originHTTP, plus the
