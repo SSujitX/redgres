@@ -128,6 +128,23 @@ redgres_assert_redis_pong() {
   printf '%s\n' "${out}" | /usr/bin/awk 'BEGIN { found=0 } $0=="PONG" { found=1 } END { exit found ? 0 : 1 }'
 }
 
+# Official redis image logs/config must never print requirepass. Keep installer stderr secret-safe.
+redgres_redis_logs_safe() {
+  printf '%s\n' "$1" | /usr/bin/awk 'BEGIN { IGNORECASE=1 } !/requirepass|password|AUTH / { print }'
+}
+
+redgres_redis_container_status() {
+  /usr/bin/docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' redgres-redis 2>/dev/null || printf 'status=missing'
+}
+
+redgres_redis_health_report() {
+  local status logs
+  status="$(redgres_redis_container_status)"
+  redgres_log "redis health failed (${status})"
+  logs="$(/usr/bin/docker logs --tail 20 redgres-redis 2>&1 || true)"
+  redgres_redis_logs_safe "${logs}" >&2
+}
+
 redgres_postgres_health() {
   local i=0
   while ! /usr/bin/pg_isready -q -h 127.0.0.1 -p 5432; do
@@ -138,6 +155,23 @@ redgres_postgres_health() {
   redgres_log 'postgres health=accepting'
 }
 
+redgres_wait_redis_container() {
+  local i=0 status
+  while :; do
+    status="$(/usr/bin/docker inspect -f '{{.State.Status}}' redgres-redis 2>/dev/null || true)"
+    if [[ "${status}" == "running" ]]; then
+      redgres_log 'redis container=running'
+      return 0
+    fi
+    i=$((i + 1))
+    if (( i >= 45 )); then
+      redgres_redis_health_report
+      redgres_die "redis container is not running (${status:-missing})"
+    fi
+    /usr/bin/sleep 1
+  done
+}
+
 redgres_redis_health() {
   local pass out i=0
   [[ -f /etc/redgres/redis.pass && ! -L /etc/redgres/redis.pass ]] || redgres_die 'redis passfile is not trusted'
@@ -145,8 +179,8 @@ redgres_redis_health() {
   [[ -n "${pass}" ]] || redgres_die 'redis passfile is empty'
   while :; do
     out="$(
-      /usr/bin/docker exec -i redgres-redis redis-cli --raw --no-auth-warning 2>/dev/null <<EOF
-AUTH ${pass}
+      /usr/bin/docker exec -i redgres-redis redis-cli -h 127.0.0.1 --raw --no-auth-warning 2>/dev/null <<EOF
+AUTH "${pass}"
 PING
 EOF
     )" || true
@@ -155,7 +189,10 @@ EOF
       return 0
     fi
     i=$((i + 1))
-    (( i < 30 )) || redgres_die 'redis did not become ready'
+    if (( i >= 30 )); then
+      redgres_redis_health_report
+      redgres_die 'redis did not become ready'
+    fi
     /usr/bin/sleep 1
   done
 }
@@ -213,9 +250,32 @@ redgres_ensure_identity() {
   /usr/bin/chmod 750 /etc/redgres
 }
 
+# Host redis.conf is mounted :ro into the official image (UID 999). Mode 0600
+# root:root is unreadable in the container; the entrypoint then fails to chmod
+# a read-only mount. Own the conf as 999:999 and skip entrypoint perm fixes.
+redgres_apply_redis_conf_perms() {
+  local conf='/etc/redgres/redis.conf' passfile='/etc/redgres/redis.pass'
+  [[ -f "${conf}" && ! -L "${conf}" ]] || redgres_die 'redis conf is not trusted'
+  [[ -f "${passfile}" && ! -L "${passfile}" ]] || redgres_die 'redis passfile is not trusted'
+  /usr/bin/chown 999:999 "${conf}"
+  /usr/bin/chmod 600 "${conf}"
+  /usr/bin/chown root:root "${passfile}"
+  /usr/bin/chmod 600 "${passfile}"
+}
+
+redgres_redis_lowmem_conf() {
+  local kb
+  kb="$(/usr/bin/awk '/^MemTotal:/ { print $2 }' /proc/meminfo)"
+  [[ -n "${kb}" ]] || return 0
+  if (( kb < 2000000 )); then
+    printf '%s\n' 'maxmemory 64mb' 'maxmemory-policy allkeys-lru'
+  fi
+}
+
 redgres_write_redis_conf() {
-  local conf='/etc/redgres/redis.conf' passfile='/etc/redgres/redis.pass' pass
+  local conf='/etc/redgres/redis.conf' passfile='/etc/redgres/redis.pass' pass extra
   if [[ -f "${conf}" && -f "${passfile}" ]]; then
+    redgres_apply_redis_conf_perms
     redgres_log 'redis auth files already-correct'
     return 0
   fi
@@ -223,6 +283,7 @@ redgres_write_redis_conf() {
     redgres_die 'redis auth files are inconsistent'
   fi
   pass="$(/usr/bin/dd if=/dev/urandom bs=24 count=1 status=none | /usr/bin/base64 | /usr/bin/tr -d '\n')"
+  extra="$(redgres_redis_lowmem_conf)"
   umask 077
   printf '%s\n' "${pass}" >"${passfile}"
   /usr/bin/cat >"${conf}" <<EOF
@@ -231,21 +292,23 @@ port 6379
 protected-mode yes
 appendonly yes
 dir /data
-requirepass ${pass}
+requirepass "${pass}"
+${extra}
 EOF
-  /usr/bin/chmod 600 "${conf}" "${passfile}"
-  /usr/bin/chown root:root "${conf}" "${passfile}"
+  redgres_apply_redis_conf_perms
   redgres_log 'redis password written to /etc/redgres/redis.pass (not logged)'
 }
 
-redgres_write_redis_compose() {
+redgres_redis_compose_yaml() {
   local image="$1"
-  /usr/bin/cat >'/etc/redgres/redis-compose.yml' <<EOF
+  /usr/bin/cat <<EOF
 services:
   redis:
     image: ${image}
     container_name: redgres-redis
     restart: unless-stopped
+    environment:
+      SKIP_FIX_PERMS: "1"
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     ports:
       - "127.0.0.1:6380:6379"
@@ -253,6 +316,11 @@ services:
       - /var/lib/redgres/redis/data:/data
       - /etc/redgres/redis.conf:/usr/local/etc/redis/redis.conf:ro
 EOF
+}
+
+redgres_write_redis_compose() {
+  local image="$1"
+  redgres_redis_compose_yaml "${image}" >'/etc/redgres/redis-compose.yml'
   /usr/bin/chmod 644 /etc/redgres/redis-compose.yml
 }
 
@@ -329,6 +397,7 @@ redgres_live_install() {
   /usr/bin/systemctl enable --now docker
   redgres_wait_docker
   /usr/bin/docker compose -f /etc/redgres/redis-compose.yml up -d
+  redgres_wait_redis_container
 
   if /usr/bin/pg_lsclusters -h | /usr/bin/awk -v v="${postgres_version}" '$1==v { found=1 } END { exit found ? 0 : 1 }'; then
     redgres_die "refusing fresh-postgres: a PostgreSQL ${postgres_version} cluster already exists"

@@ -1598,6 +1598,38 @@ else
   fail "redis PONG assertion should reject NOAUTH (rc=${pong_rc})"
 fi
 
+compose_yaml_rc=0
+compose_yaml_err="$(
+  s2_lib_src
+  yaml="$(redgres_redis_compose_yaml "$(redgres_redis_image_pin 8.8)")"
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q 'SKIP_FIX_PERMS: "1"'
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q 'redis.conf:/usr/local/etc/redis/redis.conf:ro'
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q 'redis:8.8.2@sha256:c514823c0ec1a40764df434efc2dc4ab5ec669c71c1cb00e4f7b1a694cee9fc3'
+)" 2>&1 || compose_yaml_rc=$?
+if [[ "${compose_yaml_rc}" -eq 0 ]]; then
+  pass 'redis compose YAML sets SKIP_FIX_PERMS and digest pin'
+else
+  fail "redis compose YAML (rc=${compose_yaml_rc})"
+  printf '%s\n' "${compose_yaml_err}" >&2
+fi
+
+logs_safe_rc=0
+logs_safe_err="$(
+  s2_lib_src
+  got="$(redgres_redis_logs_safe $'Fatal error, cannot open config file\nrequirepass hunter2\nWarning: cannot change owner\nAUTH leaked\nPermission denied')"
+  printf '%s\n' "${got}" | /usr/bin/grep -q 'Permission denied'
+  printf '%s\n' "${got}" | /usr/bin/grep -q 'cannot change owner'
+  ! printf '%s\n' "${got}" | /usr/bin/grep -qi 'requirepass'
+  ! printf '%s\n' "${got}" | /usr/bin/grep -qi 'hunter2'
+  ! printf '%s\n' "${got}" | /usr/bin/grep -q 'AUTH leaked'
+)" 2>&1 || logs_safe_rc=$?
+if [[ "${logs_safe_rc}" -eq 0 ]]; then
+  pass 'redis log filter keeps permission errors and drops secrets'
+else
+  fail "redis log filter (rc=${logs_safe_rc})"
+  printf '%s\n' "${logs_safe_err}" >&2
+fi
+
 urls_rc=0
 urls_out="$(
   s2_lib_src
