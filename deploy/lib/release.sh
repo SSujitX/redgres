@@ -122,6 +122,19 @@ redgres_opt_releases_dir() {
   printf '%s/releases' "${REDGRES_OPT_ROOT}"
 }
 
+# Installer umask is 077, so mkdir would be 0700 and User=redgres could not exec.
+redgres_chmod_opt_layout() {
+  local dest="$1"
+  local root="${REDGRES_OPT_ROOT}"
+  local releases
+  releases="$(redgres_opt_releases_dir)"
+  /usr/bin/mkdir -p "${releases}" "${dest}"
+  /usr/bin/chmod 755 "${root}" "${releases}" "${dest}"
+  if [[ "${EUID}" -eq 0 ]]; then
+    /usr/bin/chown root:root "${root}" "${releases}" "${dest}"
+  fi
+}
+
 redgres_opt_current_link() {
   printf '%s/current' "${REDGRES_OPT_ROOT}"
 }
@@ -274,7 +287,7 @@ redgres_update_apply() {
   if [[ -e "${dest}" ]]; then
     redgres_die 'release version directory already exists'
   fi
-  /usr/bin/mkdir -p "${dest}"
+  redgres_chmod_opt_layout "${dest}"
   /usr/bin/install -m 0755 "${binary_src}" "${dest}/redgres"
   /usr/bin/install -m 0644 "${version_src}" "${dest}/VERSION"
   if [[ -f "${staging}/SHA256SUMS" ]]; then
