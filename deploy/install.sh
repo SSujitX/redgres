@@ -29,14 +29,41 @@ redgres_bootstrap_die() {
 }
 
 # This batched validator intentionally exists before common.sh is sourced. It
-# trusts only the fixed /usr/bin/stat supplied by the supported Ubuntu profile.
+# uses a non-symlink GNU or rust-coreutils binary (Ubuntu 24.04 /usr/bin/stat,
+# Ubuntu 26.04 /usr/bin/gnustat or /usr/lib/cargo/bin/coreutils/coreutils).
+# Keep the candidate list in sync with redgres_pick_coreutils_applet in common.sh.
+redgres_bootstrap_pick_stat() {
+  local candidate base
+  REDGRES_STAT_BIN=''
+  REDGRES_STAT_PREFIX_ARGS=()
+  for candidate in \
+    /usr/bin/stat \
+    /usr/bin/gnustat \
+    /usr/lib/cargo/bin/coreutils/stat \
+    /usr/lib/cargo/bin/coreutils/coreutils \
+    /usr/bin/coreutils
+  do
+    [[ -x "${candidate}" && -f "${candidate}" && ! -L "${candidate}" ]] || continue
+    REDGRES_STAT_BIN="${candidate}"
+    base="${candidate##*/}"
+    if [[ "${base}" == 'coreutils' ]]; then
+      REDGRES_STAT_PREFIX_ARGS=(stat)
+    fi
+    return 0
+  done
+  return 1
+}
+
+redgres_bootstrap_stat() {
+  "${REDGRES_STAT_BIN}" "${REDGRES_STAT_PREFIX_ARGS[@]}" "$@"
+}
+
 redgres_bootstrap_validate_source_tree() {
   local trusted_entrypoint="$1"
   local trusted_script_dir="$2"
   shift 2
   local candidate component extra kind line mode owner
   local candidate_index
-  local stat_bin='/usr/bin/stat'
   local -a paths=("${trusted_entrypoint}")
   local -a kinds=('file')
   local -a metadata=()
@@ -57,7 +84,7 @@ redgres_bootstrap_validate_source_tree() {
     kinds+=('file')
   done
 
-  [[ -x "${stat_bin}" && ! -L "${stat_bin}" ]] || redgres_bootstrap_die 'trusted stat is unavailable'
+  redgres_bootstrap_pick_stat || redgres_bootstrap_die 'trusted stat is unavailable'
   for ((candidate_index = 0; candidate_index < ${#paths[@]}; candidate_index++)); do
     candidate="${paths[${candidate_index}]}"
     kind="${kinds[${candidate_index}]}"
@@ -68,7 +95,7 @@ redgres_bootstrap_validate_source_tree() {
     esac
   done
 
-  builtin mapfile -t metadata < <("${stat_bin}" -Lc '%u %a' -- "${paths[@]}")
+  builtin mapfile -t metadata < <(redgres_bootstrap_stat -Lc '%u %a' -- "${paths[@]}")
   [[ "${#metadata[@]}" -eq "${#paths[@]}" ]] || redgres_bootstrap_die 'installer source tree is not trusted'
   for line in "${metadata[@]}"; do
     builtin read -r owner mode extra <<< "${line}"
@@ -125,7 +152,7 @@ for source_file in "${source_files[@]}"; do
 done
 
 source_identity_metadata=()
-builtin mapfile -t source_identity_metadata < <(/usr/bin/stat -Lc '%u %a %d:%i' -- "${source_identity_paths[@]}")
+builtin mapfile -t source_identity_metadata < <(redgres_bootstrap_stat -Lc '%u %a %d:%i' -- "${source_identity_paths[@]}")
 [[ "${#source_identity_metadata[@]}" -eq "${#source_identity_paths[@]}" ]] || redgres_bootstrap_die 'installer source tree is not trusted'
 for ((source_index = 0; source_index < ${#source_identity_metadata[@]}; source_index += 2)); do
   builtin read -r source_path_owner source_path_mode source_path_identity source_extra <<< "${source_identity_metadata[${source_index}]}"
