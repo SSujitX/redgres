@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### Bootstrap UFW recovers sudo SSH IP or prompts (2026-08-30)
+
+OPS-008 Partial: live install still never runs `ufw allow 8989/tcp` (world-open). When `REDGRES_BOOTSTRAP_ALLOW_FROM` is unset, `redgres_bootstrap_allow_from` uses `SSH_CONNECTION` / `SSH_CLIENT`, then ancestor `/proc/*/environ` (so `sudo` no longer drops the client IP), then `who -m`. If still unknown and a TTY is readable, `redgres_resolve_bootstrap_allow_from` asks once for the operator browse IP and caches it. Confirm-reachable / TTL still close `:8989` and remove the rule. Commands actually run: Git Bash `bash deploy/tests/run.sh` (189 passed, 0 failed). Not done here: live UFW on the test VPS, §6.
+
 ### Domain Store token CSRF hash retry (2026-08-29)
 
 AUTH-002 / OPS-009 Partial: Domain **Store token** `403` `csrf_invalid` **CSRF token is invalid** is a session CSRF hash mismatch (stale `X-CSRF-Token` after `GET /api/v1/session` rotation), not a Cloudflare permission or token-file-path failure. `apiRequest` now refreshes `/api/v1/session` once, publishes the rotated CSRF to listeners, and retries that mutation once. **Origin check failed** is not retried. Commands actually run: `cd web && npx vitest --run src/api/client.test.ts src/features/domain/DomainNetworkPage.test.tsx` (16 passed). Not done here: live host upgrade of the embedded UI, §6.
