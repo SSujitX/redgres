@@ -374,14 +374,16 @@ redgres_write_redis_admin_url() {
 }
 
 redgres_enable_postgres_loopback_ssl() {
+  local confdir="/etc/postgresql/${postgres_version}/main/conf.d"
   if [[ ! -f /etc/ssl/certs/ssl-cert-snakeoil.pem || ! -f /etc/ssl/private/ssl-cert-snakeoil.key ]]; then
     redgres_apt_install ssl-cert
     /usr/sbin/make-ssl-cert generate-default-snakeoil --force-overwrite >/dev/null
   fi
   /usr/sbin/usermod -aG ssl-cert postgres
-  /usr/bin/pg_conftool "${postgres_version}" main set ssl on
-  /usr/bin/pg_conftool "${postgres_version}" main set ssl_cert_file '/etc/ssl/certs/ssl-cert-snakeoil.pem'
-  /usr/bin/pg_conftool "${postgres_version}" main set ssl_key_file '/etc/ssl/private/ssl-cert-snakeoil.key'
+  /usr/bin/mkdir -p "${confdir}"
+  printf '%s\n' "listen_addresses = '127.0.0.1'" >"${confdir}/redgres-listen.conf"
+  printf '%s\n' "ssl = on" "ssl_cert_file = '/etc/ssl/certs/ssl-cert-snakeoil.pem'" "ssl_key_file = '/etc/ssl/private/ssl-cert-snakeoil.key'" >"${confdir}/redgres-ssl.conf"
+  /usr/bin/chmod 644 "${confdir}/redgres-listen.conf" "${confdir}/redgres-ssl.conf"
   /usr/bin/pg_ctlcluster "${postgres_version}" main restart
   redgres_log 'postgres loopback TLS enabled (snakeoil; sslmode=require)'
 }
@@ -460,7 +462,6 @@ redgres_live_install() {
   fi
   /usr/bin/pg_createcluster --start "${postgres_version}" main
   redgres_low_memory_postgres
-  /usr/bin/pg_conftool "${postgres_version}" main set listen_addresses "'127.0.0.1'"
   redgres_enable_postgres_loopback_ssl
   redgres_postgres_health
   redgres_redis_health
