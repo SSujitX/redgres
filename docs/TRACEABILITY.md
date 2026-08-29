@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### Ubuntu os-release symlink (2026-08-29)
+
+OPS-001 Partial: live `redgres_read_os` no longer requires `/etc/os-release` to be a regular file. Debian/Ubuntu ship `/etc/os-release` → `/usr/lib/os-release`; the installer sources the canonical regular file after the trusted-path check. Regular `/etc/os-release` still wins. Full `uninstall.sh` also deletes git checkouts that look like this repository (`/root/redgres`, `~/redgres`, or the tree containing the script). Commands actually run: Git Bash `bash deploy/tests/run.sh` (174 passed, 0 failed). Not done here: live 26.04 install, §6.
+
 ### Ubuntu 26.04 rust-coreutils stat/env (2026-08-29)
 
 OPS-001 Partial: bootstrap and trusted-path helpers no longer require `/usr/bin/stat` and `/usr/bin/env` to be regular files. They pick the first non-symlink of GNU `/usr/bin/{stat,env}`, `/usr/bin/gnu{stat,env}`, `/usr/lib/cargo/bin/coreutils/{applet,coreutils}`, or `/usr/bin/coreutils` (multicall `coreutils <applet>`). That is the Ubuntu 26.04 rust-coreutils layout (`/usr/bin/stat` → `../lib/cargo/bin/coreutils/stat`). Live OS/package gate is unchanged: PGDG `noble` (24.04) and `resolute` (26.04) only — not 24.10 or later non-PGDG Ubuntu. Commands actually run: Git Bash `bash deploy/tests/run.sh` (172 passed, 0 failed). Not done here: live 26.04 `sudo ./deploy/install.sh`, §6.
