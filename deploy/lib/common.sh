@@ -22,7 +22,8 @@ redgres_mode_is_group_or_world_writable() {
 }
 
 # Select a non-symlink coreutils applet. Ubuntu 24.04 ships GNU regular files;
-# Ubuntu 26.04 points /usr/bin/stat and /usr/bin/env at rust-coreutils symlinks.
+# Ubuntu 26.04 points /usr/bin/stat, /usr/bin/env, and /usr/bin/sha256sum at
+# rust-coreutils symlinks.
 # Keep this candidate list in sync with redgres_bootstrap_pick_stat in install.sh.
 # Extra args, when present, replace the default candidate list (tests).
 redgres_pick_coreutils_applet() {
@@ -64,6 +65,13 @@ redgres_ensure_trusted_env() {
   redgres_pick_coreutils_applet env || return 1
   REDGRES_ENV_BIN="${REDGRES_PICK_BIN}"
   REDGRES_ENV_PREFIX_ARGS=("${REDGRES_PICK_PREFIX[@]}")
+}
+
+redgres_ensure_trusted_sha256sum() {
+  [[ -n "${REDGRES_SHA256SUM_BIN:-}" ]] && return 0
+  redgres_pick_coreutils_applet sha256sum || return 1
+  REDGRES_SHA256SUM_BIN="${REDGRES_PICK_BIN}"
+  REDGRES_SHA256SUM_PREFIX_ARGS=("${REDGRES_PICK_PREFIX[@]}")
 }
 
 redgres_stat() {

@@ -43,7 +43,8 @@ redgres_update_verify_checksum() {
   local release_dir release_name checksum_path
   local release_fd release_size checksum_fd checksum_size
   local checksum_snapshot checksum_raw line expected='' actual='' name digest matches=0
-  local sha256_bin='/usr/bin/sha256sum'
+  local sha256_bin
+  local -a sha256_prefix
 
   release_dir="${release_path%/*}"
   [[ -n "${release_dir}" ]] || release_dir='/'
@@ -80,8 +81,11 @@ redgres_update_verify_checksum() {
   done <<< "${checksum_raw}"
   [[ "${matches}" -eq 1 ]] || redgres_die 'SHA256SUMS must contain exactly one release entry'
 
+  redgres_ensure_trusted_sha256sum || redgres_die 'trusted sha256sum is unavailable'
+  sha256_bin="${REDGRES_SHA256SUM_BIN}"
+  sha256_prefix=("${REDGRES_SHA256SUM_PREFIX_ARGS[@]}")
   redgres_validate_trusted_path 'sha256sum' "${sha256_bin}" executable
-  actual="$("${sha256_bin}" <&"${release_fd}")" || redgres_die 'release checksum could not be computed'
+  actual="$("${sha256_bin}" "${sha256_prefix[@]}" <&"${release_fd}")" || redgres_die 'release checksum could not be computed'
   redgres_close_trusted_fd "${release_fd}"
   actual="${actual%% *}"
   [[ "${actual}" =~ ^[0-9a-f]{64}$ && "${actual}" == "${expected}" ]] || redgres_die 'release checksum verification failed'
