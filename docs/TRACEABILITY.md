@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### create-owner --password-fifo vs GitHub latest (2026-08-29)
+
+OPS-005 Partial: live owner bootstrap probes `create-owner -h` for `-password-fifo` before passing that flag. Clone scripts were ahead of GitHub `releases/latest` (v1.0.5), so `--password-fifo` printed `flag provided but not defined` and aborted after `result=applied`. Older binaries now use `--generate` (TTY print) with an explicit log line. Commands actually run: Git Bash `bash deploy/tests/run.sh` (183 passed, 0 failed). Not done here: §6.
+
 ### Uninstall leftover dirs and apt hang (2026-08-29)
 
 OPS-001 Partial: full `uninstall.sh` no longer looks stuck after PostgreSQL purge or after `[7/8]`. It fast-stops clusters, deletes leftover `/etc/postgresql` and `/var/log/postgresql` (dpkg will not rmdir non-empty ones), `cd /` before deleting a clone and before leftover `apt-get autoremove` (maintainer scripts `getcwd()` a deleted cwd), and exports `NEEDRESTART_SUSPEND=1` / `NEEDRESTART_MODE=l` because uninstall reconnects stdin to `/dev/tty`. Leftover packages are a labeled `[8/8]`. Commands actually run: Git Bash `bash -n uninstall.sh`; Git Bash `bash deploy/tests/run.sh` (182 passed, 0 failed). Not done here: live Ubuntu uninstall, §6.
