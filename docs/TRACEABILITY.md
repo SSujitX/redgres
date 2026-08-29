@@ -33,7 +33,7 @@ Do not mark Complete.
 
 ### Live env includes Postgres/Redis admin files (2026-08-29)
 
-OPS-005 Partial: after Redis `PONG`, live install enables loopback PostgreSQL TLS (snakeoil `sslmode=require` for the production binary), creates `redgres_admin`, and writes `/etc/redgres/postgres.pass` plus `redis://` `/etc/redgres/redis.url` (0600, not logged). `redgres.env` now sets the complete `REDGRES_POSTGRES_*` / `REDGRES_REDIS_ADMIN_URL_FILE` keys production `serve` requires. `listen_addresses` is written quoted (`'127.0.0.1'`) so `pg_ctlcluster restart` after TLS does not hit a postgresql.conf syntax error near `.0`. Commands actually run: Git Bash `bash deploy/tests/run.sh` (177 passed, 0 failed). Not done here: §6.
+OPS-005 Partial: after Redis `PONG`, live install enables loopback PostgreSQL TLS (snakeoil `sslmode=require` for the production binary), creates `redgres_admin`, and writes `/etc/redgres/postgres.pass` plus `redis://` `/etc/redgres/redis.url` (0600, not logged). `redgres.env` now sets the complete `REDGRES_POSTGRES_*` / `REDGRES_REDIS_ADMIN_URL_FILE` keys production `serve` requires. Listen/TLS settings go in `conf.d` (`listen_addresses = '127.0.0.1'`) because `pg_conftool set` either leaves `127.0.0.1` unquoted or stores `'''127.0.0.1'''`. Commands actually run: Git Bash `bash -n deploy/lib/mutate.sh`. Not done here: §6.
 
 ### /opt/redgres dirs must be executable by User=redgres (2026-08-29)
 
