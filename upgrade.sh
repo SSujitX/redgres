@@ -19,11 +19,17 @@ log() { printf '%b\n' "$*"; }
 
 _redgres_load_install_summary() {
   local _self="${BASH_SOURCE[0]}" _dir
-  _dir="$(cd "$(dirname "${_self}")" 2>/dev/null && pwd || true)"
-  if [[ -n "${_dir}" && -f "${_dir}/scripts/install-summary.sh" ]]; then
-    # shellcheck source=/dev/null
-    source "${_dir}/scripts/install-summary.sh"
-    return 0
+  # curl | bash: BASH_SOURCE is not a real file. dirname becomes "." and would
+  # source a stale checkout scripts/install-summary.sh from cwd (e.g. ~/redgres).
+  if [[ -n "${_self}" && -f "${_self}" ]]; then
+    _dir="$(cd "$(dirname "${_self}")" 2>/dev/null && pwd || true)"
+    if [[ -n "${_dir}" && -f "${_dir}/scripts/install-summary.sh" ]]; then
+      # shellcheck source=/dev/null
+      source "${_dir}/scripts/install-summary.sh"
+      if declare -F redgres_ensure_domain_secret_env >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
   fi
   # shellcheck source=/dev/null
   source /dev/stdin <<'REDGRES_INSTALL_SUMMARY'
@@ -607,6 +613,7 @@ redgres_write_app_unit "${OPT_ROOT}/current/redgres" "${UNIT_PATH}"
 redgres_install_bootstrap_firewall
 redgres_chown_app_state
 if [[ -f /etc/redgres/redgres.env ]]; then
+  declare -F redgres_ensure_domain_secret_env >/dev/null || die "domain secret env helper missing"
   redgres_ensure_domain_secret_env /etc/redgres/redgres.env || true
   chmod 0660 /etc/redgres/redgres.env
   chown root:redgres /etc/redgres/redgres.env

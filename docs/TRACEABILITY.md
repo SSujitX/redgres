@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### curl|bash upgrade sourced stale ~/redgres summary (2026-08-29)
+
+OPS-005/OPS-009 Partial: `curl | sudo bash` from `~/redgres` set `BASH_SOURCE` to empty, `dirname` became `.`, and `_redgres_load_install_summary` sourced the clone's old `scripts/install-summary.sh` (no `redgres_ensure_domain_secret_env`). Line 610 then printed `command not found`; `|| true` let upgrade finish at 1.0.7 without writing Cloudflare token *paths*, so Domain paste stayed `400`. Loader now uses the embed unless the running script is a real file *and* the checkout summary defines that helper. Commands actually run: Git Bash `bash deploy/tests/run.sh` (185 passed, 0 failed). Live: host log `bash: line 610: redgres_ensure_domain_secret_env: command not found`. Not done here: §6.
+
 ### Live env writes Cloudflare token file paths (2026-08-29)
 
 OPS-009 Partial: live `/etc/redgres/redgres.env` now sets `REDGRES_CLOUDFLARE_TOKEN_FILE`, `REDGRES_TUNNEL_TOKEN_FILE`, OAuth client/token paths, and `REDGRES_CERTBOT_DNS_TOKEN_FILE` under `/var/lib/redgres/secrets` (`0700` `redgres:redgres`). Empty paths were disabling Domain token paste (`400` `Cloudflare token file is not configured`). Re-run/upgrade appends missing keys and never overwrites an existing key. Tokens stay in those files, not SQLite. Commands actually run: Git Bash `bash deploy/tests/run.sh` (184 passed, 0 failed). Not done here: live Cloudflare apply, §6.

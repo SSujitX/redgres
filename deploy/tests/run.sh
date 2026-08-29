@@ -1978,6 +1978,30 @@ else
   fail "domain secret env ensure (rc=${domain_env_rc})"
   printf '%s\n' "${domain_env_err}" >&2
 fi
+
+summary_load_rc=0
+summary_load_err="$(
+  stale="${tmpdir}/stale-clone"
+  mkdir -p "${stale}/scripts"
+  printf '%s\n' 'stale_summary_loaded=1' >"${stale}/scripts/install-summary.sh"
+  (
+    cd "${stale}"
+    _self=''
+    _dir="$(cd "$(dirname "${_self}")" 2>/dev/null && pwd || true)"
+    if [[ -n "${_self}" && -f "${_self}" && -n "${_dir}" && -f "${_dir}/scripts/install-summary.sh" ]]; then
+      exit 2
+    fi
+    [[ -f "${stale}/scripts/install-summary.sh" ]]
+  )
+  grep -q '\[\[ -n "${_self}" && -f "${_self}" \]\]' "${deploy_dir%/*}/upgrade.sh"
+  grep -q 'redgres_ensure_domain_secret_env' "${deploy_dir%/*}/upgrade.sh"
+) 2>&1" || summary_load_rc=$?
+if [[ "${summary_load_rc}" -eq 0 ]]; then
+  pass 'curl|bash upgrade does not source cwd scripts/install-summary.sh'
+else
+  fail "curl|bash install-summary guard (rc=${summary_load_rc})"
+  printf '%s\n' "${summary_load_err}" >&2
+fi
 # Live fresh as non-root must fail closed before inventory. Root is not exercised here
 # (absolute /usr/bin/apt-get would bypass STUB_NAMES).
 if [[ "${EUID}" -ne 0 ]]; then

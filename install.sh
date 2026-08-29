@@ -27,11 +27,17 @@ log() { printf '%b\n' "$*"; }
 
 _redgres_load_install_summary() {
   local _self="${BASH_SOURCE[0]}" _dir
-  _dir="$(cd "$(dirname "${_self}")" 2>/dev/null && pwd || true)"
-  if [[ -n "${_dir}" && -f "${_dir}/scripts/install-summary.sh" ]]; then
-    # shellcheck source=/dev/null
-    source "${_dir}/scripts/install-summary.sh"
-    return 0
+  # curl | bash: BASH_SOURCE is not a real file. dirname becomes "." and would
+  # source a stale checkout scripts/install-summary.sh from cwd (e.g. ~/redgres).
+  if [[ -n "${_self}" && -f "${_self}" ]]; then
+    _dir="$(cd "$(dirname "${_self}")" 2>/dev/null && pwd || true)"
+    if [[ -n "${_dir}" && -f "${_dir}/scripts/install-summary.sh" ]]; then
+      # shellcheck source=/dev/null
+      source "${_dir}/scripts/install-summary.sh"
+      if declare -F redgres_ensure_domain_secret_env >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
   fi
   # shellcheck source=/dev/null
   source /dev/stdin <<'REDGRES_INSTALL_SUMMARY'
