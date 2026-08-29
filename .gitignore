@@ -35,7 +35,7 @@
 
 # Editors and operating systems
 .idea/
-.vscode/
+.vscode/*
 !.vscode/settings.json
 .DS_Store
 Thumbs.db
