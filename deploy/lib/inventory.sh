@@ -62,13 +62,12 @@ redgres_resolve_host_binary() {
 redgres_read_host_version() {
   local bin="$1"
   local bin_path
-  local env_bin='/usr/bin/env'
   local out status
   bin_path="$(redgres_resolve_host_binary "${bin}")"
   redgres_validate_host_binary "${bin}" "${bin_path}"
-  [[ -x "${env_bin}" && ! -L "${env_bin}" ]] || redgres_die "trusted env is unavailable"
+  redgres_ensure_trusted_env || redgres_die 'trusted env is unavailable'
   set +e
-  out="$("${env_bin}" -i PATH="${PATH}" LC_ALL=C "${bin_path}" --version 2>&1)"
+  out="$(redgres_env -i PATH="${PATH}" LC_ALL=C "${bin_path}" --version 2>&1)"
   status=$?
   set -e
   out="${out//$'\r'/}"
