@@ -107,6 +107,46 @@ describe("DomainNetworkPage", () => {
     }
   });
 
+  it("stores the token after a one-time CSRF hash refresh", async () => {
+    const canary = "canary-csrf-retry-token";
+    const stale = "csrf".padEnd(64, "0");
+    const next = "next".padEnd(64, "1");
+    const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/domain" && (!init || !init.method || init.method === "GET")) {
+        return jsonResponse(200, { configured: false, request_id: "r1" });
+      }
+      if (url === "/api/v1/domain/token") {
+        const header = new Headers(init?.headers).get("X-CSRF-Token");
+        if (header === stale) {
+          return jsonResponse(403, {
+            error: { code: "csrf_invalid", message: "CSRF token is invalid" },
+          });
+        }
+        if (header === next) {
+          expect(JSON.parse(String(init?.body))).toEqual({ token: canary });
+          return jsonResponse(200, { ok: true, request_id: "r3" });
+        }
+        throw new Error(`unexpected csrf ${header ?? ""}`);
+      }
+      if (url === "/api/v1/session") {
+        return jsonResponse(200, { csrf_token: next, owner: { username: "admin" } });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DomainNetworkPage csrf={stale} />);
+    await screen.findByText("No");
+    const input = screen.getByLabelText("API token");
+    fireEvent.change(input, { target: { value: canary } });
+    fireEvent.click(screen.getByRole("button", { name: "Store token" }));
+
+    expect(await screen.findByText(/Token stored on the server/)).toBeInTheDocument();
+    expect((input as HTMLInputElement).value).toBe("");
+    expect(document.body.textContent).not.toContain(canary);
+  });
+
   it("clears the token field when store fails", async () => {
     const canary = "canary-fail-token-abc";
     const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {

@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### Domain Store token CSRF hash retry (2026-08-29)
+
+AUTH-002 / OPS-009 Partial: Domain **Store token** `403` `csrf_invalid` **CSRF token is invalid** is a session CSRF hash mismatch (stale `X-CSRF-Token` after `GET /api/v1/session` rotation), not a Cloudflare permission or token-file-path failure. `apiRequest` now refreshes `/api/v1/session` once, publishes the rotated CSRF to listeners, and retries that mutation once. **Origin check failed** is not retried. Commands actually run: `cd web && npx vitest --run src/api/client.test.ts src/features/domain/DomainNetworkPage.test.tsx` (16 passed). Not done here: live host upgrade of the embedded UI, §6.
+
 ### curl|bash upgrade sourced stale ~/redgres summary (2026-08-29)
 
 OPS-005/OPS-009 Partial: `curl | sudo bash` from `~/redgres` set `BASH_SOURCE` to empty, `dirname` became `.`, and `_redgres_load_install_summary` sourced the clone's old `scripts/install-summary.sh` (no `redgres_ensure_domain_secret_env`). Line 610 then printed `command not found`; `|| true` let upgrade finish at 1.0.7 without writing Cloudflare token *paths*, so Domain paste stayed `400`. Loader now uses the embed unless the running script is a real file *and* the checkout summary defines that helper. Commands actually run: Git Bash `bash deploy/tests/run.sh` (185 passed, 0 failed). Live: host log `bash: line 610: redgres_ensure_domain_secret_env: command not found`. Not done here: §6.

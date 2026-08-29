@@ -37,7 +37,7 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 - The unauthenticated route has no application sidebar/topbar and reveals no service health.
 - Wide layouts place a restrained login panel in the upper-right region beside the Redgres dual-service identity field; narrow layouts use one centered/full-width column.
 - Login supports keyboard/password-manager use, password visibility, generic failure messages, lockout/retry guidance, and an optional organization-access-policy note.
-- Successful login uses only a validated safe return route. Session expiry clears sensitive UI state before showing login. POST `/api/v1/auth/login` has no `tool_links`. After login 200, App GET `/api/v1/session` and uses that CSRF plus `tool_links` before rendering the shell. Overview never GET `/session` (that rotation would desync App CSRF). Login never fetches `/status` or `/healthz`.
+- Successful login uses only a validated safe return route. Session expiry clears sensitive UI state before showing login. POST `/api/v1/auth/login` has no `tool_links`. After login 200, App GET `/api/v1/session` and uses that CSRF plus `tool_links` before rendering the shell. Overview never GET `/session` (that rotation would desync App CSRF). A mutation that returns `403` `csrf_invalid` **CSRF token is invalid** may GET `/session` once and retry that mutation once with the rotated header. **Origin check failed** is not retried. Login never fetches `/status` or `/healthz`.
 
 ## Overview
 

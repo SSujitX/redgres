@@ -23,7 +23,7 @@ Cloudflare, the VPS provider, OS root, and backup administrator are privileged t
 |---|---|
 | Credential theft from response/cache/history | POST-only reveal/issue, `no-store`, no-referrer, no URL secrets, frontend memory clearing, Access + app auth |
 | Session theft/fixation | 256-bit random opaque tokens, hash-at-rest, regenerate on login, idle+absolute expiry, Secure/HttpOnly/SameSite Strict, logout deletion |
-| CSRF | Same-origin Origin/Referer validation plus per-session CSRF token for all mutations |
+| CSRF | Same-origin Origin/Referer validation plus per-session CSRF token for all mutations. `GET /api/v1/session` rotates the CSRF hash. The UI retries a mutation once after `403` `csrf_invalid` **CSRF token is invalid** by refreshing `/session` and sending the new header; **Origin check failed** is not retried. The shell CSRF copy may stay stale; the next mutation uses the same one-shot refresh. |
 | Brute force | Argon2id (in-process serialized to one hash), generic login errors, fail-closed persistent username+effective-IP throttling (5 failures / 15m, exponential then 15m cap; failure reserved before hash), 20-failure/15m IP-wide spray lockout only for non-loopback identity, separate persistent reauth throttling, bounded attempt retention, Cloudflare Access/rate controls |
 | SQL injection/identifier confusion | Parameterized values, `pgx.Identifier`/quoted identifiers, strict normalized identifiers, no arbitrary SQL endpoint |
 | Redis privilege escalation | Dedicated ACL admin, protected users, one prefix, `-@all`, explicit command allow-list, no generic command API |
