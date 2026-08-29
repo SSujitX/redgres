@@ -49,8 +49,11 @@ jobs:
           ASSET="dist/release/redgres_${VER}_linux_amd64.tar.gz"
           test -f "${ASSET}"
           test -f dist/release/SHA256SUMS
+          # Recreate the GitHub release and assets only. Do not delete or
+          # retarget refs/tags/dev — moving that tag makes git pull --tags
+          # fail in Cursor ("would clobber existing tag"). install-dev.sh
+          # downloads release assets by tag name, not the tag's commit.
           gh release delete dev -y 2>/dev/null || true
-          git push origin :refs/tags/dev 2>/dev/null || true
           gh release create dev \
             --prerelease \
             --title "Redgres dev (master snapshot)" \
