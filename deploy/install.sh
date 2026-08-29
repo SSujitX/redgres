@@ -220,8 +220,9 @@ resolved then installed as pkg=version, digest-pinned Redis images, then pg_isre
 and redis PING. It then writes /etc/redgres/redgres.env, downloads the latest GitHub
 release tarball + SHA256SUMS, applies it through update, and prints a boxed finish report
 (bootstrap URL, versions, loopback listeners, UFW, owner login). Owner create-owner
---generate --password-fifo runs only when /dev/tty can be opened; the password is shown
-once in that box on a TTY, not in the install log.
+--generate --password-fifo runs only when /dev/tty can be opened and the downloaded
+binary advertises -password-fifo; otherwise --generate prints the password to the TTY.
+The password is shown once in the finish box on a TTY, not in the install log.
 
 Exit 0: --help, valid --non-interactive --dry-run plan, skip matrix, valid postgres-plan, backup or postgres-extensions apply skip matrix
 Exit 1: unsupported, incomplete, missing, unparseable, mismatched selection, or invalid extension plan

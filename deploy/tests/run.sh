@@ -1783,6 +1783,12 @@ fifo_bin="${tmpdir}/mock-redgres-fifo"
 cat >"${fifo_bin}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+for a in "$@"; do
+  if [[ "${a}" == "-h" || "${a}" == "--help" ]]; then
+    printf '%s\n' '  -password-fifo string'
+    exit 0
+  fi
+done
 fifo=""
 next=0
 for a in "$@"; do
@@ -1812,6 +1818,38 @@ if [[ "${fifo_rc}" -eq 0 ]] && [[ "${fifo_out}" == *'captured=generated-from-moc
   pass 'owner bootstrap captures generated password from fifo'
 else
   fail "owner bootstrap fifo capture (rc=${fifo_rc} out=${fifo_out})"
+fi
+
+old_bin="${tmpdir}/mock-redgres-old-release"
+old_marker="${tmpdir}/old-generate-called"
+cat >"${old_bin}" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ "\${a}" == "-h" || "\${a}" == "--help" ]]; then
+    printf '%s\n' 'Usage of create-owner:' '  -generate' '  -replace' '  -sqlite-path string' '  -username string'
+    exit 0
+  fi
+  if [[ "\${a}" == "--password-fifo" || "\${a}" == "-password-fifo" ]]; then
+    printf '%s\n' 'flag provided but not defined: -password-fifo' >&2
+    exit 1
+  fi
+done
+: >"${old_marker}"
+exit 0
+EOF
+chmod 700 "${old_bin}"
+rm -f "${old_marker}"
+old_rc=0
+old_out="$(
+  s2_lib_src
+  REDGRES_OWNER_PASSWORD_FIFO="${tmpdir}/old-owner-pass.fifo"
+  redgres_have_owner_tty() { return 0; }
+  redgres_owner_bootstrap "${old_bin}"
+) 2>&1" || old_rc=$?
+if [[ "${old_rc}" -eq 0 && -e "${old_marker}" && "${old_out}" == *'downloaded release older than installer'* && "${old_out}" != *'flag provided but not defined'* ]]; then
+  pass 'owner bootstrap uses TTY generate when create-owner has no --password-fifo'
+else
+  fail "owner bootstrap old-release fallback (rc=${old_rc} out=${old_out})"
 fi
 
 finish_out="$(

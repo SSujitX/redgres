@@ -299,12 +299,24 @@ redgres_read_owner_password_fifo() {
 # Generated owner password for the finish box. Never Redis/Postgres secrets.
 REDGRES_FINISH_OWNER_PASSWORD=''
 
+# GitHub releases/latest can lag installer scripts in a git clone.
+redgres_owner_has_password_fifo() {
+  local bin="$1" help
+  help="$("${bin}" create-owner -h 2>&1 || true)"
+  [[ "${help}" == *'-password-fifo'* ]]
+}
+
 redgres_owner_bootstrap() {
   local bin="$1" db='/var/lib/redgres/redgres.db'
   local fifo parent reader rc=0
   REDGRES_FINISH_OWNER_PASSWORD=''
   if ! redgres_have_owner_tty; then
     redgres_log "Owner not created here (no controlling terminal). Run: ${bin} create-owner --username admin --sqlite-path ${db}"
+    return 0
+  fi
+  if ! redgres_owner_has_password_fifo "${bin}"; then
+    redgres_log 'create-owner has no --password-fifo (downloaded release older than installer); password prints once on this TTY'
+    "${bin}" create-owner --generate --username admin --sqlite-path "${db}" || redgres_die "create-owner --generate failed"
     return 0
   fi
   fifo="$(redgres_owner_password_fifo)"
