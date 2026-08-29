@@ -57,6 +57,14 @@ Pick **one** install path. Full stack already installs the Redgres app — do no
 
 Ubuntu 24.04 or 26.04. Clone anywhere you can write; the commands below use your home directory and create `~/redgres`. The running binary still lands in `/opt/redgres`.
 
+## One command
+
+Creates `~/redgres` and starts the interactive installer (defaults: PostgreSQL 18, Redis 8.2, PgBouncer off). If `~/redgres` already exists, remove or rename it first.
+
+```bash
+cd && git clone https://github.com/SSujitX/redgres.git && cd redgres && sudo ./deploy/install.sh
+```
+
 ## Go home
 
 ```bash
@@ -276,7 +284,7 @@ sudo ufw status verbose
 ss -lntp | grep -E '8790|8989|5432|6380|6432'
 ```
 
-Bootstrap UFW is `allow from <your IP> to any port 8989` only — never a world-open `8989/tcp`. Inactive UFW does not enforce that rule.
+Run the installer, then open the printed `:8989` URL. After Domain & Network confirm (or the bootstrap TTL), that port closes. Do not open `8989/tcp` to the world.
 
 ## App failed after an upgrade — roll back the binary
 
