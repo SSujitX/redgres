@@ -739,7 +739,7 @@ if [[ "${APP_ONLY}" -eq 0 || "${PURGE_CONFIG}" -eq 1 ]]; then
   rm -rf "${ETC_ROOT}" 2>/dev/null || true
 fi
 if [[ "${APP_ONLY}" -eq 0 || "${PURGE_STATE}" -eq 1 ]]; then
-  rm -rf "${VAR_ROOT}" 2>/dev/null || true
+  rm -rf "${VAR_ROOT}" /var/lib/redgres-release 2>/dev/null || true
 fi
 if [[ "${APP_ONLY}" -eq 0 ]]; then
   rm -rf "${BACKUP_ROOT}" /var/log/redgres 2>/dev/null || true
