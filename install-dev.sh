@@ -267,16 +267,177 @@ redgres_assert_bootstrap_allow_ip() {
   return 0
 }
 
+redgres_ip_from_who_line() {
+  local line="$1" host
+  [[ -n "${line}" ]] || return 1
+  case "${line}" in
+    *'('*')') ;;
+    *) return 1 ;;
+  esac
+  host="${line##*(}"
+  host="${host%)}"
+  host="${host#[}"
+  host="${host%]}"
+  redgres_assert_bootstrap_allow_ip "${host}" || return 1
+  printf '%s' "${host}"
+}
+
+redgres_ssh_client_ip_from_environ_stream() {
+  local key raw conn="" client=""
+  while IFS= read -r -d '' key; do
+    case "${key}" in
+      SSH_CONNECTION=*)
+        raw="${key#SSH_CONNECTION=}"
+        conn="${raw%% *}"
+        ;;
+      SSH_CLIENT=*)
+        raw="${key#SSH_CLIENT=}"
+        client="${raw%% *}"
+        ;;
+    esac
+  done
+  if redgres_assert_bootstrap_allow_ip "${conn}"; then
+    printf '%s' "${conn}"
+    return 0
+  fi
+  if redgres_assert_bootstrap_allow_ip "${client}"; then
+    printf '%s' "${client}"
+    return 0
+  fi
+  return 1
+}
+
+redgres_proc_ppid() {
+  local line pid=""
+  [[ -r "$1" ]] || return 1
+  while IFS= read -r line; do
+    case "${line}" in
+      PPid:*)
+        pid="${line#PPid:}"
+        pid="${pid#"${pid%%[![:space:]]*}"}"
+        printf '%s' "${pid}"
+        return 0
+        ;;
+    esac
+  done <"$1"
+  return 1
+}
+
+redgres_ssh_client_ip_from_ancestors() {
+  local envf pid i found
+  if [[ -n "${REDGRES_BOOTSTRAP_PROC_ENVIRON+x}" ]]; then
+    envf="${REDGRES_BOOTSTRAP_PROC_ENVIRON}"
+    [[ -n "${envf}" && -r "${envf}" ]] || return 1
+    redgres_ssh_client_ip_from_environ_stream <"${envf}"
+    return
+  fi
+  pid="${PPID:-}"
+  i=0
+  while [[ "${i}" -lt 8 && "${pid}" =~ ^[1-9][0-9]*$ ]]; do
+    envf="/proc/${pid}/environ"
+    if [[ -r "${envf}" ]]; then
+      found="$(redgres_ssh_client_ip_from_environ_stream <"${envf}" || true)"
+      if redgres_assert_bootstrap_allow_ip "${found}"; then
+        printf '%s' "${found}"
+        return 0
+      fi
+    fi
+    pid="$(redgres_proc_ppid "/proc/${pid}/status" || true)"
+    i=$((i + 1))
+  done
+  return 1
+}
+
+redgres_ssh_client_ip_from_who() {
+  local line
+  if [[ -n "${REDGRES_BOOTSTRAP_WHO_LINE+x}" ]]; then
+    line="${REDGRES_BOOTSTRAP_WHO_LINE}"
+  else
+    line="$(who -m 2>/dev/null || true)"
+    [[ -n "${line}" ]] || line="$(who am i 2>/dev/null || true)"
+  fi
+  redgres_ip_from_who_line "${line}"
+}
+
 redgres_bootstrap_allow_from() {
   local raw="${REDGRES_BOOTSTRAP_ALLOW_FROM:-}"
-  if [[ -z "${raw}" && -n "${SSH_CONNECTION:-}" ]]; then
+  if redgres_assert_bootstrap_allow_ip "${raw}"; then
+    printf '%s' "${raw}"
+    return 0
+  fi
+  raw=""
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
     raw="${SSH_CONNECTION%% *}"
   fi
-  if [[ -z "${raw}" && -n "${SSH_CLIENT:-}" ]]; then
+  if redgres_assert_bootstrap_allow_ip "${raw}"; then
+    printf '%s' "${raw}"
+    return 0
+  fi
+  raw=""
+  if [[ -n "${SSH_CLIENT:-}" ]]; then
     raw="${SSH_CLIENT%% *}"
   fi
-  redgres_assert_bootstrap_allow_ip "${raw}" || return 1
-  printf '%s' "${raw}"
+  if redgres_assert_bootstrap_allow_ip "${raw}"; then
+    printf '%s' "${raw}"
+    return 0
+  fi
+  raw="$(redgres_ssh_client_ip_from_ancestors || true)"
+  if redgres_assert_bootstrap_allow_ip "${raw}"; then
+    printf '%s' "${raw}"
+    return 0
+  fi
+  raw="$(redgres_ssh_client_ip_from_who || true)"
+  if redgres_assert_bootstrap_allow_ip "${raw}"; then
+    printf '%s' "${raw}"
+    return 0
+  fi
+  return 1
+}
+
+redgres_prompt_say() {
+  if [[ -w /dev/tty ]]; then
+    printf '%s\n' "$1" >/dev/tty
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+redgres_prompt_bootstrap_allow_ip() {
+  local input="${REDGRES_BOOTSTRAP_ALLOW_TTY:-/dev/tty}" answer i
+  [[ -r "${input}" ]] || return 1
+  for i in 1 2 3; do
+    redgres_prompt_say 'First-run console (port 8989) opens only for your current public IP.'
+    redgres_prompt_say 'It closes after Domain & Network confirm. Not opened to the internet.'
+    if [[ -w /dev/tty ]]; then
+      printf '%s' 'Public IP you will browse from: ' >/dev/tty
+    else
+      printf '%s' 'Public IP you will browse from: ' >&2
+    fi
+    IFS= read -r answer <"${input}" || return 1
+    answer="${answer//[$' \t\r\n']/}"
+    if redgres_assert_bootstrap_allow_ip "${answer}"; then
+      printf '%s' "${answer}"
+      return 0
+    fi
+    redgres_prompt_say 'That is not a single operator IP (no 0.0.0.0, no CIDR).'
+  done
+  return 1
+}
+
+redgres_resolve_bootstrap_allow_from() {
+  local from
+  from="$(redgres_bootstrap_allow_from || true)"
+  if [[ -n "${from}" ]]; then
+    printf '%s' "${from}"
+    return 0
+  fi
+  from="$(redgres_prompt_bootstrap_allow_ip || true)"
+  if redgres_assert_bootstrap_allow_ip "${from}"; then
+    REDGRES_BOOTSTRAP_ALLOW_FROM="${from}"
+    printf '%s' "${from}"
+    return 0
+  fi
+  return 1
 }
 
 redgres_ufw_bootstrap_allow_argv() {
@@ -400,9 +561,9 @@ redgres_ufw_restrict_bootstrap() {
     redgres_fw_note 'ufw: not installed; bootstrap :8989 is not source-restricted'
     return 0
   fi
-  from="$(redgres_bootstrap_allow_from 2>/dev/null || true)"
+  from="$(redgres_resolve_bootstrap_allow_from || true)"
   if [[ -z "${from}" ]]; then
-    redgres_fw_note 'ufw: operator source IP unknown; set REDGRES_BOOTSTRAP_ALLOW_FROM; not opening 8989 to the world'
+    redgres_fw_note 'ufw: operator source IP unknown; not opening 8989 to the world'
     return 0
   fi
   # Never `ufw allow 8989/tcp` (that is 0.0.0.0/0).
@@ -529,7 +690,7 @@ redgres_print_install_summary() {
   fi
 
   if [[ "${baddr}" == 0.0.0.0:* || "${baddr}" == [::]:* ]]; then
-    printf '  \033[0;33mBootstrap\033[0m  :8989 is source-restricted when UFW is active (operator IP or REDGRES_BOOTSTRAP_ALLOW_FROM). Finish Domain & Network to close it.\n'
+    printf '  \033[0;33mBootstrap\033[0m  Open the printed URL, then finish Domain & Network to close :8989.\n'
   fi
 
   printf '  \033[2mDomain & TLS:\033[0m System → Domain & Network in the console.\n'
