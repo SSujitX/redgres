@@ -73,6 +73,58 @@ redgres_uninstall_collect_git_checkouts() {
   fi
 }
 
+# Leftover cluster dirs after apt purge. dpkg will not remove non-empty
+# /etc/postgresql or /var/log/postgresql; a shell cwd there also blocks rmdir.
+redgres_uninstall_postgres_leftover_dirs() {
+  local root="${1:-}"
+  printf '%s\n' \
+    "${root}/etc/postgresql" \
+    "${root}/etc/postgresql-common" \
+    "${root}/var/log/postgresql" \
+    "${root}/var/lib/postgresql"
+}
+
+redgres_uninstall_remove_postgres_leftovers() {
+  local root="${1:-}" dir
+  while IFS= read -r dir || [[ -n "${dir}" ]]; do
+    [[ -n "${dir}" ]] || continue
+    rm -rf "${dir}" 2>/dev/null || true
+  done < <(redgres_uninstall_postgres_leftover_dirs "${root}")
+}
+
+# Uninstall reconnects stdin to /dev/tty. needrestart ignores DEBIAN_FRONTEND
+# and will prompt "Restart services?" — that looks like a hang.
+redgres_uninstall_export_apt_env() {
+  export DEBIAN_FRONTEND=noninteractive
+  export NEEDRESTART_MODE=l
+  export NEEDRESTART_SUSPEND=1
+  export APT_LISTCHANGES_FRONTEND=none
+}
+
+# apt/dpkg maintainer scripts call getcwd(). Deleting the clone while cwd is
+# still inside it (or standing in /etc/postgresql) makes later apt look stuck.
+redgres_uninstall_enter_safe_cwd() {
+  cd / || cd /tmp || return 1
+}
+
+redgres_uninstall_drop_postgres_clusters() {
+  local ver name _rest
+  command -v pg_lsclusters >/dev/null 2>&1 || return 0
+  while read -r ver name _rest; do
+    [[ -n "${ver}" && -n "${name}" ]] || continue
+    if command -v pg_ctlcluster >/dev/null 2>&1; then
+      pg_ctlcluster "${ver}" "${name}" stop -m fast 2>/dev/null ||
+        pg_ctlcluster "${ver}" "${name}" stop -m immediate 2>/dev/null || true
+    fi
+    pg_dropcluster --stop "${ver}" "${name}" 2>/dev/null || true
+  done < <(pg_lsclusters --no-header 2>/dev/null || true)
+}
+
+redgres_uninstall_apt_get() {
+  redgres_uninstall_export_apt_env
+  apt-get -o Dpkg::Use-Pty=0 "$@"
+}
+
 if [[ "${REDGRES_UNINSTALL_FUNCTIONS_ONLY:-}" == "1" ]]; then
   return 0 2>/dev/null || exit 0
 fi
@@ -214,6 +266,9 @@ else
   printf '%b\n' "${YELLOW}Force mode (-y): warnings shown above; confirmation skipped.${NC}"
   printf '%b\n' ""
 fi
+
+redgres_uninstall_enter_safe_cwd || true
+redgres_uninstall_export_apt_env
 
 env_value_from_file() {
   local key="$1" file="${2:-${ETC_ROOT}/redgres.env}" line
@@ -524,7 +579,7 @@ PY
 purge_cloudflared_package() {
   [[ "${APP_ONLY}" -eq 1 ]] && return 0
   if command -v apt-get >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get purge -y cloudflared 2>/dev/null || true
+    redgres_uninstall_apt_get purge -y cloudflared >/dev/null 2>&1 || true
   elif command -v dnf >/dev/null 2>&1; then
     dnf remove -y cloudflared 2>/dev/null || true
   elif command -v yum >/dev/null 2>&1; then
@@ -581,29 +636,25 @@ remove_bootstrap_firewall() {
 }
 
 purge_postgresql() {
-  if command -v pg_lsclusters >/dev/null 2>&1; then
-    while read -r ver name _rest; do
-      [[ -n "${ver}" && -n "${name}" ]] || continue
-      pg_dropcluster --stop "${ver}" "${name}" 2>/dev/null || true
-    done < <(pg_lsclusters --no-header 2>/dev/null || true)
-  fi
+  redgres_uninstall_drop_postgres_clusters
+  redgres_uninstall_remove_postgres_leftovers
   stop_systemd_unit postgresql.service
   stop_systemd_unit postgresql@.service
   if command -v apt-get >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get purge -y postgresql postgresql-* 2>/dev/null || true
+    redgres_uninstall_apt_get purge -y postgresql postgresql-* || true
   elif command -v dnf >/dev/null 2>&1; then
     dnf remove -y postgresql\* 2>/dev/null || true
   elif command -v yum >/dev/null 2>&1; then
     yum remove -y postgresql\* 2>/dev/null || true
   fi
-  rm -rf /var/lib/postgresql 2>/dev/null || true
+  redgres_uninstall_remove_postgres_leftovers
 }
 
 purge_redis_native() {
   stop_systemd_unit redis-server.service
   stop_systemd_unit redis.service
   if command -v apt-get >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get purge -y redis-server redis 2>/dev/null || true
+    redgres_uninstall_apt_get purge -y redis-server redis >/dev/null 2>&1 || true
   elif command -v dnf >/dev/null 2>&1; then
     dnf remove -y redis 2>/dev/null || true
   elif command -v yum >/dev/null 2>&1; then
@@ -614,7 +665,7 @@ purge_redis_native() {
 purge_pgbouncer() {
   stop_systemd_unit pgbouncer.service
   if command -v apt-get >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get purge -y pgbouncer 2>/dev/null || true
+    redgres_uninstall_apt_get purge -y pgbouncer >/dev/null 2>&1 || true
   elif command -v dnf >/dev/null 2>&1; then
     dnf remove -y pgbouncer 2>/dev/null || true
   elif command -v yum >/dev/null 2>&1; then
@@ -689,6 +740,7 @@ fi
 # ── 4. PostgreSQL / Redis / PgBouncer ───────────────────────────────────────
 if [[ "${APP_ONLY}" -eq 0 ]]; then
   step "  ${CYAN}[4/8]${NC} Removing PostgreSQL clusters and packages... "
+  printf '\n'
   purge_postgresql
   step_done
 
@@ -722,6 +774,7 @@ step_done
 
 # ── 7. Filesystem ────────────────────────────────────────────────────────────
 step "  ${CYAN}[7/8]${NC} Removing Redgres files... "
+redgres_uninstall_enter_safe_cwd || true
 rm -f \
   "${VAR_ROOT}/secrets/cloudflare-api-token" \
   "${VAR_ROOT}/secrets/cloudflared-tunnel-token" \
@@ -750,8 +803,16 @@ if [[ "${APP_ONLY}" -eq 0 ]]; then
 fi
 step_done
 
+# ── 8. Leftover apt packages (after cwd is off the deleted checkout) ─────────
 if [[ "${APP_ONLY}" -eq 0 ]] && command -v apt-get >/dev/null 2>&1; then
-  DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
+  step "  ${CYAN}[8/8]${NC} Removing leftover packages... "
+  printf '\n'
+  redgres_uninstall_enter_safe_cwd || true
+  redgres_uninstall_apt_get autoremove -y || true
+  step_done
+else
+  step "  ${CYAN}[8/8]${NC} Leftover packages "
+  step_skip
 fi
 
 if id redgres >/dev/null 2>&1; then
