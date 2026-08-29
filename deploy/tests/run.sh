@@ -1485,6 +1485,50 @@ else
   printf '%s\n' "${coreutils_pick_err}" >&2
 fi
 
+os_release_rc=0
+os_release_err="$(
+  s2_lib_src
+  osr="${tmpdir}/os-release-layout"
+  mkdir -p "${osr}/usr" "${osr}/etc"
+  printf '%s\n' 'ID=ubuntu' >"${osr}/usr/os-release"
+  printf '%s\n' 'ID=ubuntu' >"${osr}/etc/plain"
+  got="$(redgres_resolve_os_release "${osr}/etc/plain" "${osr}/usr/os-release")"
+  [[ "${got}" == "${osr}/etc/plain" ]]
+  if ln -s "${osr}/usr/os-release" "${osr}/etc/os-release" 2>/dev/null && [[ -L "${osr}/etc/os-release" ]]; then
+    got="$(redgres_resolve_os_release "${osr}/etc/os-release" "${osr}/usr/os-release")"
+    [[ "${got}" == "${osr}/usr/os-release" ]]
+    ! redgres_resolve_os_release "${osr}/etc/os-release" "${osr}/usr/missing"
+  fi
+) 2>&1" || os_release_rc=$?
+if [[ "${os_release_rc}" -eq 0 ]]; then
+  pass 'os-release resolver accepts Debian usr/lib file via /etc symlink'
+else
+  fail "os-release resolver (rc=${os_release_rc})"
+  printf '%s\n' "${os_release_err}" >&2
+fi
+
+uninstall_checkout_rc=0
+uninstall_checkout_err="$(
+  # shellcheck disable=SC1091
+  REDGRES_UNINSTALL_FUNCTIONS_ONLY=1 source "${deploy_dir%/*}/uninstall.sh"
+  fake="${tmpdir}/not-a-checkout"
+  mkdir -p "${fake}"
+  ! redgres_uninstall_is_git_checkout "${fake}"
+  ! redgres_uninstall_is_git_checkout /
+  ! redgres_uninstall_is_git_checkout /root
+  clone="${tmpdir}/redgres-src"
+  mkdir -p "${clone}/deploy" "${clone}/.git"
+  printf '%s\n' '#!/bin/sh' >"${clone}/deploy/install.sh"
+  printf '%s\n' '#!/bin/sh' >"${clone}/uninstall.sh"
+  redgres_uninstall_is_git_checkout "${clone}"
+) 2>&1" || uninstall_checkout_rc=$?
+if [[ "${uninstall_checkout_rc}" -eq 0 ]]; then
+  pass 'uninstall git-checkout detector matches clone layout only'
+else
+  fail "uninstall git-checkout detector (rc=${uninstall_checkout_rc})"
+  printf '%s\n' "${uninstall_checkout_err}" >&2
+fi
+
 os_gate_rc=0
 os_gate_err="$(
   s2_lib_src
