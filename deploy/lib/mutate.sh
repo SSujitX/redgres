@@ -24,9 +24,26 @@ redgres_assert_pgdg_ubuntu() {
   esac
 }
 
+redgres_resolve_os_release() {
+  local etc="${1:-/etc/os-release}"
+  local usr="${2:-/usr/lib/os-release}"
+  if [[ -f "${etc}" && ! -L "${etc}" ]]; then
+    printf '%s' "${etc}"
+    return 0
+  fi
+  if [[ -L "${etc}" || ! -e "${etc}" ]]; then
+    if [[ -f "${usr}" && ! -L "${usr}" ]]; then
+      printf '%s' "${usr}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
 redgres_read_os() {
-  local os_file='/etc/os-release'
-  [[ -f "${os_file}" && ! -L "${os_file}" ]] || redgres_die 'os-release is not trusted'
+  local os_file
+  os_file="$(redgres_resolve_os_release)" || redgres_die 'os-release is not trusted'
+  redgres_validate_trusted_path 'os-release' "${os_file}" file
   # shellcheck disable=SC1090
   . "${os_file}"
   redgres_assert_pgdg_ubuntu "${ID:-}" "${VERSION_ID:-}" "${VERSION_CODENAME:-}"
@@ -37,16 +54,27 @@ redgres_read_os() {
 
 redgres_require_amd64() {
   local arch
-  arch="$(/usr/bin/dpkg --print-architecture)"
+  local dpkg_bin='/usr/bin/dpkg'
+  [[ -x "${dpkg_bin}" && -f "${dpkg_bin}" && ! -L "${dpkg_bin}" ]] || redgres_die 'dpkg is unavailable'
+  arch="$("${dpkg_bin}" --print-architecture)"
   [[ "${arch}" == "amd64" ]] || redgres_die "unsupported architecture ${arch}"
   REDGRES_OS_ARCH="${arch}"
 }
 
+redgres_find_ss() {
+  local candidate
+  for candidate in /usr/bin/ss /usr/sbin/ss /bin/ss; do
+    [[ -x "${candidate}" && -f "${candidate}" && ! -L "${candidate}" ]] || continue
+    printf '%s' "${candidate}"
+    return 0
+  done
+  return 1
+}
+
 redgres_port_free() {
   local port="$1"
-  local ss_bin='/usr/bin/ss'
-  local listeners
-  [[ -x "${ss_bin}" && ! -L "${ss_bin}" ]] || redgres_die 'ss is unavailable'
+  local ss_bin listeners
+  ss_bin="$(redgres_find_ss)" || redgres_die 'ss is unavailable'
   listeners="$("${ss_bin}" -H -lnt)" || redgres_die 'ss failed'
   if printf '%s\n' "${listeners}" | /usr/bin/awk -v port="${port}" 'BEGIN { found=0 } $4 ~ (":" port "$") { found=1 } END { exit found ? 0 : 1 }'; then
     redgres_die "port ${port} is already in use"
