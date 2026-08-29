@@ -1460,6 +1460,31 @@ s2_lib_src() {
   source "${deploy_dir}/lib/app_install.sh"
 }
 
+coreutils_pick_rc=0
+coreutils_pick_err="$(
+  s2_lib_src
+  pick_root="${tmpdir}/coreutils-pick"
+  mkdir -p "${pick_root}"
+  ln -s "${pick_root}/missing" "${pick_root}/stat"
+  printf '%s\n' '#!/bin/sh' 'exit 0' >"${pick_root}/gnustat"
+  chmod +x "${pick_root}/gnustat"
+  redgres_pick_coreutils_applet stat "${pick_root}/stat" "${pick_root}/gnustat"
+  [[ "${REDGRES_PICK_BIN}" == "${pick_root}/gnustat" ]]
+  [[ "${#REDGRES_PICK_PREFIX[@]}" -eq 0 ]]
+  printf '%s\n' '#!/bin/sh' 'exit 0' >"${pick_root}/coreutils"
+  chmod +x "${pick_root}/coreutils"
+  redgres_pick_coreutils_applet stat "${pick_root}/stat" "${pick_root}/coreutils"
+  [[ "${REDGRES_PICK_BIN}" == "${pick_root}/coreutils" ]]
+  [[ "${REDGRES_PICK_PREFIX[0]}" == 'stat' ]]
+  ! redgres_pick_coreutils_applet stat "${pick_root}/stat"
+) 2>&1" || coreutils_pick_rc=$?
+if [[ "${coreutils_pick_rc}" -eq 0 ]]; then
+  pass 'coreutils picker skips rust-coreutils symlinks'
+else
+  fail "coreutils picker (rc=${coreutils_pick_rc})"
+  printf '%s\n' "${coreutils_pick_err}" >&2
+fi
+
 os_gate_rc=0
 os_gate_err="$(
   s2_lib_src
