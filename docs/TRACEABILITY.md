@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### Live env includes Postgres/Redis admin files (2026-08-29)
+
+OPS-005 Partial: after Redis `PONG`, live install enables loopback PostgreSQL TLS (snakeoil `sslmode=require` for the production binary), creates `redgres_admin`, and writes `/etc/redgres/postgres.pass` plus `redis://` `/etc/redgres/redis.url` (0600, not logged). `redgres.env` now sets the complete `REDGRES_POSTGRES_*` / `REDGRES_REDIS_ADMIN_URL_FILE` keys production `serve` requires. Commands actually run: Git Bash `bash deploy/tests/run.sh` (177 passed, 0 failed). Not done here: §6.
+
 ### /opt/redgres dirs must be executable by User=redgres (2026-08-29)
 
 OPS-005 Partial: live update `chmod 755` on `/opt/redgres`, `releases/`, and `releases/<ver>`. Installer bootstrap `umask 077` made those directories `0700 root:root`, so systemd `User=redgres` failed `status=203/EXEC` (`Permission denied`) and healthz never bound. Redis `PONG` and checksum already succeeded. Commands actually run: Git Bash `bash deploy/tests/run.sh` (177 passed, 0 failed). Not done here: §6.
