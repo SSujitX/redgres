@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### Stop rolling GitHub `dev` pre-release (2026-08-29)
+
+GitHub Releases publishes versioned tags from `.github/workflows/release.yml` only. Removed `.github/workflows/dev-build.yml` (no `dev` tag/pre-release on master push). `install.sh` / `upgrade.sh` remain the public binary path. `install-dev.sh` compiles master when `REDGRES_DEV_BUILD_LOCAL=1`; otherwise it exits and points at `install.sh`. Commands actually run: `bash -n install-dev.sh uninstall.sh`; `gh release delete dev --cleanup-tag -y` (removed the existing pre-release and `dev` tag). Not done here: live install, §6. Push of this commit is required so origin no longer runs `dev-build`.
+
 ### Public GitHub Pages site (2026-08-29)
 
 Public marketing only in `site/` (home, `/install/`, `/compare/`, `/sponsor/`), deployed by `.github/workflows/pages.yml`. Canonical host is `https://redgres.com/` (`site/CNAME`). Sponsorship contact is `ssujitxx@gmail.com`. `docs/` stays unpublished. Pages are extractable SEO (SoftwareApplication, HowTo, FAQPage, Organization, ContactPage) and honest positioning vs Supabase/Neon/Prisma/Drizzle — not a rank guarantee and not a product-behavior change. Action pins: `configure-pages` `45bfe019` (v6.0.0), `upload-pages-artifact` `fc324d35` (v5.0.0), `deploy-pages` `cd2ce8fc` (v5.0.0). Commands actually run: none (static HTML). Not done here: live DNS for `redgres.com` / `www`, GitHub Pages custom-domain save, or Enforce HTTPS (operator-owned).
