@@ -1559,6 +1559,10 @@ uninstall_purge_err="$(
   grep -q '\[8/8\]' "${deploy_dir%/*}/uninstall.sh"
   grep -q 'redgres_uninstall_enter_safe_cwd' "${deploy_dir%/*}/uninstall.sh"
   grep -q 'redgres_uninstall_remove_postgres_leftovers' "${deploy_dir%/*}/uninstall.sh"
+  grep -q '</dev/null' "${deploy_dir%/*}/uninstall.sh"
+  grep -q "purge -y postgresql 'postgresql-\*'" "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'APT::Get::Assume-Yes=true' "${deploy_dir%/*}/uninstall.sh"
+  grep -F -q 'exec bash "${_uninstall_tmp}" "$@" </dev/null' "${deploy_dir%/*}/uninstall.sh"
 ) 2>&1" || uninstall_purge_rc=$?
 if [[ "${uninstall_purge_rc}" -eq 0 ]]; then
   pass 'uninstall purge leaves leftover Postgres dirs, noninteractive apt, and a safe cwd'
