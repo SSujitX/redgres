@@ -357,6 +357,62 @@ redgres_record_resolved_packages() {
   fi
 }
 
+redgres_redis_url_encode() {
+  printf '%s' "$1" | /usr/bin/sed 's/%/%25/g; s/+/%2B/g; s/\//%2F/g; s/=/%3D/g'
+}
+
+redgres_write_redis_admin_url() {
+  local passfile='/etc/redgres/redis.pass' urlfile='/etc/redgres/redis.url' pass encoded
+  [[ -f "${passfile}" && ! -L "${passfile}" ]] || redgres_die 'redis passfile is not trusted'
+  pass="$(/usr/bin/cat "${passfile}")"
+  [[ -n "${pass}" ]] || redgres_die 'redis passfile is empty'
+  encoded="$(redgres_redis_url_encode "${pass}")"
+  umask 077
+  printf 'redis://default:%s@127.0.0.1:6380/0\n' "${encoded}" >"${urlfile}"
+  /usr/bin/chown redgres:redgres "${urlfile}"
+  /usr/bin/chmod 600 "${urlfile}"
+}
+
+redgres_enable_postgres_loopback_ssl() {
+  if [[ ! -f /etc/ssl/certs/ssl-cert-snakeoil.pem || ! -f /etc/ssl/private/ssl-cert-snakeoil.key ]]; then
+    redgres_apt_install ssl-cert
+    /usr/sbin/make-ssl-cert generate-default-snakeoil --force-overwrite >/dev/null
+  fi
+  /usr/sbin/usermod -aG ssl-cert postgres
+  /usr/bin/pg_conftool "${postgres_version}" main set ssl on
+  /usr/bin/pg_conftool "${postgres_version}" main set ssl_cert_file '/etc/ssl/certs/ssl-cert-snakeoil.pem'
+  /usr/bin/pg_conftool "${postgres_version}" main set ssl_key_file '/etc/ssl/private/ssl-cert-snakeoil.key'
+  /usr/bin/pg_ctlcluster "${postgres_version}" main restart
+  redgres_log 'postgres loopback TLS enabled (snakeoil; sslmode=require)'
+}
+
+redgres_create_postgres_admin() {
+  local passfile='/etc/redgres/postgres.pass' pass
+  if [[ ! -f "${passfile}" ]]; then
+    pass="$(/usr/bin/dd if=/dev/urandom bs=24 count=1 status=none | /usr/bin/base64 | /usr/bin/tr -d '\n')"
+    umask 077
+    printf '%s\n' "${pass}" >"${passfile}"
+  fi
+  [[ -f "${passfile}" && ! -L "${passfile}" ]] || redgres_die 'postgres passfile is not trusted'
+  /usr/bin/chown redgres:redgres "${passfile}"
+  /usr/bin/chmod 600 "${passfile}"
+  pass="$(/usr/bin/cat "${passfile}")"
+  [[ -n "${pass}" ]] || redgres_die 'postgres passfile is empty'
+  /usr/sbin/runuser -u postgres -- /usr/bin/psql -d postgres -v ON_ERROR_STOP=1 <<EOSQL
+DO \$\$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'redgres_admin') THEN
+    ALTER ROLE redgres_admin WITH LOGIN PASSWORD \$redgres\$${pass}\$redgres\$;
+  ELSE
+    CREATE ROLE redgres_admin LOGIN PASSWORD \$redgres\$${pass}\$redgres\$;
+  END IF;
+END
+\$\$;
+GRANT CONNECT ON DATABASE postgres TO redgres_admin;
+EOSQL
+  redgres_log 'postgres admin role redgres_admin ready (password not logged)'
+}
+
 redgres_live_install() {
   local pg_pkg
   [[ "${mode}" == "fresh-postgres" ]] || redgres_not_implemented 'live existing-postgres is not implemented'
@@ -405,10 +461,11 @@ redgres_live_install() {
   /usr/bin/pg_createcluster --start "${postgres_version}" main
   redgres_low_memory_postgres
   /usr/bin/pg_conftool "${postgres_version}" main set listen_addresses '127.0.0.1'
-  /usr/bin/pg_ctlcluster "${postgres_version}" main reload || /usr/bin/pg_ctlcluster "${postgres_version}" main restart
-
+  redgres_enable_postgres_loopback_ssl
   redgres_postgres_health
   redgres_redis_health
+  redgres_create_postgres_admin
+  redgres_write_redis_admin_url
   redgres_write_default_env
   redgres_install_bootstrap_firewall
   release_path="$(redgres_download_latest_release)"

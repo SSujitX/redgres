@@ -1606,11 +1606,15 @@ compose_yaml_err="$(
   printf '%s\n' "${yaml}" | /usr/bin/grep -q 'redis.conf:/usr/local/etc/redis/redis.conf:ro'
   printf '%s\n' "${yaml}" | /usr/bin/grep -q 'redis:8.8.2@sha256:c514823c0ec1a40764df434efc2dc4ab5ec669c71c1cb00e4f7b1a694cee9fc3'
 )" 2>&1 || compose_yaml_rc=$?
-if [[ "${compose_yaml_rc}" -eq 0 ]]; then
-  pass 'redis compose YAML sets SKIP_FIX_PERMS and digest pin'
+encode_rc=0
+encode_got="$(
+  s2_lib_src
+  redgres_redis_url_encode 'ab+c/d='
+)" || encode_rc=$?
+if [[ "${encode_rc}" -eq 0 && "${encode_got}" == 'ab%2Bc%2Fd%3D' ]]; then
+  pass 'redis URL encoder percent-encodes base64 alphabet'
 else
-  fail "redis compose YAML (rc=${compose_yaml_rc})"
-  printf '%s\n' "${compose_yaml_err}" >&2
+  fail "redis URL encoder (rc=${encode_rc} got=${encode_got})"
 fi
 
 logs_safe_rc=0
