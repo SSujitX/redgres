@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### Live release download jail (2026-08-29)
+
+OPS-005 Partial: live `fresh-postgres` downloads GitHub `releases/latest` into `/var/lib/redgres-release` (`0700` root:root), not `${TMPDIR:-/tmp}`. `/tmp` is `1777`; trusted-path rejects world-writable ancestors, so the previous workdir made `--release is not trusted` after Redis was already `PONG`. Full uninstall deletes that jail. Commands actually run: Git Bash `bash deploy/tests/run.sh` (177 passed, 0 failed). Not done here: §6.
+
 ### Redis official image can read redis.conf (2026-08-29)
 
 OPS-001 Partial: live Redis Compose sets `SKIP_FIX_PERMS=1` and `redis.conf` is `0600` uid/gid `999` so the official image can read the `:ro` mount. Previous `root:root` `0600` made `redis-server` exit 1 (`Permission denied` on `/usr/local/etc/redis/redis.conf`) and the container restart forever; health then timed out with stderr discarded. Health now waits for container `running`, quotes AUTH, and on timeout prints inspect status plus logs with `requirepass`/`password`/`AUTH ` lines dropped. Low-RAM hosts (`MemTotal` under 2GiB) also set `maxmemory 64mb`. Full uninstall also `docker compose -f /etc/redgres/redis-compose.yml down`. Commands actually run: Git Bash `bash deploy/tests/run.sh` (176 passed, 0 failed). Not done here: COMPATIBILITY.md §6.
