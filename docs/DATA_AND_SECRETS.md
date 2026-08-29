@@ -108,10 +108,12 @@ Recommended:
 /etc/redgres/secrets/postgres-admin-password     root:root    0600
 /etc/redgres/secrets/legacy-vault-secret         root:root    0600
 /etc/redgres/secrets/redis-admin-url              root:root    0600
-/var/lib/redgres/secrets/cloudflare-api-token     root:root    0600
-/var/lib/redgres/secrets/cloudflared-tunnel-token  root:root    0600
-/etc/redgres/secrets/cloudflare-oauth-token       root:root    0600
-/etc/redgres/secrets/certbot-dns-token            root:root    0600
+/var/lib/redgres/secrets                          redgres:redgres 0700
+/var/lib/redgres/secrets/cloudflare-api-token     redgres:redgres 0600
+/var/lib/redgres/secrets/cloudflared-tunnel-token  redgres:redgres 0600
+/var/lib/redgres/secrets/cloudflare-oauth-client.json redgres:redgres 0600
+/var/lib/redgres/secrets/cloudflare-oauth-token.json  redgres:redgres 0600
+/var/lib/redgres/secrets/certbot-dns.ini          redgres:redgres 0600
 ```
 
 If systemd runs as `redgres`, root-only secret files cannot be read directly after privilege drop. Prefer systemd credentials (`LoadCredential=`) or a narrowly permissioned `root:redgres 0640` application secret file. The implementation must choose and document one coherent mechanism; do not publish an impossible permission model.

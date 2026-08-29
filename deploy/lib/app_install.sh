@@ -4,11 +4,67 @@
 # on a TTY. It is never written to installer logs. Redis/Postgres secrets stay in files.
 set -euo pipefail
 
+# Domain wizard secret *paths* only. Files are created later by the UI/API
+# (0600, never logged). Empty path disables token paste / apply.
+redgres_domain_secret_env_defaults() {
+  cat <<'EOF'
+REDGRES_CLOUDFLARE_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-api-token
+REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token
+REDGRES_CLOUDFLARE_OAUTH_CLIENT_FILE=/var/lib/redgres/secrets/cloudflare-oauth-client.json
+REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-oauth-token.json
+REDGRES_CERTBOT_DNS_TOKEN_FILE=/var/lib/redgres/secrets/certbot-dns.ini
+EOF
+}
+
+# Append missing KEY=value lines from stdin. Never overwrite an existing key.
+redgres_env_ensure_lines() {
+  local env_file="$1"
+  local line key added=0
+  [[ -f "${env_file}" ]] || return 1
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ -n "${line}" ]] || continue
+    key="${line%%=*}"
+    [[ -n "${key}" && "${key}" != "${line}" ]] || continue
+    if grep -qE "^${key}=" "${env_file}"; then
+      continue
+    fi
+    printf '%s\n' "${line}" >>"${env_file}"
+    added=1
+  done
+  [[ "${added}" -eq 1 ]]
+}
+
+redgres_ensure_secrets_dir() {
+  local dir="${REDGRES_SECRETS_DIR:-/var/lib/redgres/secrets}"
+  /usr/bin/mkdir -p "${dir}"
+  if /usr/bin/getent passwd redgres >/dev/null 2>&1; then
+    /usr/bin/chown redgres:redgres "${dir}" 2>/dev/null || true
+  fi
+  /usr/bin/chmod 700 "${dir}"
+}
+
+redgres_ensure_domain_secret_env() {
+  local env_file="${1:-/etc/redgres/redgres.env}"
+  redgres_ensure_secrets_dir
+  [[ -f "${env_file}" ]] || return 1
+  if redgres_domain_secret_env_defaults | redgres_env_ensure_lines "${env_file}"; then
+    return 0
+  fi
+  return 1
+}
+
 redgres_write_default_env() {
   local env_file='/etc/redgres/redgres.env' base
   /usr/bin/getent group redgres >/dev/null || redgres_die 'redgres group is missing'
+  redgres_ensure_secrets_dir
   if [[ -f "${env_file}" ]]; then
-    redgres_log 'redgres.env already-correct'
+    if redgres_ensure_domain_secret_env "${env_file}"; then
+      /usr/bin/chmod 660 "${env_file}"
+      /usr/bin/chown root:redgres "${env_file}"
+      redgres_log 'redgres.env domain secret paths appended'
+    else
+      redgres_log 'redgres.env already-correct'
+    fi
     return 0
   fi
   /usr/bin/mkdir -p /etc/redgres
@@ -34,6 +90,7 @@ REDGRES_POSTGRES_EXPECTED_MAJOR=${postgres_version}
 REDGRES_REDIS_ADMIN_URL_FILE=/etc/redgres/redis.url
 REDGRES_REDIS_EXPECTED_SERIES=${redis_version}
 EOF
+  redgres_domain_secret_env_defaults >>"${env_file}"
   /usr/bin/chmod 660 "${env_file}"
   /usr/bin/chown root:redgres "${env_file}"
   redgres_log 'default /etc/redgres/redgres.env written (bootstrap HTTP; CookieSecure false until domain TLS)'
@@ -112,6 +169,7 @@ redgres_chown_app_state() {
     /usr/bin/chown redgres:redgres "${db}" 2>/dev/null || true
     /usr/bin/chown redgres:redgres "${db}-wal" "${db}-shm" 2>/dev/null || true
   fi
+  redgres_ensure_secrets_dir
   if [[ -d /var/lib/redgres/secrets ]]; then
     /usr/bin/chown -R redgres:redgres /var/lib/redgres/secrets
   fi

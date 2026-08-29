@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### Live env writes Cloudflare token file paths (2026-08-29)
+
+OPS-009 Partial: live `/etc/redgres/redgres.env` now sets `REDGRES_CLOUDFLARE_TOKEN_FILE`, `REDGRES_TUNNEL_TOKEN_FILE`, OAuth client/token paths, and `REDGRES_CERTBOT_DNS_TOKEN_FILE` under `/var/lib/redgres/secrets` (`0700` `redgres:redgres`). Empty paths were disabling Domain token paste (`400` `Cloudflare token file is not configured`). Re-run/upgrade appends missing keys and never overwrites an existing key. Tokens stay in those files, not SQLite. Commands actually run: Git Bash `bash deploy/tests/run.sh` (184 passed, 0 failed). Not done here: live Cloudflare apply, §6.
+
 ### Uninstall apt SIGTTIN on curl|bash -y (2026-08-29)
 
 OPS-001 Partial: `curl | sudo bash -s -- -y` used to `exec` the downloaded script with stdin on `/dev/tty`. `apt-get purge` then stopped (`T+` / `do_signal_stop` / SIGTTIN) at the PostgreSQL package summary and looked hung. `-y` now re-execs with `</dev/null`; `redgres_uninstall_apt_get` always runs apt with stdin `/dev/null`, `Assume-Yes`, and quoted `'postgresql-*'`. Live evidence: host `apt-get` pid stopped with fd/0 → `/dev/tty` under `sudo bash -s -- -y`. Commands actually run: Git Bash `bash deploy/tests/run.sh` (183 passed, 0 failed). Live: `curl | sudo bash -s -- -y` left `apt-get purge` in `T+` with stdin `/dev/tty`. Not done here: §6.

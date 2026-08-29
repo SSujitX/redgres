@@ -27,7 +27,7 @@ Run as root on the Redgres host. Paths below match production defaults; if you c
 ### 1. Paths and Redgres env
 
 ```bash
-install -d -m 0700 -o root -g root /var/lib/redgres/secrets
+install -d -m 0700 -o redgres -g redgres /var/lib/redgres/secrets
 ```
 
 Ensure Redgres is configured (example):

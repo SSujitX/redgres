@@ -296,6 +296,11 @@ redgres_update_apply() {
 
   /usr/bin/ln -sfn "${dest}" "${current_link}"
   redgres_write_unit_file "${current_link}/redgres"
+  if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && declare -F redgres_ensure_domain_secret_env >/dev/null 2>&1; then
+    if [[ -f /etc/redgres/redgres.env ]]; then
+      redgres_ensure_domain_secret_env /etc/redgres/redgres.env || true
+    fi
+  fi
 
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true

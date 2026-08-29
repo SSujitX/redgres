@@ -238,7 +238,9 @@ EOF
 redgres_ensure_identity() {
   /usr/bin/getent group redgres >/dev/null || /usr/sbin/groupadd --system redgres
   /usr/bin/getent passwd redgres >/dev/null || /usr/sbin/useradd --system --gid redgres --home-dir /var/lib/redgres --shell /usr/sbin/nologin redgres
-  /usr/bin/mkdir -p /var/lib/redgres /var/lib/redgres/redis/data /etc/redgres
+  /usr/bin/mkdir -p /var/lib/redgres /var/lib/redgres/secrets /var/lib/redgres/redis/data /etc/redgres
+  /usr/bin/chown redgres:redgres /var/lib/redgres/secrets
+  /usr/bin/chmod 700 /var/lib/redgres/secrets
   /usr/bin/chown redgres:redgres /var/lib/redgres
   /usr/bin/chmod 750 /var/lib/redgres
   /usr/bin/chown root:root /var/lib/redgres/redis

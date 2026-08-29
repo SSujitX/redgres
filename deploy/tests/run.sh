@@ -1948,6 +1948,36 @@ if grep -q 'User=redgres' "${deploy_dir}/systemd/redgres.service" && grep -q 'UM
 else
   fail 'deploy/systemd/redgres.service missing User=redgres or UMask=0077'
 fi
+
+domain_env_rc=0
+domain_env_err="$(
+  s2_lib_src
+  env_file="${tmpdir}/redgres-domain.env"
+  secrets_dir="${tmpdir}/redgres-secrets"
+  printf '%s\n' 'REDGRES_ENVIRONMENT=production' 'REDGRES_ADDRESS=127.0.0.1:8790' >"${env_file}"
+  REDGRES_SECRETS_DIR="${secrets_dir}"
+  redgres_domain_secret_env_defaults | grep -q '^REDGRES_CLOUDFLARE_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-api-token$'
+  redgres_domain_secret_env_defaults | grep -q '^REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token$'
+  redgres_ensure_domain_secret_env "${env_file}"
+  grep -q '^REDGRES_CLOUDFLARE_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-api-token$' "${env_file}"
+  grep -q '^REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token$' "${env_file}"
+  grep -q '^REDGRES_ENVIRONMENT=production$' "${env_file}"
+  printf '%s\n' 'REDGRES_CLOUDFLARE_TOKEN_FILE=/custom/token' >"${env_file}.keep"
+  printf '%s\n' 'REDGRES_ENVIRONMENT=production' >>"${env_file}.keep"
+  REDGRES_SECRETS_DIR="${secrets_dir}"
+  redgres_ensure_domain_secret_env "${env_file}.keep"
+  grep -q '^REDGRES_CLOUDFLARE_TOKEN_FILE=/custom/token$' "${env_file}.keep"
+  ! grep -q '^REDGRES_CLOUDFLARE_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-api-token$' "${env_file}.keep"
+  grep -q '^REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token$' "${env_file}.keep"
+  ! redgres_ensure_domain_secret_env "${env_file}.keep"
+  [[ -d "${secrets_dir}" ]]
+) 2>&1" || domain_env_rc=$?
+if [[ "${domain_env_rc}" -eq 0 ]]; then
+  pass 'domain secret env paths append and never overwrite an existing key'
+else
+  fail "domain secret env ensure (rc=${domain_env_rc})"
+  printf '%s\n' "${domain_env_err}" >&2
+fi
 # Live fresh as non-root must fail closed before inventory. Root is not exercised here
 # (absolute /usr/bin/apt-get would bypass STUB_NAMES).
 if [[ "${EUID}" -ne 0 ]]; then

@@ -42,6 +42,53 @@ redgres_summary_env_value() {
   printf '%s' "${line#*=}"
 }
 
+# Domain wizard secret *paths* only. Files are created later by the UI/API.
+redgres_domain_secret_env_defaults() {
+  cat <<'EOF'
+REDGRES_CLOUDFLARE_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-api-token
+REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token
+REDGRES_CLOUDFLARE_OAUTH_CLIENT_FILE=/var/lib/redgres/secrets/cloudflare-oauth-client.json
+REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-oauth-token.json
+REDGRES_CERTBOT_DNS_TOKEN_FILE=/var/lib/redgres/secrets/certbot-dns.ini
+EOF
+}
+
+redgres_env_ensure_lines() {
+  local env_file="$1"
+  local line key added=0
+  [[ -f "${env_file}" ]] || return 1
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ -n "${line}" ]] || continue
+    key="${line%%=*}"
+    [[ -n "${key}" && "${key}" != "${line}" ]] || continue
+    if grep -qE "^${key}=" "${env_file}"; then
+      continue
+    fi
+    printf '%s\n' "${line}" >>"${env_file}"
+    added=1
+  done
+  [[ "${added}" -eq 1 ]]
+}
+
+redgres_ensure_secrets_dir() {
+  local dir="${REDGRES_SECRETS_DIR:-/var/lib/redgres/secrets}"
+  mkdir -p "${dir}"
+  if command -v getent >/dev/null 2>&1 && getent passwd redgres >/dev/null 2>&1; then
+    chown redgres:redgres "${dir}" 2>/dev/null || true
+  fi
+  chmod 700 "${dir}"
+}
+
+redgres_ensure_domain_secret_env() {
+  local env_file="${1:-/etc/redgres/redgres.env}"
+  redgres_ensure_secrets_dir
+  [[ -f "${env_file}" ]] || return 1
+  if redgres_domain_secret_env_defaults | redgres_env_ensure_lines "${env_file}"; then
+    return 0
+  fi
+  return 1
+}
+
 redgres_public_ipv4() {
   local ip candidate
   for candidate in $(hostname -I 2>/dev/null); do
@@ -521,13 +568,11 @@ write_unit() {
 }
 
 ensure_env_file() {
-  if [[ -f "${ETC_ROOT}/redgres.env" ]]; then
-    return 0
-  fi
   mkdir -p "${ETC_ROOT}" "${VAR_ROOT}/secrets"
   redgres_ensure_app_identity
-  ORIGIN="$(redgres_bootstrap_login_origin 8989)"
-  cat >"${ETC_ROOT}/redgres.env" <<EOF
+  if [[ ! -f "${ETC_ROOT}/redgres.env" ]]; then
+    ORIGIN="$(redgres_bootstrap_login_origin 8989)"
+    cat >"${ETC_ROOT}/redgres.env" <<EOF
 REDGRES_ENVIRONMENT=development
 REDGRES_ADDRESS=127.0.0.1:8790
 REDGRES_BOOTSTRAP_ADDRESS=0.0.0.0:8989
@@ -536,6 +581,9 @@ REDGRES_SQLITE_PATH=/var/lib/redgres/redgres.db
 REDGRES_COOKIE_SECURE=false
 REDGRES_BOOTSTRAP_UFW_REMOVE_CMD=/usr/libexec/redgres/bootstrap-ufw-remove.sh
 EOF
+    redgres_domain_secret_env_defaults >>"${ETC_ROOT}/redgres.env"
+  fi
+  redgres_ensure_domain_secret_env "${ETC_ROOT}/redgres.env" || true
   chmod 0660 "${ETC_ROOT}/redgres.env"
   chown root:redgres "${ETC_ROOT}/redgres.env" 2>/dev/null || true
 }
