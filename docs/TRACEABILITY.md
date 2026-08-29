@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### /opt/redgres dirs must be executable by User=redgres (2026-08-29)
+
+OPS-005 Partial: live update `chmod 755` on `/opt/redgres`, `releases/`, and `releases/<ver>`. Installer bootstrap `umask 077` made those directories `0700 root:root`, so systemd `User=redgres` failed `status=203/EXEC` (`Permission denied`) and healthz never bound. Redis `PONG` and checksum already succeeded. Commands actually run: Git Bash `bash deploy/tests/run.sh` (177 passed, 0 failed). Not done here: §6.
+
 ### Trusted sha256sum on Ubuntu 26.04 (2026-08-29)
 
 OPS-005 Partial: live checksum uses the same non-symlink coreutils picker as `stat`/`env`. `/usr/bin/sha256sum` is a rust-coreutils symlink on Ubuntu 26.04, so the previous hard-coded path failed `sha256sum is not trusted` after Redis `PONG` and a trusted tarball jail. Commands actually run: Git Bash `bash deploy/tests/run.sh` (177 passed, 0 failed). Not done here: §6.
