@@ -167,12 +167,6 @@ Keeps `/etc/redgres` and `/var/lib/redgres`.
 curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/upgrade.sh | sudo bash
 ```
 
-## Dev snapshot (not a release)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/install-dev.sh | sudo bash
-```
-
 ---
 
 # Debug, logs, and fixes (on the server)
