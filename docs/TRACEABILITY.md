@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### Ubuntu 26.04 rust-coreutils stat/env (2026-08-29)
+
+OPS-001 Partial: bootstrap and trusted-path helpers no longer require `/usr/bin/stat` and `/usr/bin/env` to be regular files. They pick the first non-symlink of GNU `/usr/bin/{stat,env}`, `/usr/bin/gnu{stat,env}`, `/usr/lib/cargo/bin/coreutils/{applet,coreutils}`, or `/usr/bin/coreutils` (multicall `coreutils <applet>`). That is the Ubuntu 26.04 rust-coreutils layout (`/usr/bin/stat` → `../lib/cargo/bin/coreutils/stat`). Live OS/package gate is unchanged: PGDG `noble` (24.04) and `resolute` (26.04) only — not 24.10 or later non-PGDG Ubuntu. Commands actually run: Git Bash `bash deploy/tests/run.sh` (172 passed, 0 failed). Not done here: live 26.04 `sudo ./deploy/install.sh`, §6.
+
 ### Stop rolling GitHub `dev` pre-release (2026-08-29)
 
 GitHub Releases publishes versioned tags from `.github/workflows/release.yml` only. Removed `.github/workflows/dev-build.yml` (no `dev` tag/pre-release on master push). `install.sh` / `upgrade.sh` remain the public binary path. `install-dev.sh` compiles master when `REDGRES_DEV_BUILD_LOCAL=1`; otherwise it exits and points at `install.sh`. Commands actually run: `bash -n install-dev.sh uninstall.sh`; `gh release delete dev --cleanup-tag -y` (removed the existing pre-release and `dev` tag). Not done here: live install, §6. Push of this commit is required so origin no longer runs `dev-build`.
