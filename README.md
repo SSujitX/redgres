@@ -329,6 +329,8 @@ curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh
 curl -fsSL https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh | sudo bash -s -- -y
 ```
 
+Full purge also deletes a git clone of this repo at `/root/redgres` or `~/redgres` (and the tree that contains `uninstall.sh` if you ran it from a clone).
+
 ---
 
 # Looking for sponsorship
