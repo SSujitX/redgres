@@ -660,6 +660,9 @@ if [[ "${APP_ONLY}" -eq 0 ]]; then
     if [[ -f "${VAR_ROOT}/redis/docker-compose.yml" ]]; then
       (cd "${VAR_ROOT}/redis" && docker compose down --volumes --remove-orphans 2>/dev/null) || true
     fi
+    if [[ -f "${ETC_ROOT}/redis-compose.yml" ]]; then
+      docker compose -f "${ETC_ROOT}/redis-compose.yml" down --volumes --remove-orphans 2>/dev/null || true
+    fi
     CONTAINERS="$(redgres_docker_containers || true)"
     if [[ -n "${CONTAINERS}" ]]; then
       docker stop ${CONTAINERS} 2>/dev/null || true
