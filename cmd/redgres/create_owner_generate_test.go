@@ -83,3 +83,35 @@ func TestCreateOwnerGenerateDisplayFailureMessage(t *testing.T) {
 		t.Fatalf("err = %v, want recovery message", err)
 	}
 }
+
+func TestCreateOwnerPasswordFifoRequiresGenerate(t *testing.T) {
+	err := createOwner([]string{"-username", "admin", "-sqlite-path", filepath.Join(t.TempDir(), "x.db"), "-password-fifo", filepath.Join(t.TempDir(), "x.fifo")})
+	if err == nil || !strings.Contains(err.Error(), "--password-fifo requires --generate") {
+		t.Fatalf("err = %v, want --password-fifo requires --generate", err)
+	}
+}
+
+func TestCreateOwnerPasswordFifoRejectsRegularFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redgres.db")
+	notFifo := filepath.Join(t.TempDir(), "not-a-fifo")
+	if err := os.WriteFile(notFifo, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tty, err := os.Create(filepath.Join(t.TempDir(), "tty"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tty.Close()
+
+	openOwnerTTY = func() (*os.File, error) { return tty, nil }
+	generateOwnerPassword = func() (string, error) { return "generated-owner-password-1", nil }
+	t.Cleanup(func() {
+		openOwnerTTY = func() (*os.File, error) { return os.OpenFile("/dev/tty", os.O_WRONLY, 0) }
+		generateOwnerPassword = auth.GeneratePassword
+	})
+
+	err = createOwner([]string{"-username", "admin", "-sqlite-path", path, "-generate", "-password-fifo", notFifo})
+	if err == nil || !strings.Contains(err.Error(), "named pipe") {
+		t.Fatalf("err = %v, want named pipe error", err)
+	}
+}

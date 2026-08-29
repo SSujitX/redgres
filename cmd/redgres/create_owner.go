@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/SSujitX/redgres/internal/auth"
 	"github.com/SSujitX/redgres/internal/config"
@@ -32,11 +33,15 @@ func createOwner(args []string) error {
 	sqlitePath := fs.String("sqlite-path", envDefault("REDGRES_SQLITE_PATH", config.DefaultSQLitePath), "SQLite database path")
 	replace := fs.Bool("replace", false, "replace the existing owner")
 	generate := fs.Bool("generate", false, "generate a strong password and print it once to the controlling terminal")
+	passwordFifo := fs.String("password-fifo", "", "absolute named pipe to receive the generated password once")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if err := auth.ValidateUsername(*username); err != nil {
 		return err
+	}
+	if *passwordFifo != "" && !*generate {
+		return errors.New("--password-fifo requires --generate")
 	}
 
 	var password string
@@ -75,13 +80,44 @@ func createOwner(args []string) error {
 	if _, err := auth.CreateOrReplaceOwner(db, *username, password, *replace); err != nil {
 		return err
 	}
-	if generatedTTY != nil {
+	if *passwordFifo != "" {
+		if err := writeOwnerPasswordFifo(*passwordFifo, password); err != nil {
+			return fmt.Errorf("owner created but the generated password could not be displayed; rerun create-owner --generate --replace: %w", err)
+		}
+	} else if generatedTTY != nil {
 		if _, err := fmt.Fprintf(generatedTTY, "Generated owner password: %s\n", password); err != nil {
 			return fmt.Errorf("owner created but the generated password could not be displayed; rerun create-owner --generate --replace: %w", err)
 		}
 	}
 	fmt.Fprintln(os.Stderr, "owner created")
 	return nil
+}
+
+func writeOwnerPasswordFifo(path, password string) error {
+	if path == "" {
+		return errors.New("password-fifo path is empty")
+	}
+	if !filepath.IsAbs(path) {
+		return errors.New("password-fifo must be an absolute path")
+	}
+	clean := filepath.Clean(path)
+	st, err := os.Lstat(clean)
+	if err != nil {
+		return fmt.Errorf("password-fifo: %w", err)
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		return errors.New("password-fifo must not be a symlink")
+	}
+	if st.Mode()&os.ModeNamedPipe == 0 {
+		return errors.New("password-fifo must be a named pipe")
+	}
+	f, err := os.OpenFile(clean, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintln(f, password)
+	return err
 }
 
 func defaultReadPasswordPair() (string, string, error) {
