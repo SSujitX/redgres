@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # App-release + owner bootstrap + finish report for the live fresh install (OPS-005 Partial).
-# Does not print secrets. The owner password is shown once on /dev/tty by create-owner --generate.
+# Owner password is captured through a named pipe and printed once in the finish box
+# on a TTY. It is never written to installer logs. Redis/Postgres secrets stay in files.
 set -euo pipefail
 
 redgres_write_default_env() {
@@ -282,23 +283,179 @@ redgres_have_owner_tty() {
   { : >/dev/tty; } 2>/dev/null
 }
 
+redgres_owner_password_fifo() {
+  printf '%s' "${REDGRES_OWNER_PASSWORD_FIFO:-/var/lib/redgres/owner-pass.fifo}"
+}
+
+redgres_read_owner_password_fifo() {
+  local fifo="$1"
+  if [[ -x /usr/bin/timeout ]]; then
+    /usr/bin/timeout 30 /usr/bin/cat "${fifo}"
+  else
+    /usr/bin/cat "${fifo}"
+  fi
+}
+
+# Generated owner password for the finish box. Never Redis/Postgres secrets.
+REDGRES_FINISH_OWNER_PASSWORD=''
+
 redgres_owner_bootstrap() {
   local bin="$1" db='/var/lib/redgres/redgres.db'
+  local fifo parent reader rc=0
+  REDGRES_FINISH_OWNER_PASSWORD=''
   if ! redgres_have_owner_tty; then
     redgres_log "Owner not created here (no controlling terminal). Run: ${bin} create-owner --username admin --sqlite-path ${db}"
     return 0
   fi
-  redgres_log 'Creating owner (password shown once on this terminal, not in the install log).'
-  "${bin}" create-owner --generate --username admin --sqlite-path "${db}" || redgres_die "create-owner --generate failed"
+  fifo="$(redgres_owner_password_fifo)"
+  parent="$(/usr/bin/dirname "${fifo}")"
+  /usr/bin/mkdir -p "${parent}"
+  /usr/bin/rm -f "${fifo}"
+  /usr/bin/mkfifo -m 600 "${fifo}"
+  if [[ "${EUID}" -eq 0 ]]; then
+    /usr/bin/chown root:root "${fifo}"
+  fi
+  REDGRES_FINISH_OWNER_PASSWORD="$(
+    redgres_read_owner_password_fifo "${fifo}" &
+    reader=$!
+    if ! "${bin}" create-owner --generate --username admin --sqlite-path "${db}" --password-fifo "${fifo}"; then
+      /usr/bin/kill "${reader}" 2>/dev/null || true
+      wait "${reader}" 2>/dev/null || true
+      exit 1
+    fi
+    wait "${reader}"
+  )" || rc=$?
+  /usr/bin/rm -f "${fifo}"
+  if [[ "${rc}" -ne 0 ]]; then
+    REDGRES_FINISH_OWNER_PASSWORD=''
+    redgres_die "create-owner --generate failed"
+  fi
+  REDGRES_FINISH_OWNER_PASSWORD="${REDGRES_FINISH_OWNER_PASSWORD%$'\n'}"
+}
+
+redgres_pkg_version() {
+  local pkg="$1"
+  if [[ -x /usr/bin/dpkg-query ]]; then
+    /usr/bin/dpkg-query -W -f '${Version}' "${pkg}" 2>/dev/null || printf '%s' 'not-installed'
+  else
+    printf '%s' 'not-on-this-host'
+  fi
+}
+
+redgres_installed_app_version() {
+  local f='/opt/redgres/current/VERSION'
+  if declare -F redgres_opt_current_link >/dev/null 2>&1; then
+    f="$(redgres_opt_current_link)/VERSION"
+  fi
+  if [[ -f "${f}" && ! -L "${f}" ]]; then
+    /usr/bin/tr -d '[:space:]' <"${f}"
+    return 0
+  fi
+  printf '%s' 'unknown'
+}
+
+redgres_ufw_on_off() {
+  if ! command -v ufw >/dev/null 2>&1; then
+    printf '%s' 'not installed'
+    return 0
+  fi
+  if ufw status 2>/dev/null | grep -q '^Status: active'; then
+    printf '%s' 'on'
+  else
+    printf '%s' 'off'
+  fi
+}
+
+redgres_ufw_bootstrap_note() {
+  local from
+  from="$(redgres_bootstrap_allow_from 2>/dev/null || true)"
+  if [[ -z "${from}" ]]; then
+    printf '%s' '8989 not world-opened (set REDGRES_BOOTSTRAP_ALLOW_FROM)'
+    return 0
+  fi
+  printf '8989/tcp from %s only' "${from}"
+}
+
+redgres_finish_show_owner_password() {
+  [[ -n "${REDGRES_FINISH_OWNER_PASSWORD}" ]] || return 1
+  if [[ -t 1 || "${REDGRES_FINISH_SHOW_PASSWORD:-}" == "1" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+redgres_print_finish_box() {
+  local -a rows=("$@")
+  local w=0 r rule
+  for r in "${rows[@]}"; do
+    if ((${#r} > w)); then
+      w=${#r}
+    fi
+  done
+  if ((w < 62)); then
+    w=62
+  fi
+  rule="$(printf '%*s' "$((w + 2))" '' | /usr/bin/tr ' ' '-')"
+  printf '+%s+\n' "${rule}"
+  for r in "${rows[@]}"; do
+    printf '| %-*s |\n' "${w}" "${r}"
+  done
+  printf '+%s+\n' "${rule}"
+}
+
+redgres_finish_box_rows() {
+  local origin="$1" login_line="$2"
+  local app_ver pg_ver docker_ver pgb_ver pgb_line ufw_line ufw_boot os_line
+  app_ver="$(redgres_installed_app_version)"
+  pg_ver="$(redgres_pkg_version "postgresql-${postgres_version:-unknown}")"
+  docker_ver="$(redgres_pkg_version docker.io)"
+  ufw_line="$(redgres_ufw_on_off)"
+  ufw_boot="$(redgres_ufw_bootstrap_note)"
+  os_line="${REDGRES_OS_ID:-unknown} ${REDGRES_OS_VERSION_ID:-} (${REDGRES_OS_CODENAME:-})"
+  if [[ "${pgbouncer_mode:-}" == "fresh" ]]; then
+    pgb_ver="$(redgres_pkg_version pgbouncer)"
+    pgb_line="fresh  ${pgb_ver}  (listen not configured)"
+  else
+    pgb_line="${pgbouncer_mode:-skipped}"
+  fi
+  redgres_print_finish_box \
+    "Redgres install complete (Partial)" \
+    "Mode           ${mode:-unknown}" \
+    "OS             ${os_line}" \
+    "Bootstrap UI   ${origin}" \
+    "Owner login    ${login_line}" \
+    "API origin     127.0.0.1:8790  (loopback, not public)" \
+    "PostgreSQL     ${postgres_version:-?}  ${pg_ver}  127.0.0.1:5432" \
+    "Redis          ${redis_version:-?}  127.0.0.1:6380  (loopback)" \
+    "PgBouncer      ${pgb_line}" \
+    "Docker         ${docker_ver}" \
+    "Redgres        ${app_ver}" \
+    "UFW            ${ufw_line}" \
+    "UFW bootstrap  ${ufw_boot}" \
+    "Public DB      ports not opened" \
+    "Next           sign in, then Domain & Network for TLS"
 }
 
 redgres_finish_report() {
-  local origin
+  local origin login_line
   origin="$(redgres_bootstrap_base_url)"
   origin="${origin%$'\n'}"
-  redgres_log ''
-  redgres_log 'Install complete (Partial).'
-  redgres_log "Bootstrap UI: ${origin}"
-  redgres_log 'Open the bootstrap URL, sign in as owner, then use Domain & Network in the UI to attach your domain/TLS.'
-  redgres_log 'PostgreSQL and Redis are bound to loopback only; no public database ports were opened.'
+  if redgres_finish_show_owner_password; then
+    login_line="admin / ${REDGRES_FINISH_OWNER_PASSWORD}"
+  elif [[ -n "${REDGRES_FINISH_OWNER_PASSWORD}" ]]; then
+    login_line='admin / (shown on this terminal only)'
+  else
+    login_line='run create-owner --username admin (no TTY here)'
+  fi
+  printf '\n'
+  redgres_finish_box_rows "${origin}" "${login_line}"
+  if ! redgres_finish_show_owner_password && [[ -n "${REDGRES_FINISH_OWNER_PASSWORD}" ]]; then
+    if [[ -n "${REDGRES_FINISH_TTY:-}" ]]; then
+      printf 'Owner login    admin / %s\n' "${REDGRES_FINISH_OWNER_PASSWORD}" >>"${REDGRES_FINISH_TTY}"
+    elif redgres_have_owner_tty; then
+      printf 'Owner login    admin / %s\n' "${REDGRES_FINISH_OWNER_PASSWORD}" >/dev/tty
+    fi
+  fi
+  printf '\n'
+  REDGRES_FINISH_OWNER_PASSWORD=''
 }

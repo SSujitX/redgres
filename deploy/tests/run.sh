@@ -1529,6 +1529,44 @@ else
   printf '%s\n' "${uninstall_checkout_err}" >&2
 fi
 
+uninstall_purge_rc=0
+uninstall_purge_err="$(
+  # shellcheck disable=SC1091
+  REDGRES_UNINSTALL_FUNCTIONS_ONLY=1 source "${deploy_dir%/*}/uninstall.sh"
+  leftover_root="${tmpdir}/pg-leftovers"
+  mkdir -p "${leftover_root}/etc/postgresql/18/main" "${leftover_root}/var/log/postgresql"
+  printf 'log\n' >"${leftover_root}/var/log/postgresql/postgresql-18-main.log"
+  mapfile -t leftover_dirs < <(redgres_uninstall_postgres_leftover_dirs "${leftover_root}")
+  [[ "${leftover_dirs[0]}" == "${leftover_root}/etc/postgresql" ]]
+  [[ "${leftover_dirs[1]}" == "${leftover_root}/etc/postgresql-common" ]]
+  [[ "${leftover_dirs[2]}" == "${leftover_root}/var/log/postgresql" ]]
+  [[ "${leftover_dirs[3]}" == "${leftover_root}/var/lib/postgresql" ]]
+  redgres_uninstall_remove_postgres_leftovers "${leftover_root}"
+  [[ ! -e "${leftover_root}/etc/postgresql" ]]
+  [[ ! -e "${leftover_root}/var/log/postgresql" ]]
+  redgres_uninstall_export_apt_env
+  [[ "${DEBIAN_FRONTEND}" == noninteractive ]]
+  [[ "${NEEDRESTART_MODE}" == l ]]
+  [[ "${NEEDRESTART_SUSPEND}" == 1 ]]
+  [[ "${APT_LISTCHANGES_FRONTEND}" == none ]]
+  cwd_jail="${tmpdir}/deleted-cwd"
+  mkdir -p "${cwd_jail}"
+  (
+    cd "${cwd_jail}"
+    redgres_uninstall_enter_safe_cwd
+    [[ "$(pwd)" != "${cwd_jail}" ]]
+  )
+  grep -q '\[8/8\]' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'redgres_uninstall_enter_safe_cwd' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'redgres_uninstall_remove_postgres_leftovers' "${deploy_dir%/*}/uninstall.sh"
+) 2>&1" || uninstall_purge_rc=$?
+if [[ "${uninstall_purge_rc}" -eq 0 ]]; then
+  pass 'uninstall purge leaves leftover Postgres dirs, noninteractive apt, and a safe cwd'
+else
+  fail "uninstall leftover-dir / apt / cwd helpers (rc=${uninstall_purge_rc})"
+  printf '%s\n' "${uninstall_purge_err}" >&2
+fi
+
 os_gate_rc=0
 os_gate_err="$(
   s2_lib_src
@@ -1731,6 +1769,7 @@ fi
 genfail_rc=0
 genfail_out="$(
   s2_lib_src
+  REDGRES_OWNER_PASSWORD_FIFO="${tmpdir}/genfail.fifo"
   redgres_have_owner_tty() { return 0; }
   redgres_owner_bootstrap "${mock_bin}" 2>&1
 )" || genfail_rc=$?
@@ -1738,6 +1777,97 @@ if [[ "${genfail_rc}" -eq 1 ]] && [[ "${genfail_out}" == *"create-owner --genera
   pass 'owner bootstrap generate failure exits 1'
 else
   fail "owner bootstrap generate failure (rc=${genfail_rc} out=${genfail_out})"
+fi
+
+fifo_bin="${tmpdir}/mock-redgres-fifo"
+cat >"${fifo_bin}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+fifo=""
+next=0
+for a in "$@"; do
+  if [[ "${next}" -eq 1 ]]; then
+    fifo="${a}"
+    next=0
+    continue
+  fi
+  if [[ "${a}" == "--password-fifo" ]]; then
+    next=1
+  fi
+done
+[[ -n "${fifo}" ]] || exit 1
+printf 'generated-from-mock\n' >"${fifo}"
+exit 0
+EOF
+chmod 700 "${fifo_bin}"
+fifo_rc=0
+fifo_out="$(
+  s2_lib_src
+  REDGRES_OWNER_PASSWORD_FIFO="${tmpdir}/owner-pass.fifo"
+  redgres_have_owner_tty() { return 0; }
+  redgres_owner_bootstrap "${fifo_bin}"
+  printf 'captured=%s\n' "${REDGRES_FINISH_OWNER_PASSWORD}"
+) 2>&1" || fifo_rc=$?
+if [[ "${fifo_rc}" -eq 0 ]] && [[ "${fifo_out}" == *'captured=generated-from-mock'* ]] && [[ "${fifo_out}" != *'Generated owner password:'* ]]; then
+  pass 'owner bootstrap captures generated password from fifo'
+else
+  fail "owner bootstrap fifo capture (rc=${fifo_rc} out=${fifo_out})"
+fi
+
+finish_out="$(
+  s2_lib_src
+  mode=fresh-postgres
+  postgres_version=18
+  redis_version=8.2
+  pgbouncer_mode=fresh
+  REDGRES_OS_ID=ubuntu
+  REDGRES_OS_VERSION_ID=26.04
+  REDGRES_OS_CODENAME=resolute
+  redgres_bootstrap_base_url() { printf 'http://203.0.113.10:8989\n'; }
+  redgres_pkg_version() { printf 'stub-pkg'; }
+  redgres_installed_app_version() { printf '1.0.5'; }
+  redgres_ufw_on_off() { printf 'off'; }
+  REDGRES_BOOTSTRAP_ALLOW_FROM='198.51.100.20'
+  redgres_have_owner_tty() { return 1; }
+  REDGRES_FINISH_OWNER_PASSWORD='once-owner-secret'
+  REDGRES_FINISH_SHOW_PASSWORD=1
+  redgres_finish_report
+) 2>&1" || true
+if [[ "${finish_out}" == *'+-'* && "${finish_out}" == *'127.0.0.1:5432'* && "${finish_out}" == *'127.0.0.1:6380'* && "${finish_out}" == *'127.0.0.1:8790'* && "${finish_out}" == *'http://203.0.113.10:8989'* && "${finish_out}" == *'admin / once-owner-secret'* && "${finish_out}" == *'1.0.5'* && "${finish_out}" == *'UFW            off'* && "${finish_out}" == *'198.51.100.20'* && "${finish_out}" == *'fresh-postgres'* && "${finish_out}" == *'resolute'* ]]; then
+  pass 'finish report box includes listeners, versions, UFW, and TTY login'
+else
+  fail "finish report box (out=${finish_out})"
+fi
+if [[ "${finish_out}" == *'super-redis-secret'* || "${finish_out}" == *'requirepass'* || "${finish_out}" == *'127.0.0.1:6432'* ]]; then
+  fail "finish report leaked a Redis secret or claimed PgBouncer 6432 (out=${finish_out})"
+else
+  pass 'finish report does not emit Redis credentials or an unconfigured 6432 listener'
+fi
+
+hidden_tty="${tmpdir}/finish-tty.txt"
+: >"${hidden_tty}"
+hidden_out="$(
+  s2_lib_src
+  mode=fresh-postgres
+  postgres_version=18
+  redis_version=8.2
+  pgbouncer_mode=fresh
+  redgres_bootstrap_base_url() { printf 'http://203.0.113.10:8989\n'; }
+  redgres_pkg_version() { printf 'stub-pkg'; }
+  redgres_installed_app_version() { printf '1.0.5'; }
+  redgres_ufw_on_off() { printf 'off'; }
+  redgres_have_owner_tty() { return 1; }
+  REDGRES_FINISH_OWNER_PASSWORD='once-owner-secret'
+  REDGRES_FINISH_SHOW_PASSWORD=
+  REDGRES_FINISH_TTY="${hidden_tty}"
+  redgres_finish_report
+) 2>&1" || true
+if [[ "${hidden_out}" == *'once-owner-secret'* ]]; then
+  fail "finish report printed owner password without a TTY (out=${hidden_out})"
+elif [[ "${hidden_out}" == *'shown on this terminal only'* ]] && grep -q 'admin / once-owner-secret' "${hidden_tty}"; then
+  pass 'finish report omits owner password from stdout and writes it to the TTY sink'
+else
+  fail "finish report TTY omission (out=${hidden_out})"
 fi
 
 ip_rc=0

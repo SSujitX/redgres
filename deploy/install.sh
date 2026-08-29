@@ -218,13 +218,15 @@ change DNS/Cloudflare on --dry-run. Live install without --dry-run (fresh-postgr
 + fresh Redis) uses Ubuntu 24.04 (noble) and 26.04 (resolute): PGDG named packages
 resolved then installed as pkg=version, digest-pinned Redis images, then pg_isready
 and redis PING. It then writes /etc/redgres/redgres.env, downloads the latest GitHub
-release tarball + SHA256SUMS, applies it through update, and prints a finish report.
-Owner create-owner --generate runs only when /dev/tty can be opened.
+release tarball + SHA256SUMS, applies it through update, and prints a boxed finish report
+(bootstrap URL, versions, loopback listeners, UFW, owner login). Owner create-owner
+--generate --password-fifo runs only when /dev/tty can be opened; the password is shown
+once in that box on a TTY, not in the install log.
 
 Exit 0: --help, valid --non-interactive --dry-run plan, skip matrix, valid postgres-plan, backup or postgres-extensions apply skip matrix
 Exit 1: unsupported, incomplete, missing, unparseable, mismatched selection, or invalid extension plan
 Exit 2: live existing-mode install, live verify, or other subcommand not implemented
-Live install without --dry-run is Partial: fresh-postgres + fresh Redis + application tarball + TTY-safe owner bootstrap + finish report (bootstrap URL). Loopback DB listeners; no public UFW DB ports.
+Live install without --dry-run is Partial: fresh-postgres + fresh Redis + application tarball + TTY-safe owner bootstrap + boxed finish report (URL, versions, listeners, UFW, owner login). Loopback DB listeners; no public UFW DB ports.
 
 Majors/series only (not Hub tags). latest and latest-tested are rejected.
 EOF
