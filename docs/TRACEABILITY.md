@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### Trusted sha256sum on Ubuntu 26.04 (2026-08-29)
+
+OPS-005 Partial: live checksum uses the same non-symlink coreutils picker as `stat`/`env`. `/usr/bin/sha256sum` is a rust-coreutils symlink on Ubuntu 26.04, so the previous hard-coded path failed `sha256sum is not trusted` after Redis `PONG` and a trusted tarball jail. Commands actually run: Git Bash `bash deploy/tests/run.sh` (177 passed, 0 failed). Not done here: §6.
+
 ### Live release download jail (2026-08-29)
 
 OPS-005 Partial: live `fresh-postgres` downloads GitHub `releases/latest` into `/var/lib/redgres-release` (`0700` root:root), not `${TMPDIR:-/tmp}`. `/tmp` is `1777`; trusted-path rejects world-writable ancestors, so the previous workdir made `--release is not trusted` after Redis was already `PONG`. Full uninstall deletes that jail. Commands actually run: Git Bash `bash deploy/tests/run.sh` (177 passed, 0 failed). Not done here: §6.
