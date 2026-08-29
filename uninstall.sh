@@ -706,7 +706,7 @@ else
 fi
 if [[ "${APP_ONLY}" -eq 0 ]]; then
   print_cloudflare_followup
-  printf '%b\n' "  ${DIM}Reinstall: curl -fsSL .../install-dev.sh | sudo bash${NC}"
+  printf '%b\n' "  ${DIM}Reinstall: curl -fsSL .../install.sh | sudo bash${NC}"
 else
   printf '%b\n' "  ${DIM}PostgreSQL and Redis were not removed (--app-only).${NC}"
 fi
