@@ -18,6 +18,7 @@ Date: 2026-08-27
 ## Consequences
 
 - This is a bounded exception to ADR-003's "UI origin ports are not publicly exposed": a temporary, source-restricted, self-closing UI listener.
+- The installer obtains that operator IP without opening `8989` to the world: `REDGRES_BOOTSTRAP_ALLOW_FROM`, SSH client (including values recovered after `sudo` strips `SSH_CONNECTION`), `who -m` remote host, or one TTY prompt.
 - The bootstrap window still relies on the owner password plus rate limiting; the source restriction is the primary boundary.
 - Internet-wide scanning (Shodan/masscan) makes a permanently open UI port unacceptable, so the auto-close is mandatory, not optional.
 - The Domain & Network wizard and this bootstrap journey are recorded as PRD OPS-008/OPS-009; operator steps are [DOMAIN_AND_NETWORK.md](../DOMAIN_AND_NETWORK.md) and [README.md](../../README.md).
