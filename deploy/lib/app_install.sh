@@ -23,6 +23,15 @@ REDGRES_BASE_URL=${base}
 REDGRES_SQLITE_PATH=/var/lib/redgres/redgres.db
 REDGRES_COOKIE_SECURE=false
 REDGRES_BOOTSTRAP_UFW_REMOVE_CMD=/usr/libexec/redgres/bootstrap-ufw-remove.sh
+REDGRES_POSTGRES_HOST=127.0.0.1
+REDGRES_POSTGRES_PORT=5432
+REDGRES_POSTGRES_DATABASE=postgres
+REDGRES_POSTGRES_USER=redgres_admin
+REDGRES_POSTGRES_PASSWORD_FILE=/etc/redgres/postgres.pass
+REDGRES_POSTGRES_SSLMODE=require
+REDGRES_POSTGRES_EXPECTED_MAJOR=${postgres_version}
+REDGRES_REDIS_ADMIN_URL_FILE=/etc/redgres/redis.url
+REDGRES_REDIS_EXPECTED_SERIES=${redis_version}
 EOF
   /usr/bin/chmod 660 "${env_file}"
   /usr/bin/chown root:redgres "${env_file}"
