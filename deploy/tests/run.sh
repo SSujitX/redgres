@@ -1933,6 +1933,79 @@ else
   fail "bootstrap allow-from / UFW argv (rc=${ip_rc})"
 fi
 
+sudo_ip_rc=0
+( s2_lib_src
+  REDGRES_BOOTSTRAP_ALLOW_FROM=
+  unset SSH_CONNECTION SSH_CLIENT
+  REDGRES_BOOTSTRAP_WHO_LINE=
+  REDGRES_BOOTSTRAP_PROC_ENVIRON="${tmpdir}/sudo-ssh.environ"
+  printf 'HOME=/root\0SSH_CONNECTION=198.51.100.77 60022 203.0.113.10 22\0TERM=xterm\0' >"${REDGRES_BOOTSTRAP_PROC_ENVIRON}"
+  got="$(redgres_bootstrap_allow_from)"
+  [[ "${got}" == '198.51.100.77' ]]
+) >/dev/null 2>&1 || sudo_ip_rc=$?
+if [[ "${sudo_ip_rc}" -eq 0 ]]; then
+  pass 'bootstrap allow-from recovers SSH client IP when sudo strips SSH_CONNECTION'
+else
+  fail "bootstrap allow-from sudo-stripped SSH (rc=${sudo_ip_rc})"
+fi
+
+who_ip_rc=0
+( s2_lib_src
+  REDGRES_BOOTSTRAP_ALLOW_FROM=
+  unset SSH_CONNECTION SSH_CLIENT
+  REDGRES_BOOTSTRAP_PROC_ENVIRON=
+  REDGRES_BOOTSTRAP_WHO_LINE='ubuntu   pts/0        2026-08-30 04:49 (203.0.113.99)'
+  got="$(redgres_bootstrap_allow_from)"
+  [[ "${got}" == '203.0.113.99' ]]
+  REDGRES_BOOTSTRAP_WHO_LINE='ubuntu   pts/0        2026-08-30 04:49 (localhost)'
+  ! redgres_bootstrap_allow_from
+  REDGRES_BOOTSTRAP_WHO_LINE='root     tty1         2026-08-30 04:49'
+  ! redgres_bootstrap_allow_from
+) >/dev/null 2>&1 || who_ip_rc=$?
+if [[ "${who_ip_rc}" -eq 0 ]]; then
+  pass 'bootstrap allow-from uses who remote IP and rejects localhost/console'
+else
+  fail "bootstrap allow-from who line (rc=${who_ip_rc})"
+fi
+
+prompt_ip_rc=0
+( s2_lib_src
+  REDGRES_BOOTSTRAP_ALLOW_FROM=
+  unset SSH_CONNECTION SSH_CLIENT
+  REDGRES_BOOTSTRAP_PROC_ENVIRON=
+  REDGRES_BOOTSTRAP_WHO_LINE=
+  REDGRES_BOOTSTRAP_ALLOW_TTY="${tmpdir}/bootstrap-allow.tty"
+  printf '%s\n' '0.0.0.0' '203.0.113.50' >"${REDGRES_BOOTSTRAP_ALLOW_TTY}"
+  got="$(redgres_resolve_bootstrap_allow_from)"
+  [[ "${got}" == '203.0.113.50' ]]
+  [[ "${REDGRES_BOOTSTRAP_ALLOW_FROM}" == '203.0.113.50' ]]
+  argv="$(redgres_ufw_bootstrap_allow_argv "${got}")"
+  [[ "${argv}" == 'allow from 203.0.113.50 to any port 8989 proto tcp comment redgres-bootstrap' ]]
+  [[ "${argv}" != *'allow 8989/tcp'* ]]
+) >/dev/null 2>&1 || prompt_ip_rc=$?
+if [[ "${prompt_ip_rc}" -eq 0 ]]; then
+  pass 'bootstrap resolve prompts once on TTY and rejects world-open 0.0.0.0'
+else
+  fail "bootstrap resolve TTY prompt (rc=${prompt_ip_rc})"
+fi
+
+closed_ip_rc=0
+( s2_lib_src
+  REDGRES_BOOTSTRAP_ALLOW_FROM=
+  unset SSH_CONNECTION SSH_CLIENT
+  REDGRES_BOOTSTRAP_PROC_ENVIRON=
+  REDGRES_BOOTSTRAP_WHO_LINE=
+  REDGRES_BOOTSTRAP_ALLOW_TTY="${tmpdir}/missing-bootstrap-tty"
+  ! redgres_resolve_bootstrap_allow_from
+  from="$(redgres_bootstrap_allow_from 2>/dev/null || true)"
+  [[ -z "${from}" ]]
+) >/dev/null 2>&1 || closed_ip_rc=$?
+if [[ "${closed_ip_rc}" -eq 0 ]]; then
+  pass 'bootstrap resolve stays closed when IP is unknown and no TTY'
+else
+  fail "bootstrap resolve fail-closed (rc=${closed_ip_rc})"
+fi
+
 unit_rc=0
 unit_out="$(
   s2_lib_src
