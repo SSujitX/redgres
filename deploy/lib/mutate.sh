@@ -460,7 +460,7 @@ redgres_live_install() {
   fi
   /usr/bin/pg_createcluster --start "${postgres_version}" main
   redgres_low_memory_postgres
-  /usr/bin/pg_conftool "${postgres_version}" main set listen_addresses '127.0.0.1'
+  /usr/bin/pg_conftool "${postgres_version}" main set listen_addresses "'127.0.0.1'"
   redgres_enable_postgres_loopback_ssl
   redgres_postgres_health
   redgres_redis_health
