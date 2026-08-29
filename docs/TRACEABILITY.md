@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### Uninstall apt SIGTTIN on curl|bash -y (2026-08-29)
+
+OPS-001 Partial: `curl | sudo bash -s -- -y` used to `exec` the downloaded script with stdin on `/dev/tty`. `apt-get purge` then stopped (`T+` / `do_signal_stop` / SIGTTIN) at the PostgreSQL package summary and looked hung. `-y` now re-execs with `</dev/null`; `redgres_uninstall_apt_get` always runs apt with stdin `/dev/null`, `Assume-Yes`, and quoted `'postgresql-*'`. Live evidence: host `apt-get` pid stopped with fd/0 → `/dev/tty` under `sudo bash -s -- -y`. Commands actually run: Git Bash `bash deploy/tests/run.sh` (183 passed, 0 failed). Live: `curl | sudo bash -s -- -y` left `apt-get purge` in `T+` with stdin `/dev/tty`. Not done here: §6.
+
 ### create-owner --password-fifo vs GitHub latest (2026-08-29)
 
 OPS-005 Partial: live owner bootstrap probes `create-owner -h` for `-password-fifo` before passing that flag. Clone scripts were ahead of GitHub `releases/latest` (v1.0.5), so `--password-fifo` printed `flag provided but not defined` and aborted after `result=applied`. Older binaries now use `--generate` (TTY print) with an explicit log line. Commands actually run: Git Bash `bash deploy/tests/run.sh` (183 passed, 0 failed). Not done here: §6.
