@@ -11,6 +11,72 @@
 #   curl ... | sudo bash -s -- -y --app-only [--purge-config] [--purge-state]
 set -uo pipefail
 
+# Git clone detection (sourced by tests with REDGRES_UNINSTALL_FUNCTIONS_ONLY=1).
+redgres_uninstall_is_git_checkout() {
+  local dir="$1"
+  [[ -n "${dir}" && "${dir}" == /* ]] || return 1
+  case "${dir}" in
+    /|/root|/home|/tmp|/opt|/usr|/var|/etc|/bin|/sbin) return 1 ;;
+    /tmp/*|/opt/redgres|/opt/redgres/*) return 1 ;;
+    */./*|*/../*|*/.|*/..) return 1 ;;
+  esac
+  [[ ! -L "${dir}" && -d "${dir}" ]] || return 1
+  [[ -d "${dir}/.git" || -f "${dir}/.git" ]] || return 1
+  [[ -f "${dir}/deploy/install.sh" && -f "${dir}/uninstall.sh" ]] || return 1
+  return 0
+}
+
+redgres_uninstall_collect_git_checkouts() {
+  local script="${BASH_SOURCE[0]:-}"
+  local script_dir="" dir
+  local -a found=() out=()
+  local seen dup
+
+  if [[ -n "${script}" ]]; then
+    if [[ "${script}" == /* ]]; then
+      script_dir="${script%/*}"
+    else
+      script_dir="$(pwd -P)/${script%/*}"
+      script_dir="${script_dir%/.}"
+    fi
+    if [[ -d "${script_dir}" ]]; then
+      script_dir="$(cd "${script_dir}" && pwd -P)" || script_dir=""
+    else
+      script_dir=""
+    fi
+    if redgres_uninstall_is_git_checkout "${script_dir}"; then
+      found+=("${script_dir}")
+    fi
+  fi
+
+  for dir in /root/redgres "${HOME}/redgres"; do
+    if redgres_uninstall_is_git_checkout "${dir}"; then
+      found+=("${dir}")
+    fi
+  done
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" && "${SUDO_USER}" != */* && "${SUDO_USER}" != *".."* ]]; then
+    dir="/home/${SUDO_USER}/redgres"
+    if redgres_uninstall_is_git_checkout "${dir}"; then
+      found+=("${dir}")
+    fi
+  fi
+
+  for dir in "${found[@]}"; do
+    dup=0
+    for seen in "${out[@]+"${out[@]}"}"; do
+      [[ "${seen}" == "${dir}" ]] && dup=1 && break
+    done
+    [[ "${dup}" -eq 0 ]] && out+=("${dir}")
+  done
+  if [[ "${#out[@]}" -gt 0 ]]; then
+    printf '%s\n' "${out[@]}"
+  fi
+}
+
+if [[ "${REDGRES_UNINSTALL_FUNCTIONS_ONLY:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 REDGRES_UNINSTALL_URL="${REDGRES_UNINSTALL_URL:-https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh}"
 
 # curl | bash leaves stdin on a pipe — re-run from a real file so confirm + heredocs work.
@@ -62,7 +128,9 @@ Usage: uninstall.sh [-y|--force] [--app-only] [--keep-remote] [--purge-config] [
 
 Default (no --app-only): full purge — application, config, SQLite state, Cloudflare
 DNS/tunnel/Access (via stored API token), certbot db/rs certificates, tunnel units,
-bootstrap firewall rule, Redgres Docker workloads, PostgreSQL, Redis, PgBouncer.
+bootstrap firewall rule, Redgres Docker workloads, PostgreSQL, Redis, PgBouncer,
+and git checkouts that look like this repository (/root/redgres, ~/redgres, or the
+tree that contains this script).
 
 --keep-remote: local purge only; skip Cloudflare API and certbot delete.
 --app-only: remove only /opt/redgres and systemd units; databases preserved unless
@@ -104,7 +172,8 @@ else
   printf '%b\n' "${DIM}  There is no undo. This script does not create or verify backups.${NC}"
   printf '%b\n' ""
   printf '%b\n' "${DIM}  Also removes: Cloudflare DNS/tunnel/Access (API), certbot db/rs certs, tunnel units,${NC}"
-  printf '%b\n' "${DIM}  bootstrap :8989 firewall rule, Redgres Docker workloads, cloudflared package.${NC}"
+  printf '%b\n' "${DIM}  bootstrap :8989 firewall rule, Redgres Docker workloads, cloudflared package,${NC}"
+  printf '%b\n' "${DIM}  and git clones of this repo at /root/redgres or ~/redgres.${NC}"
   printf '%b\n' "${DIM}  Docker Engine stays installed. Use --keep-remote to skip Cloudflare/certbot.${NC}"
   printf '%b\n' ""
 fi
@@ -671,6 +740,10 @@ if [[ "${APP_ONLY}" -eq 0 || "${PURGE_STATE}" -eq 1 ]]; then
 fi
 if [[ "${APP_ONLY}" -eq 0 ]]; then
   rm -rf "${BACKUP_ROOT}" /var/log/redgres 2>/dev/null || true
+  while IFS= read -r checkout || [[ -n "${checkout}" ]]; do
+    [[ -n "${checkout}" ]] || continue
+    rm -rf "${checkout}" 2>/dev/null || true
+  done < <(redgres_uninstall_collect_git_checkouts)
 fi
 step_done
 
