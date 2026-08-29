@@ -229,6 +229,28 @@ redgres_release_urls_from_json() {
   printf '%s\n%s\n' "${tarball_url}" "${sums_url}"
 }
 
+# /tmp is 1777; trusted-path rejects world-writable ancestors. Keep downloads
+# under a root-owned 0700 jail so live update can open the tarball.
+redgres_release_download_root() {
+  printf '%s' '/var/lib/redgres-release'
+}
+
+redgres_prepare_release_download_dir() {
+  local root workdir
+  root="$(redgres_release_download_root)"
+  /usr/bin/mkdir -p "${root}"
+  if [[ "${EUID}" -eq 0 ]]; then
+    /usr/bin/chown root:root "${root}"
+  fi
+  /usr/bin/chmod 700 "${root}"
+  workdir="$(/usr/bin/mktemp -d "${root}/XXXXXX")"
+  /usr/bin/chmod 700 "${workdir}"
+  if [[ "${EUID}" -eq 0 ]]; then
+    /usr/bin/chown root:root "${workdir}"
+  fi
+  printf '%s' "${workdir}"
+}
+
 redgres_download_latest_release() {
   local api='https://api.github.com/repos/SSujitX/redgres'
   local json urls tarball_url sums_url asset workdir
@@ -237,14 +259,13 @@ redgres_download_latest_release() {
   tarball_url="$(printf '%s\n' "${urls}" | /usr/bin/sed -n '1p')"
   sums_url="$(printf '%s\n' "${urls}" | /usr/bin/sed -n '2p')"
   asset="${tarball_url##*/}"
-  workdir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/redgres-release.XXXXXX")"
-  /usr/bin/chmod 700 "${workdir}"
-  if [[ "${EUID}" -eq 0 ]]; then
-    /usr/bin/chown root:root "${workdir}"
-  fi
+  workdir="$(redgres_prepare_release_download_dir)"
   /usr/bin/curl -fsSL -o "${workdir}/${asset}" "${tarball_url}"
   /usr/bin/curl -fsSL -o "${workdir}/SHA256SUMS" "${sums_url}"
   /usr/bin/chmod 600 "${workdir}/${asset}" "${workdir}/SHA256SUMS"
+  if [[ "${EUID}" -eq 0 ]]; then
+    /usr/bin/chown root:root "${workdir}/${asset}" "${workdir}/SHA256SUMS"
+  fi
   printf '%s' "${workdir}/${asset}"
 }
 

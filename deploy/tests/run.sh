@@ -1630,6 +1630,17 @@ else
   printf '%s\n' "${logs_safe_err}" >&2
 fi
 
+download_root_rc=0
+download_root="$(
+  s2_lib_src
+  redgres_release_download_root
+)" || download_root_rc=$?
+if [[ "${download_root_rc}" -eq 0 && "${download_root}" == '/var/lib/redgres-release' ]]; then
+  pass 'release download jail is /var/lib/redgres-release'
+else
+  fail "release download jail (rc=${download_root_rc} got=${download_root})"
+fi
+
 urls_rc=0
 urls_out="$(
   s2_lib_src
