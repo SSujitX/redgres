@@ -122,7 +122,12 @@ redgres_uninstall_drop_postgres_clusters() {
 
 redgres_uninstall_apt_get() {
   redgres_uninstall_export_apt_env
-  apt-get -o Dpkg::Use-Pty=0 "$@"
+  # curl | bash re-execs with </dev/tty. apt/needrestart then SIGTTIN-stop (T+)
+  # at the PostgreSQL purge summary and look hung. Never give them a TTY.
+  apt-get -o Dpkg::Use-Pty=0 -o APT::Get::Assume-Yes=true \
+    -o Dpkg::Options::=--force-confdef \
+    -o Dpkg::Options::=--force-confold \
+    "$@" </dev/null
 }
 
 if [[ "${REDGRES_UNINSTALL_FUNCTIONS_ONLY:-}" == "1" ]]; then
@@ -132,6 +137,7 @@ fi
 REDGRES_UNINSTALL_URL="${REDGRES_UNINSTALL_URL:-https://raw.githubusercontent.com/SSujitX/redgres/master/uninstall.sh}"
 
 # curl | bash leaves stdin on a pipe — re-run from a real file so confirm + heredocs work.
+# With -y, do not attach /dev/tty: apt-get then SIGTTIN-stops on the PG purge prompt.
 if [[ ! -t 0 && "${REDGRES_UNINSTALL_FROM_FILE:-}" != "1" ]]; then
   export REDGRES_UNINSTALL_FROM_FILE=1
   _uninstall_tmp="$(mktemp /tmp/redgres-uninstall.XXXXXX.sh)"
@@ -140,11 +146,16 @@ if [[ ! -t 0 && "${REDGRES_UNINSTALL_FROM_FILE:-}" != "1" ]]; then
     exit 1
   fi
   chmod 700 "${_uninstall_tmp}"
-  if [[ -e /dev/tty ]]; then
-    exec bash "${_uninstall_tmp}" "$@" </dev/tty
-  else
+  _uninstall_force=0
+  for _uninstall_arg in "$@"; do
+    case "${_uninstall_arg}" in
+      -y|--force) _uninstall_force=1 ;;
+    esac
+  done
+  if [[ "${_uninstall_force}" -eq 1 || ! -e /dev/tty ]]; then
     exec bash "${_uninstall_tmp}" "$@" </dev/null
   fi
+  exec bash "${_uninstall_tmp}" "$@" </dev/tty
 fi
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'
@@ -641,7 +652,7 @@ purge_postgresql() {
   stop_systemd_unit postgresql.service
   stop_systemd_unit postgresql@.service
   if command -v apt-get >/dev/null 2>&1; then
-    redgres_uninstall_apt_get purge -y postgresql postgresql-* || true
+    redgres_uninstall_apt_get purge -y postgresql 'postgresql-*' || true
   elif command -v dnf >/dev/null 2>&1; then
     dnf remove -y postgresql\* 2>/dev/null || true
   elif command -v yum >/dev/null 2>&1; then
