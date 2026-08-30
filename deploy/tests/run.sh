@@ -1563,9 +1563,32 @@ uninstall_purge_err="$(
   grep -q '/etc/ssl/redgres' "${deploy_dir%/*}/uninstall.sh"
   grep -q 'redgres-copy-certs.sh' "${deploy_dir%/*}/uninstall.sh"
   grep -q 'redgres-tls-issue.service' "${deploy_dir%/*}/uninstall.sh"
-  grep -q "purge -y postgresql 'postgresql-\*'" "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'redgres_uninstall_purge_postgresql_packages' "${deploy_dir%/*}/uninstall.sh"
+  ! grep -F "purge -y postgresql" "${deploy_dir%/*}/uninstall.sh"
   grep -q 'APT::Get::Assume-Yes=true' "${deploy_dir%/*}/uninstall.sh"
   grep -F -q 'exec bash "${_uninstall_tmp}" "$@" </dev/null' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'redgres_uninstall_apt_handle_log' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'redgres_uninstall_purge_installed' "${deploy_dir%/*}/uninstall.sh"
+  grep -A1 'Removing PostgreSQL clusters' "${deploy_dir%/*}/uninstall.sh" | grep -q purge_postgresql
+  grep -A1 'Removing leftover packages' "${deploy_dir%/*}/uninstall.sh" | grep -q redgres_uninstall_enter_safe_cwd
+  apt_ok="$(mktemp)"
+  printf '%s\n' 'Reading package lists... Done' 'Scanning processes...' >"${apt_ok}"
+  [[ -z "$(redgres_uninstall_apt_handle_log "${apt_ok}" 0)" ]]
+  apt_bad="$(mktemp)"
+  printf '%s\n' 'E: Unable to fetch' 'requirepass secret' 'password leaked' >"${apt_bad}"
+  dump="$(redgres_uninstall_apt_handle_log "${apt_bad}" 1 2>&1)" || true
+  [[ "${dump}" == *'apt-get failed'* ]]
+  [[ "${dump}" == *'E: Unable to fetch'* ]]
+  [[ "${dump}" != *'requirepass'* ]]
+  [[ "${dump}" != *'password leaked'* ]]
+  stub_bin="${tmpdir}/uninstall-stub-bin"
+  mkdir -p "${stub_bin}"
+  printf '%s\n' '#!/bin/sh' 'exit 1' >"${stub_bin}/dpkg-query"
+  printf '%s\n' '#!/bin/sh' 'echo RAN_APT; exit 1' >"${stub_bin}/apt-get"
+  chmod +x "${stub_bin}/dpkg-query" "${stub_bin}/apt-get"
+  miss="$(PATH="${stub_bin}:${PATH}" REDGRES_UNINSTALL_APT_GET="${stub_bin}/apt-get" redgres_uninstall_purge_installed redis-server pgbouncer cloudflared)"
+  [[ -z "${miss}" ]]
+  [[ "${miss}" != *RAN_APT* ]]
 ) 2>&1" || uninstall_purge_rc=$?
 if [[ "${uninstall_purge_rc}" -eq 0 ]]; then
   pass 'uninstall purge leaves leftover Postgres dirs, noninteractive apt, and a safe cwd'
@@ -1634,6 +1657,67 @@ expect_apt_candidate_rejected() {
 expect_apt_candidate_rejected 'apt Candidate (none) is rejected' $'pkg:\n  Candidate: (none)\n'
 expect_apt_candidate_rejected 'apt Candidate injection is rejected' $'pkg:\n  Candidate: 1.0;id\n'
 expect_apt_candidate_rejected 'apt Candidate missing is rejected' $'pkg:\n  Installed: (none)\n'
+
+progress_rc=0
+progress_err="$(
+  s2_lib_src
+  sec="$(redgres_section 2 8 Packages)"
+  [[ "${sec}" == *'[2/8] Packages'* ]]
+  [[ "${sec}" != *$'\033['* ]]
+  quiet="$(redgres_run_quiet demo true)"
+  [[ -z "${quiet}" ]]
+  fail_out="$(redgres_run_quiet demo bash -c 'printf "%s\n" "requirepass secret"; printf "%s\n" "boom"; exit 1' 2>&1)" || true
+  [[ "${fail_out}" == *'demo failed'* ]]
+  [[ "${fail_out}" == *'boom'* ]]
+  [[ "${fail_out}" != *'requirepass'* ]]
+  apt_ok="$(/usr/bin/mktemp)"
+  printf '%s\n' 'Hit:1 http://example' 'Reading package lists... Done' 'Scanning processes...' 'NO_PUBKEY 7FCC7D46ACCC4CF8' >"${apt_ok}"
+  note="$(redgres_apt_handle_log "${apt_ok}" 0)"
+  [[ "${note}" == *'using cached PGDG index'* ]]
+  [[ "${note}" != *'Hit:1'* ]]
+  [[ "${note}" != *'Reading package lists'* ]]
+  [[ "${note}" != *'Scanning processes'* ]]
+  apt_bad="$(/usr/bin/mktemp)"
+  printf '%s\n' 'E: Unable to fetch' 'Failed to fetch https://apt.example/dists' 'requirepass secret' 'password leaked' 'postgresql://u:p@h/db' >"${apt_bad}"
+  dump="$(redgres_apt_handle_log "${apt_bad}" 1 2>&1)" || true
+  [[ "${dump}" == *'apt-get failed'* ]]
+  [[ "${dump}" == *'E: Unable to fetch'* ]]
+  [[ "${dump}" == *'Failed to fetch https://apt.example/dists'* ]]
+  [[ "${dump}" != *'requirepass'* ]]
+  [[ "${dump}" != *'password leaked'* ]]
+  [[ "${dump}" != *':p@h/db'* ]]
+  [[ "${dump}" == *'[redacted]@'* ]]
+  fake_ok="${tmpdir}/fake-apt-ok"
+  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "Reading package lists... Done"' 'exit 0' >"${fake_ok}"
+  chmod +x "${fake_ok}"
+  wrap_ok="$(REDGRES_APT_GET="${fake_ok}" redgres_apt_get update)"
+  [[ -z "${wrap_ok}" ]]
+  ! ls /tmp/redgres-cmd.* >/dev/null 2>&1
+  fake_bad="${tmpdir}/fake-apt-bad"
+  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "E: Unable" "Failed to fetch https://apt.example/dists" "requirepass secret" "postgresql://u:p@h/db"' 'exit 1' >"${fake_bad}"
+  chmod +x "${fake_bad}"
+  wrap_rc=0
+  wrap_fail="$(REDGRES_APT_GET="${fake_bad}" redgres_apt_get update 2>&1)" || wrap_rc=$?
+  [[ "${wrap_rc}" -ne 0 ]]
+  [[ "${wrap_fail}" == *'apt-get failed'* ]]
+  [[ "${wrap_fail}" == *'Failed to fetch https://apt.example/dists'* ]]
+  [[ "${wrap_fail}" != *'requirepass'* ]]
+  [[ "${wrap_fail}" != *':p@h/db'* ]]
+  ! ls /tmp/redgres-cmd.* >/dev/null 2>&1
+  grep -q "redgres_section 1 8 'Preflight'" "${deploy_dir}/lib/mutate.sh"
+  grep -q "redgres_section 8 8 'Application'" "${deploy_dir}/lib/mutate.sh"
+  grep -q 'REDGRES_DOMAIN_RUNTIME_OPTIONAL=1' "${deploy_dir}/lib/mutate.sh"
+  grep -q 'REDGRES_DOMAIN_RUNTIME_OPTIONAL' "${deploy_dir}/lib/release.sh"
+  grep -q 'NEEDRESTART_SUSPEND=1' "${deploy_dir}/lib/mutate.sh"
+  ! grep -E 'DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update' "${deploy_dir}/lib/mutate.sh"
+  grep -q 'psql -q -d postgres' "${deploy_dir}/lib/mutate.sh"
+)" 2>&1 || progress_rc=$?
+if [[ "${progress_rc}" -eq 0 ]]; then
+  pass 'live install progress is compact and secret-safe'
+else
+  fail "live install progress helpers (rc=${progress_rc})"
+  printf '%s\n' "${progress_err}" >&2
+fi
 
 pong_rc=0
 ( s2_lib_src; redgres_assert_redis_pong $'NOAUTH Authentication required.\n' ) >/dev/null 2>&1 || pong_rc=$?
