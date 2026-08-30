@@ -13,6 +13,8 @@ REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token
 REDGRES_CLOUDFLARE_OAUTH_CLIENT_FILE=/var/lib/redgres/secrets/cloudflare-oauth-client.json
 REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-oauth-token.json
 REDGRES_CERTBOT_DNS_TOKEN_FILE=/var/lib/redgres/secrets/certbot-dns.ini
+REDGRES_TLS_ISSUE_REQUEST_FILE=/var/lib/redgres/tls-issue.request
+REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result
 EOF
 }
 
@@ -53,15 +55,36 @@ redgres_ensure_domain_secret_env() {
   return 1
 }
 
+redgres_pgbouncer_env_lines() {
+  if [[ "${redgres_pgbouncer_listen:-}" == "1" ]]; then
+    printf 'REDGRES_POSTGRES_POOLED_PORT=6432\n'
+  fi
+}
+
+redgres_ensure_pgbouncer_env() {
+  local env_file="${1:-/etc/redgres/redgres.env}"
+  [[ -f "${env_file}" ]] || return 1
+  if redgres_pgbouncer_env_lines | redgres_env_ensure_lines "${env_file}"; then
+    return 0
+  fi
+  return 1
+}
+
 redgres_write_default_env() {
-  local env_file='/etc/redgres/redgres.env' base
+  local env_file='/etc/redgres/redgres.env' base added=0
   /usr/bin/getent group redgres >/dev/null || redgres_die 'redgres group is missing'
   redgres_ensure_secrets_dir
   if [[ -f "${env_file}" ]]; then
     if redgres_ensure_domain_secret_env "${env_file}"; then
+      added=1
+    fi
+    if redgres_ensure_pgbouncer_env "${env_file}"; then
+      added=1
+    fi
+    if [[ "${added}" -eq 1 ]]; then
       /usr/bin/chmod 660 "${env_file}"
       /usr/bin/chown root:redgres "${env_file}"
-      redgres_log 'redgres.env domain secret paths appended'
+      redgres_log 'redgres.env missing keys appended'
     else
       redgres_log 'redgres.env already-correct'
     fi
@@ -91,6 +114,7 @@ REDGRES_REDIS_ADMIN_URL_FILE=/etc/redgres/redis.url
 REDGRES_REDIS_EXPECTED_SERIES=${redis_version}
 EOF
   redgres_domain_secret_env_defaults >>"${env_file}"
+  redgres_pgbouncer_env_lines >>"${env_file}"
   /usr/bin/chmod 660 "${env_file}"
   /usr/bin/chown root:redgres "${env_file}"
   redgres_log 'default /etc/redgres/redgres.env written (bootstrap HTTP; CookieSecure false until domain TLS)'
@@ -415,6 +439,94 @@ redgres_install_bootstrap_firewall() {
   redgres_ufw_restrict_bootstrap || true
 }
 
+# Official stable suite from https://pkg.cloudflare.com/ (Debian/Ubuntu including 24.04 and 26.04).
+redgres_cloudflared_apt_source_line() {
+  printf '%s\n' 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main'
+}
+
+redgres_domain_unit_src() {
+  printf '%s' "${REDGRES_DOMAIN_UNIT_SRC:-${script_dir}/systemd}"
+}
+
+redgres_libexec_dir() {
+  printf '%s' "${REDGRES_LIBEXEC_DIR:-/usr/libexec/redgres}"
+}
+
+redgres_systemd_unit_dir() {
+  printf '%s' "${REDGRES_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+}
+
+redgres_install_file() {
+  local src="$1" dest="$2" mode="$3"
+  [[ -f "${src}" ]] || return 1
+  /usr/bin/mkdir -p "$(/usr/bin/dirname "${dest}")"
+  /usr/bin/install -m "${mode}" "${src}" "${dest}"
+}
+
+redgres_install_cloudflared_units() {
+  local src dest_lib dest_sys
+  src="$(redgres_domain_unit_src)"
+  dest_lib="$(redgres_libexec_dir)"
+  dest_sys="$(redgres_systemd_unit_dir)"
+  /usr/bin/mkdir -p "${dest_lib}" "${dest_sys}"
+  redgres_install_file "${src}/cloudflared-run.sh" "${dest_lib}/cloudflared-run.sh" 0755
+  redgres_install_file "${src}/cloudflared-redgres.service" "${dest_sys}/cloudflared-redgres.service" 0644
+  redgres_install_file "${src}/cloudflared-redgres-restart.service" "${dest_sys}/cloudflared-redgres-restart.service" 0644
+  redgres_install_file "${src}/cloudflared-redgres.path" "${dest_sys}/cloudflared-redgres.path" 0644
+}
+
+redgres_install_tls_issue_helper() {
+  local src dest_lib dest_sys hook
+  src="$(redgres_domain_unit_src)"
+  dest_lib="$(redgres_libexec_dir)"
+  dest_sys="$(redgres_systemd_unit_dir)"
+  hook="${REDGRES_CERTBOT_DEPLOY_HOOK_DIR:-/etc/letsencrypt/renewal-hooks/deploy}"
+  /usr/bin/mkdir -p "${dest_lib}" "${dest_sys}"
+  redgres_install_file "${src}/issue-tls.sh" "${dest_lib}/issue-tls.sh" 0755
+  redgres_install_file "${src}/redgres-tls-issue.service" "${dest_sys}/redgres-tls-issue.service" 0644
+  redgres_install_file "${src}/redgres-tls-issue.path" "${dest_sys}/redgres-tls-issue.path" 0644
+  if [[ "${REDGRES_SKIP_CERTBOT_HOOK:-}" != "1" ]]; then
+    /usr/bin/mkdir -p "${hook}"
+    redgres_install_file "${src}/redgres-copy-certs.sh" "${hook}/redgres-copy-certs.sh" 0755
+  fi
+}
+
+redgres_enable_cloudflared_apt() {
+  local keyring='/usr/share/keyrings/cloudflare-main.gpg' list='/etc/apt/sources.list.d/cloudflared.list'
+  /usr/bin/mkdir -p /usr/share/keyrings
+  if [[ ! -f "${keyring}" ]]; then
+    /usr/bin/curl -fsSL --max-time 30 -o "${keyring}" https://pkg.cloudflare.com/cloudflare-main.gpg || return 1
+    /usr/bin/chmod 644 "${keyring}"
+  fi
+  redgres_cloudflared_apt_source_line >"${list}"
+  /usr/bin/chmod 644 "${list}"
+}
+
+redgres_install_domain_packages() {
+  redgres_enable_cloudflared_apt || return 1
+  DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
+  redgres_apt_install cloudflared
+  redgres_apt_install certbot
+  redgres_apt_install python3-certbot-dns-cloudflare
+}
+
+redgres_install_domain_runtime() {
+  redgres_install_cloudflared_units || return 1
+  redgres_install_tls_issue_helper || return 1
+  if [[ "${EUID}" -eq 0 && "${REDGRES_OPT_ROOT:-/opt/redgres}" == "/opt/redgres" && -x /usr/bin/apt-get && "${REDGRES_SKIP_DOMAIN_PACKAGES:-}" != "1" ]]; then
+    if declare -F redgres_apt_install >/dev/null 2>&1; then
+      redgres_install_domain_packages || return 1
+    fi
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || return 1
+    systemctl disable --now cloudflared.service >/dev/null 2>&1 || true
+    systemctl enable --now cloudflared-redgres.path >/dev/null 2>&1 || return 1
+    systemctl enable --now redgres-tls-issue.path >/dev/null 2>&1 || return 1
+    systemctl enable --now certbot.timer >/dev/null 2>&1 || true
+  fi
+}
+
 redgres_bootstrap_base_url() {
   local ip candidate
   for candidate in $(/usr/bin/hostname -I 2>/dev/null); do
@@ -645,7 +757,11 @@ redgres_finish_box_rows() {
   os_line="${REDGRES_OS_ID:-unknown} ${REDGRES_OS_VERSION_ID:-} (${REDGRES_OS_CODENAME:-})"
   if [[ "${pgbouncer_mode:-}" == "fresh" ]]; then
     pgb_ver="$(redgres_pkg_version pgbouncer)"
-    pgb_line="fresh  ${pgb_ver}  (listen not configured)"
+    if [[ "${redgres_pgbouncer_listen:-}" == "1" ]]; then
+      pgb_line="fresh  ${pgb_ver}  127.0.0.1:6432"
+    else
+      pgb_line="fresh  ${pgb_ver}  (listen not configured)"
+    fi
   else
     pgb_line="${pgbouncer_mode:-skipped}"
   fi
