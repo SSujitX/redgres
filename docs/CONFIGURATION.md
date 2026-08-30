@@ -77,12 +77,18 @@ Supported service versions are defined by the Redgres release and [COMPATIBILITY
 
 ## UI/tool links
 
-Status: optional pgAdmin and RedisInsight hrefs implemented for GET `/api/v1/session` and GET `/api/v1/status` presence. They are links, not embedded privileged sessions. Redgres never fetches, pings, proxies, or iframes these URLs at Load or on GET `/status`.
+Status: optional pgAdmin and RedisInsight public hostnames implemented for GET `/api/v1/session` and GET `/api/v1/status` presence. Opening uses POST launch + a loopback tool gate ([ADR-014](decisions/ADR-014-expert-tool-launch.md)). Redgres never fetches, pings, proxies, or iframes these URLs at Load or on GET `/status`, and never proxies them on the console origin.
 
 | Variable | Status | Purpose |
 |---|---|---|
-| `REDGRES_PGADMIN_URL` | Implemented | Optional absolute href for the expert pgAdmin tool. Empty/unset is valid. Production `serve` does not require it. Independent of `REDGRES_REDISINSIGHT_URL`. |
-| `REDGRES_REDISINSIGHT_URL` | Implemented | Optional absolute href for RedisInsight. Empty/unset is valid. Production `serve` does not require it. Independent of `REDGRES_PGADMIN_URL`. |
+| `REDGRES_PGADMIN_URL` | Implemented | Optional absolute public hostname for the expert pgAdmin tool. Empty/unset is valid. Production `serve` does not require it. Independent of `REDGRES_REDISINSIGHT_URL`. |
+| `REDGRES_REDISINSIGHT_URL` | Implemented | Optional absolute public hostname for RedisInsight. Empty/unset is valid. Production `serve` does not require it. Independent of `REDGRES_PGADMIN_URL`. |
+| `REDGRES_PGADMIN_EMAIL` | Implemented | Optional pgAdmin login email for `POST /api/v1/tools/pgadmin/credentials/reveal`. Empty/unset is valid and yields `404`. |
+| `REDGRES_PGADMIN_PASSWORD_FILE` | Implemented | Optional path to the pgAdmin login password file. Production path must be under `/var/lib/redgres`. Reveal opens a regular file only (no symlink), caps the read at 4 KiB, and returns `404` with no path echo if the file is missing, empty, oversized, or not regular. Never returned on GET `/session`. |
+| `REDGRES_TOOL_GATE_PGADMIN_LISTEN` | Implemented | Optional loopback `host:port` for the pgAdmin tool gate (Tunnel origin). Empty skips the gate. Non-loopback fails Load. |
+| `REDGRES_TOOL_GATE_PGADMIN_UPSTREAM` | Implemented | Optional loopback URL for the pgAdmin container. Empty skips the gate. Non-loopback fails Load. |
+| `REDGRES_TOOL_GATE_REDISINSIGHT_LISTEN` | Implemented | Optional loopback `host:port` for the RedisInsight tool gate. Empty skips the gate. Non-loopback fails Load. |
+| `REDGRES_TOOL_GATE_REDISINSIGHT_UPSTREAM` | Implemented | Optional loopback URL for the RedisInsight container. Empty skips the gate. Non-loopback fails Load. |
 
 When set, the value must be an absolute URL with a scheme and host, no userinfo, and no fragment. Query string and path are allowed. Relative URLs and `javascript:`, `data:`, and `file:` schemes are rejected. Production requires `https`. Development accepts `http` or `https`. Validation errors name the environment variable and never echo the URL. There is no silent default hostname.
 
