@@ -125,7 +125,7 @@ Apply creates an Access **application** only (deny by default). Use Domain & Net
 
 ## Disconnect
 
-`DELETE /api/v1/domain` deletes Cloudflare resources Redgres created and removes the tunnel token file. The path unit does **not** stop the connector when that file disappears — stop it explicitly:
+`DELETE /api/v1/domain` deletes Cloudflare resources Redgres created and removes the tunnel token file. PathChanged treats that delete as a change, so the oneshot restarts the connector; `ConditionPathExists` then fails and the unit stays inactive. Explicit stop is still safe:
 
 ```bash
 systemctl stop cloudflared-redgres.service
