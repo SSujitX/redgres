@@ -301,6 +301,15 @@ redgres_update_apply() {
       redgres_ensure_domain_secret_env /etc/redgres/redgres.env || true
     fi
   fi
+  if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && declare -F redgres_ensure_expert_tools >/dev/null 2>&1; then
+    if command -v docker >/dev/null 2>&1; then
+      if [[ "${REDGRES_DOMAIN_RUNTIME_OPTIONAL:-}" == "1" ]]; then
+        redgres_ensure_expert_tools || redgres_log 'expert tools: compose not fully applied'
+      else
+        redgres_ensure_expert_tools || redgres_die 'expert tools compose failed'
+      fi
+    fi
+  fi
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && declare -F redgres_install_domain_runtime >/dev/null 2>&1; then
     if [[ "${REDGRES_DOMAIN_RUNTIME_OPTIONAL:-}" == "1" ]]; then
       redgres_install_domain_runtime || redgres_log 'domain runtime: units/packages not fully applied'
