@@ -81,8 +81,14 @@ type Config struct {
 	RedisPublicPort     string
 	RedisExpectedSeries string
 
-	PgAdminURL      string
-	RedisInsightURL string
+	PgAdminURL              string
+	RedisInsightURL         string
+	PgAdminEmail            string
+	PgAdminPasswordFile     string
+	ToolGatePgAdminListen   string
+	ToolGatePgAdminUpstream string
+	ToolGateRedisListen     string
+	ToolGateRedisUpstream   string
 
 	FeaturePostgresRowDelete bool
 	FeaturePostgresTruncate  bool
@@ -184,6 +190,9 @@ func Load(args []string) (Config, error) {
 		return Config{}, err
 	}
 	if err := cfg.loadToolLinks(); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.loadToolGate(); err != nil {
 		return Config{}, err
 	}
 	if v, err := envBool("REDGRES_FEATURE_POSTGRES_ROW_DELETE"); err != nil {
