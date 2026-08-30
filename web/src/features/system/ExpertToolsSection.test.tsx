@@ -91,6 +91,7 @@ describe("ExpertToolsSection", () => {
       return jsonResponse(200, {
         email: "admin@redgres.com",
         password: "pgadmin-canary-password-32chars!!",
+        master_password: "pgadmin-master-canary-32chars!!!!",
         request_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       });
     });
@@ -108,13 +109,18 @@ describe("ExpertToolsSection", () => {
     expect(await screen.findByText("This pgAdmin password is still saved.")).toBeInTheDocument();
     expect(screen.getByText("admin@redgres.com")).toBeInTheDocument();
     expect(screen.getByText("pgadmin-canary-password-32chars!!")).toBeInTheDocument();
+    expect(screen.getByText("pgadmin-master-canary-32chars!!!!")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Copy password" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy master password" }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith("pgadmin-canary-password-32chars!!");
+      expect(writeText).toHaveBeenCalledWith("pgadmin-master-canary-32chars!!!!");
     });
     fireEvent.click(screen.getByRole("button", { name: "I have copied it — dismiss" }));
     expect(screen.queryByText("pgadmin-canary-password-32chars!!")).not.toBeInTheDocument();
+    expect(screen.queryByText("pgadmin-master-canary-32chars!!!!")).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain("pgadmin-canary-password-32chars!!");
+    expect(document.body.textContent).not.toContain("pgadmin-master-canary-32chars!!!!");
   });
 
   it("clears the ticket on unmount and does not persist secrets", async () => {

@@ -232,8 +232,13 @@ export default function ExpertToolsSection({
       }
       const email = result.body.email;
       const password = result.body.password;
+      const masterPassword = result.body.master_password;
       if (result.status === 200 && typeof email === "string" && email !== "" && typeof password === "string" && password !== "") {
-        setTicket({ username: email, password });
+        setTicket({
+          username: email,
+          password,
+          masterPassword: typeof masterPassword === "string" && masterPassword !== "" ? masterPassword : undefined,
+        });
         if (activityAbort.current && !activityAbort.current.signal.aborted) {
           void loadActivity(activityAbort.current);
         }
@@ -291,10 +296,9 @@ export default function ExpertToolsSection({
     <section className="expert-tools panel" aria-labelledby="expert-tools-heading">
       <h2 id="expert-tools-heading">Expert tools</h2>
       <p className="muted-copy">
-        Open from this signed-in console. After Open, pgAdmin skips its login form. Reveal copies the saved email and
-        password. That login is not the later pgAdmin “Set Master Password” vault prompt. RedisInsight has no separate
-        login. Cloudflare Access still asks for email on those hostnames. Domain & Network never shows these
-        passwords.
+        Open from this signed-in console. After Open, pgAdmin skips its login form. Reveal copies the saved email,
+        login password, and master password. RedisInsight has no separate login. Cloudflare Access still asks for
+        email on those hostnames. Domain & Network never shows these passwords.
       </p>
       <div className="expert-tools-grid">
         <article className="expert-tool-card panel-sub">
@@ -303,8 +307,8 @@ export default function ExpertToolsSection({
             <p className={hasPgAdmin ? "status-ok" : "not-connected"}>{hasPgAdmin ? "Ready" : "Waiting for Domain"}</p>
           </div>
           <p>
-            PostgreSQL browser. Open launches it already signed in. Reveal shows the saved email and password if you
-            need them elsewhere. The password stays on the server until you dismiss the ticket.
+            PostgreSQL browser. Open launches it already signed in. Reveal shows the saved email, login password, and
+            master password from server files. The ticket clears when you dismiss it; those files stay on the host.
           </p>
           <div className="expert-tool-actions">
             <button
