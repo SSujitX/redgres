@@ -302,15 +302,24 @@ func CSRFValid(storedHash []byte, raw string) bool {
 }
 
 func SameOrigin(origin, referer, baseURL string) bool {
-	want := normalizeOrigin(baseURL)
-	if want == "" {
-		return false
-	}
-	if origin != "" {
-		return normalizeOrigin(origin) == want
-	}
-	if referer != "" {
-		return normalizeOrigin(referer) == want
+	return SameOriginAny(origin, referer, baseURL)
+}
+
+func SameOriginAny(origin, referer string, baseURLs ...string) bool {
+	for _, baseURL := range baseURLs {
+		want := normalizeOrigin(baseURL)
+		if want == "" {
+			continue
+		}
+		if origin != "" {
+			if normalizeOrigin(origin) == want {
+				return true
+			}
+			continue
+		}
+		if referer != "" && normalizeOrigin(referer) == want {
+			return true
+		}
 	}
 	return false
 }

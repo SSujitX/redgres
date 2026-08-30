@@ -117,3 +117,15 @@ func TestSameOrigin(t *testing.T) {
 		t.Fatal("missing both")
 	}
 }
+
+func TestSameOriginAnyAcceptsAdditionalBase(t *testing.T) {
+	if !SameOriginAny("https://console.example.com", "", "http://203.0.113.10:8989", "https://console.example.com") {
+		t.Fatal("console origin during bootstrap")
+	}
+	if SameOriginAny("https://evil.example", "", "http://203.0.113.10:8989", "https://console.example.com") {
+		t.Fatal("evil origin")
+	}
+	if SameOriginAny("https://console.example.com", "", "http://203.0.113.10:8989") {
+		t.Fatal("console origin without extra base")
+	}
+}
