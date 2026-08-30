@@ -291,8 +291,10 @@ export default function ExpertToolsSection({
     <section className="expert-tools panel" aria-labelledby="expert-tools-heading">
       <h2 id="expert-tools-heading">Expert tools</h2>
       <p className="muted-copy">
-        Open from this signed-in console. After Open, pgAdmin signs you in automatically. RedisInsight has no separate
-        login. Cloudflare Access still asks for email on those hostnames. Domain & Network never shows these passwords.
+        Open from this signed-in console. After Open, pgAdmin skips its login form. Reveal copies the saved email and
+        password. That login is not the later pgAdmin “Set Master Password” vault prompt. RedisInsight has no separate
+        login. Cloudflare Access still asks for email on those hostnames. Domain & Network never shows these
+        passwords.
       </p>
       <div className="expert-tools-grid">
         <article className="expert-tool-card panel-sub">
