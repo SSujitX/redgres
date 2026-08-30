@@ -2200,7 +2200,9 @@ domain_runtime_err="$(
   [[ -x "${libexec}/cloudflared-run.sh" ]]
   [[ -f "${sysd}/cloudflared-redgres.path" ]]
   grep -q 'LoadCredential=TUNNEL_TOKEN:' "${sysd}/cloudflared-redgres.service"
+  grep -q -- '--protocol http2' "${libexec}/cloudflared-run.sh"
   [[ -x "${libexec}/issue-tls.sh" ]]
+  grep -q -- '--dns-cloudflare-propagation-seconds 60' "${libexec}/issue-tls.sh"
   [[ -f "${sysd}/redgres-tls-issue.path" ]]
   grep -q 'PathExists=/var/lib/redgres/tls-issue.request' "${sysd}/redgres-tls-issue.path"
   grep -q 'PathChanged=/var/lib/redgres/tls-issue.request' "${sysd}/redgres-tls-issue.path"
