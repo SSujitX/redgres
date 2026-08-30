@@ -26,7 +26,7 @@
 10. Cloudflare Certbot DNS token: separate least-privilege root-owned file; used for the Let's Encrypt DNS-01 challenge when not covered by the OAuth `dns.write` scope.
 11. TLS private keys: readable only by root and the exact service group where necessary.
 12. Backup encryption/off-host credentials: isolated from application runtime where practical.
-13. Expert-tool launch tickets and tool-session cookies: process-local SHA-256 hashes only; raw ticket is one-time (60s) in `launch_url` query and is not logged or audited. pgAdmin login password lives in an operator file (`REDGRES_PGADMIN_PASSWORD_FILE`) and is revealed only by POST reveal (`no-store`); never on GET `/session`.
+13. Expert-tool launch tickets and tool-session cookies: process-local SHA-256 hashes only; raw ticket is one-time (60s) in `launch_url` query and is not logged or audited. pgAdmin login password lives in `REDGRES_PGADMIN_PASSWORD_FILE`. The generated master-password key lives in `REDGRES_PGADMIN_MASTER_PASSWORD_FILE` and is supplied to pgAdmin only through official `MASTER_PASSWORD_HOOK`. Both are revealed only by POST reveal (`no-store`); never on GET `/session`. The install finish box prints them once on a TTY (or test TTY sink) and never to installer logs.
 
 ## Credential response policy
 
