@@ -81,8 +81,8 @@ Status: optional pgAdmin and RedisInsight public hostnames implemented for GET `
 
 | Variable | Status | Purpose |
 |---|---|---|
-| `REDGRES_PGADMIN_URL` | Implemented | Optional absolute public hostname for the expert pgAdmin tool. Empty/unset is valid. Production `serve` does not require it. Independent of `REDGRES_REDISINSIGHT_URL`. |
-| `REDGRES_REDISINSIGHT_URL` | Implemented | Optional absolute public hostname for RedisInsight. Empty/unset is valid. Production `serve` does not require it. Independent of `REDGRES_PGADMIN_URL`. |
+| `REDGRES_PGADMIN_URL` | Implemented | Optional absolute public hostname for the expert pgAdmin tool. Empty/unset is valid. Production `serve` does not require it. Independent of `REDGRES_REDISINSIGHT_URL`. Full-stack Domain apply writes `https://pgadmin.{zone}` into the env file and the running process. |
+| `REDGRES_REDISINSIGHT_URL` | Implemented | Optional absolute public hostname for RedisInsight. Empty/unset is valid. Production `serve` does not require it. Independent of `REDGRES_PGADMIN_URL`. Full-stack Domain apply writes `https://redis.{zone}` into the env file and the running process. |
 | `REDGRES_PGADMIN_EMAIL` | Implemented | Optional pgAdmin login email for `POST /api/v1/tools/pgadmin/credentials/reveal`. Empty/unset is valid and yields `404`. |
 | `REDGRES_PGADMIN_PASSWORD_FILE` | Implemented | Optional path to the pgAdmin login password file. Production path must be under `/var/lib/redgres`. Reveal opens a regular file only (no symlink), caps the read at 4 KiB, and returns `404` with no path echo if the file is missing, empty, oversized, or not regular. Never returned on GET `/session`. |
 | `REDGRES_TOOL_GATE_PGADMIN_LISTEN` | Implemented | Optional loopback `host:port` for the pgAdmin tool gate (Tunnel origin). Empty skips the gate. Non-loopback fails Load. |
