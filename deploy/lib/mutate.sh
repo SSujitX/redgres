@@ -515,17 +515,58 @@ redgres_maybe_set_hostname() {
   redgres_log 'hostname set to redgres (previous name was a generic default)'
 }
 
-redgres_write_pgadmin_password() {
-  local passfile='/var/lib/redgres/secrets/pgadmin.pass'
+redgres_write_pgadmin_secret_file() {
+  local passfile="$1" owner="${2:-redgres:redgres}" mode="${3:-600}"
   redgres_ensure_secrets_dir
   if [[ -f "${passfile}" && ! -L "${passfile}" ]]; then
+    /usr/bin/chown "${owner}" "${passfile}"
+    /usr/bin/chmod "${mode}" "${passfile}"
     return 0
   fi
   umask 077
   /usr/bin/dd if=/dev/urandom bs=24 count=1 status=none | /usr/bin/base64 | /usr/bin/tr -d '\n' >"${passfile}"
   printf '\n' >>"${passfile}"
-  /usr/bin/chown redgres:redgres "${passfile}"
-  /usr/bin/chmod 600 "${passfile}"
+  /usr/bin/chown "${owner}" "${passfile}"
+  /usr/bin/chmod "${mode}" "${passfile}"
+}
+
+redgres_write_pgadmin_password() {
+  redgres_write_pgadmin_secret_file '/var/lib/redgres/secrets/pgadmin.pass' 'redgres:redgres'
+}
+
+redgres_write_pgadmin_master_password() {
+  redgres_write_pgadmin_secret_file '/var/lib/redgres/secrets/pgadmin.master' '5050:redgres' '640'
+}
+
+redgres_restore_pgadmin_master_ownership() {
+  local master='/var/lib/redgres/secrets/pgadmin.master'
+  local hook='/var/lib/redgres/secrets/pgadmin-master-hook'
+  if [[ -f "${master}" && ! -L "${master}" ]]; then
+    /usr/bin/chown 5050:redgres "${master}"
+    /usr/bin/chmod 640 "${master}"
+  fi
+  if [[ -f "${hook}" && ! -L "${hook}" ]]; then
+    /usr/bin/chown 5050:redgres "${hook}"
+    /usr/bin/chmod 750 "${hook}"
+  fi
+}
+
+redgres_write_pgadmin_master_hook() {
+  local hook='/var/lib/redgres/secrets/pgadmin-master-hook'
+  redgres_ensure_secrets_dir
+  umask 077
+  /usr/bin/cat >"${hook}" <<'EOF'
+#!/bin/sh
+set -eu
+f=/run/redgres/pgadmin.master
+[ -f "$f" ] || exit 1
+[ ! -L "$f" ] || exit 1
+IFS= read -r key <"$f" || true
+[ -n "$key" ] || exit 1
+printf '%s' "$key"
+EOF
+  /usr/bin/chown 5050:redgres "${hook}"
+  /usr/bin/chmod 750 "${hook}"
 }
 
 redgres_write_pgadmin_compose_env() {
@@ -557,11 +598,13 @@ services:
       PGADMIN_CONFIG_AUTHENTICATION_SOURCES: "['webserver']"
       PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER: "True"
       PGADMIN_CONFIG_WEBSERVER_REMOTE_USER: "'X-Forwarded-User'"
-      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_HOOK: "'/pgadmin4/redgres-master-hook'"
     ports:
       - "127.0.0.1:5052:80"
     volumes:
       - /var/lib/redgres/pgadmin:/var/lib/pgadmin
+      - /var/lib/redgres/secrets/pgadmin.master:/run/redgres/pgadmin.master:ro
+      - /var/lib/redgres/secrets/pgadmin-master-hook:/pgadmin4/redgres-master-hook:ro
   redisinsight:
     image: ${ri_image}
     container_name: redgres-redisinsight
@@ -584,6 +627,8 @@ redgres_write_expert_tools_compose() {
 
 redgres_prepare_expert_tools_files() {
   redgres_write_pgadmin_password
+  redgres_write_pgadmin_master_password
+  redgres_write_pgadmin_master_hook
   redgres_write_pgadmin_compose_env
   redgres_write_expert_tools_compose
   if [[ -f /etc/redgres/redgres.env ]]; then
