@@ -167,3 +167,30 @@ func TestDuplicateAuditAllowsOperationID(t *testing.T) {
 		t.Fatalf("got %v, want ErrUnsafeMetadata", err)
 	}
 }
+
+func TestToolAuditAllowsToolOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redgres.db")
+	db, err := database.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	store := Store{DB: db}
+	if err := store.Record("admin", "tools.launch", "pgadmin", "success", "aabbccddeeff00112233445566778899", "127.0.0.1", map[string]any{"tool": "pgadmin"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Record("admin", "tools.pgadmin.reveal", "pgadmin", "success", "aabbccddeeff00112233445566778899", "127.0.0.1", map[string]any{"tool": "pgadmin"}); err != nil {
+		t.Fatal(err)
+	}
+	err = store.Record("admin", "tools.launch", "pgadmin", "success", "aabbccddeeff00112233445566778899", "127.0.0.1", map[string]any{"tool": "pgadmin", "ticket": "canary-ticket"})
+	if !errors.Is(err, ErrUnsafeMetadata) {
+		t.Fatalf("got %v, want ErrUnsafeMetadata", err)
+	}
+	err = store.Record("admin", "tools.pgadmin.reveal", "pgadmin", "success", "aabbccddeeff00112233445566778899", "127.0.0.1", map[string]any{"tool": "pgadmin", "password": "canary-secret"})
+	if !errors.Is(err, ErrUnsafeMetadata) {
+		t.Fatalf("got %v, want ErrUnsafeMetadata", err)
+	}
+}

@@ -44,6 +44,8 @@ var allowedMetadataKeys = map[string]map[string]struct{}{
 	"domain.tls.issue":            keySet("hostname_count"),
 	"domain.manual.apply":         keySet("instruction_count"),
 	"domain.manual.access":        keySet("confirmed"),
+	"tools.launch":                keySet("tool"),
+	"tools.pgadmin.reveal":        keySet("tool"),
 }
 
 type Event struct {
