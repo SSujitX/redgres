@@ -587,6 +587,12 @@ PY
   printf '%b\n' "         certbot delete attempted for ${primary}"
 }
 
+purge_tls_local_copies() {
+  rm -rf /etc/ssl/redgres /etc/redgres/tls 2>/dev/null || true
+  rm -f /etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh 2>/dev/null || true
+  rm -f /etc/postgresql/*/main/conf.d/redgres-ssl.conf 2>/dev/null || true
+}
+
 purge_cloudflared_package() {
   [[ "${APP_ONLY}" -eq 1 ]] && return 0
   if command -v apt-get >/dev/null 2>&1; then
@@ -689,6 +695,7 @@ if [[ "${APP_ONLY}" -eq 0 && "${KEEP_REMOTE}" -eq 0 ]]; then
   step "  ${CYAN}[0/8]${NC} Cloudflare + TLS cleanup... "
   remote_cloudflare_disconnect
   purge_tls_certs
+  purge_tls_local_copies
   step_done
 elif [[ "${APP_ONLY}" -eq 0 && "${KEEP_REMOTE}" -eq 1 ]]; then
   step "  ${CYAN}[0/8]${NC} Cloudflare + TLS "
@@ -704,6 +711,8 @@ if command -v systemctl >/dev/null 2>&1; then
   stop_systemd_unit cloudflared-redgres.service
   stop_systemd_unit cloudflared-redgres.path
   stop_systemd_unit cloudflared-redgres-restart.service
+  stop_systemd_unit redgres-tls-issue.path
+  stop_systemd_unit redgres-tls-issue.service
   step_done
 else
   step "  ${CYAN}[1/8]${NC} systemd not found "
@@ -775,6 +784,8 @@ rm -f "${UNIT_PATH}" \
   /etc/systemd/system/cloudflared-redgres.service \
   /etc/systemd/system/cloudflared-redgres.path \
   /etc/systemd/system/cloudflared-redgres-restart.service \
+  /etc/systemd/system/redgres-tls-issue.service \
+  /etc/systemd/system/redgres-tls-issue.path \
   2>/dev/null || true
 rm -rf "${LIBEXEC_ROOT}" 2>/dev/null || true
 if command -v systemctl >/dev/null 2>&1; then
@@ -806,6 +817,7 @@ if [[ "${APP_ONLY}" -eq 0 || "${PURGE_STATE}" -eq 1 ]]; then
   rm -rf "${VAR_ROOT}" /var/lib/redgres-release 2>/dev/null || true
 fi
 if [[ "${APP_ONLY}" -eq 0 ]]; then
+  purge_tls_local_copies
   rm -rf "${BACKUP_ROOT}" /var/log/redgres 2>/dev/null || true
   while IFS= read -r checkout || [[ -n "${checkout}" ]]; do
     [[ -n "${checkout}" ]] || continue
