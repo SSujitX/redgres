@@ -3,6 +3,8 @@ package httpapi
 import (
 	"errors"
 	"strings"
+
+	"github.com/SSujitX/redgres/internal/config"
 )
 
 const (
@@ -141,4 +143,15 @@ func (d deployment) accessAppsForDisconnect() []accessAppBinding {
 		return []accessAppBinding{{Hostname: d.consoleHostname(), AppID: d.AccessAppID, PolicyID: d.AccessPolicyID}}
 	}
 	return nil
+}
+
+func (s *Server) activateToolPublicURLs(hosts domainHostnames) {
+	if hosts.PgAdmin == "" || hosts.RedisInsight == "" {
+		return
+	}
+	pg := "https://" + hosts.PgAdmin
+	ri := "https://" + hosts.RedisInsight
+	_, _ = config.PersistToolPublicURLs(s.cfg.EnvFile, pg, ri)
+	s.cfg.PgAdminURL = pg
+	s.cfg.RedisInsightURL = ri
 }
