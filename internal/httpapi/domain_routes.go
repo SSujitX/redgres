@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SSujitX/redgres/internal/auth"
 	"github.com/SSujitX/redgres/internal/bootstrap"
 	"github.com/SSujitX/redgres/internal/cloudflare"
 	"github.com/SSujitX/redgres/internal/config"
@@ -738,6 +739,29 @@ func (s *Server) handleDomainDisconnect(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.writeJSON(w, r, http.StatusOK, map[string]any{"ok": true, "request_id": requestID(r)})
+}
+
+func (s *Server) originAllowed(r *http.Request) bool {
+	bases := []string{s.cfg.BaseURL}
+	if extra := s.configuredConsoleOrigin(r.Context()); extra != "" {
+		bases = append(bases, extra)
+	}
+	return auth.SameOriginAny(r.Header.Get("Origin"), r.Header.Get("Referer"), bases...)
+}
+
+func (s *Server) configuredConsoleOrigin(ctx context.Context) string {
+	if s.db == nil {
+		return ""
+	}
+	dep, err := (domainStore{s.db}).Get(ctx)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSpace(dep.consoleHostname()))
+	if host == "" || !validHostname(host) {
+		return ""
+	}
+	return "https://" + host
 }
 
 func (s *Server) cloudflareClient(token string) cloudflare.Client {
