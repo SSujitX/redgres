@@ -67,14 +67,14 @@ HTTP UI origin ports must not appear in public firewall allow rules or bind to `
 
 Runtime wizard (System → Domain & Network) implements token-first Cloudflare apply or manual DNS instructions:
 
-1. **Cloudflare path:** per-zone API token → apply `{zone, origin_ip, hostnames}` (console proxied CNAME + db/redis grey-cloud **A or AAAA**) → Access allow emails (API) → OAuth Connect on live console hostname → optional certbot DNS-01 for db/redis → operator confirms console reachable (human attestation; no automated probe) → bootstrap closes; optional `REDGRES_BOOTSTRAP_UFW_REMOVE_CMD`.
+1. **Cloudflare path:** choose API token (paste once) or OAuth (only after the live console hostname). API token apply `{zone, origin_ip, hostnames}` creates the tunnel, proxied CNAME, grey-cloud db/redis **A or AAAA**, and deny-by-default Access apps; writes the connector token (installer-enabled `cloudflared` starts); writes certbot DNS credentials from the same token and queues Let's Encrypt for db/rs. Access allow emails → operator confirms console reachable (human attestation; no automated probe) → bootstrap closes; optional `REDGRES_BOOTSTRAP_UFW_REMOVE_CMD`. The wizard does not ask for OAuth after an API-token apply.
 2. **Manual DNS path:** apply with `dns_provider:manual` returns operator instructions; `POST /manual/confirm-access` attests Access configured manually; `POST /manual/verify` checks public DNS for db/redis; then confirm-reachable closes bootstrap.
 
 Confirm-reachable is operator attestation only (no server-side HTTP probe) per [ADR-013](decisions/ADR-013-confirm-reachable-attestation.md). Live acceptance: [agents/OPS-009-LIVE-ACCEPTANCE.md](agents/OPS-009-LIVE-ACCEPTANCE.md).
 
 Wizard secrets stay server-side (`0600` under `/var/lib/redgres/secrets`); never SQLite, browser storage, logs, or audit. Live install writes the path keys in `redgres.env`; the files are created when the owner pastes a token or apply writes the tunnel token. Token-first apply (bootstrap host is not a valid OAuth callback); OAuth runs on the live console hostname. Capability is `platform.network`. Disconnect deletes only wizard-created tunnel/DNS/Access objects. Bootstrap closes on confirm-reachable success, with a 30-minute hard-cap timer. Mutations: session + CSRF + origin + audit allow-list. Store token uses the same CSRF path as other mutations; a stale header (`CSRF token is invalid`) is recovered by one `/session` refresh and retry. A missing token-file path is `400`, not CSRF.
 
-Apply uses the API token file for bootstrap; steady-state Cloudflare mutations use OAuth when connected (`resolveCloudflareBearer`). OAuth callback is a session-bound GET with PKCE state (no CSRF header). See [API.md](API.md) and [CONFIGURATION.md](CONFIGURATION.md).
+Apply uses the API token file for bootstrap and reuses it for Access and certbot DNS-01. Steady-state Cloudflare mutations use OAuth only when the owner later connects OAuth (`resolveCloudflareBearer`). OAuth callback is a session-bound GET with PKCE state (no CSRF header). See [API.md](API.md) and [CONFIGURATION.md](CONFIGURATION.md).
 
 
 Documentation examples outside the OneLife profile use:
