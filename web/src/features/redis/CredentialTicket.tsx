@@ -13,7 +13,7 @@ export type ShownCredential = {
 type CredentialTicketProps = {
   credential: ShownCredential;
   onDismiss: () => void;
-  kind?: "redis" | "postgres";
+  kind?: "redis" | "postgres" | "pgadmin";
   rotateWarning?: boolean;
 };
 
@@ -25,17 +25,24 @@ export default function CredentialTicket({
 }: CredentialTicketProps) {
   const titleId = useId();
   const postgres = kind === "postgres";
+  const pgadmin = kind === "pgadmin";
+  const identityLabel = pgadmin ? "Email" : "Username";
+  const identityCopy = pgadmin ? "Copy email" : "Copy username";
+  const title = pgadmin
+    ? "This pgAdmin password is still saved."
+    : postgres
+      ? "This PostgreSQL password is still saved."
+      : "This Redis password is shown now.";
+  const semantics = pgadmin
+    ? "Redgres can show this login again from the server file. It is not a one-time Redis credential."
+    : postgres
+      ? "Redgres can show this password again from the encrypted vault. It is not a one-time Redis credential."
+      : "This is a one-time Redis credential. Redgres cannot show the password again after you dismiss this ticket.";
 
   return (
     <section className="credential-ticket" role="alertdialog" aria-labelledby={titleId} aria-modal="true">
-      <h2 id={titleId}>
-        {postgres ? "This PostgreSQL password is still saved." : "This Redis password is shown now."}
-      </h2>
-      <p className="muted-copy">
-        {postgres
-          ? "Redgres can show this password again from the encrypted vault. It is not a one-time Redis credential."
-          : "This is a one-time Redis credential. Redgres cannot show the password again after you dismiss this ticket."}
-      </p>
+      <h2 id={titleId}>{title}</h2>
+      <p className="muted-copy">{semantics}</p>
       {rotateWarning ? (
         <p className="form-warning">
           Update every application using this project user. The previous password stops working.
@@ -43,10 +50,10 @@ export default function CredentialTicket({
       ) : null}
       <dl className="fact-list">
         <div>
-          <dt>Username</dt>
+          <dt>{identityLabel}</dt>
           <dd className="bidi-isolate identifier">{displayText(credential.username)}</dd>
           <button type="button" className="text-button" onClick={() => void copyText(credential.username)}>
-            Copy username
+            {identityCopy}
           </button>
         </div>
         <div>
