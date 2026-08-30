@@ -1912,6 +1912,134 @@ else
   fail "finish report TTY omission (out=${hidden_out})"
 fi
 
+listen_out="$(
+  s2_lib_src
+  mode=fresh-postgres
+  postgres_version=18
+  redis_version=8.2
+  pgbouncer_mode=fresh
+  redgres_pgbouncer_listen=1
+  redgres_bootstrap_base_url() { printf 'http://203.0.113.10:8989\n'; }
+  redgres_pkg_version() { printf 'stub-pkg'; }
+  redgres_installed_app_version() { printf '1.0.5'; }
+  redgres_ufw_on_off() { printf 'off'; }
+  redgres_have_owner_tty() { return 1; }
+  REDGRES_FINISH_OWNER_PASSWORD='once-owner-secret'
+  REDGRES_FINISH_SHOW_PASSWORD=1
+  redgres_finish_report
+) 2>&1" || true
+if [[ "${listen_out}" == *'127.0.0.1:6432'* && "${listen_out}" == *'fresh  stub-pkg'* && "${listen_out}" != *'listen not configured'* ]]; then
+  pass 'finish report claims loopback 6432 only after PgBouncer listen is configured'
+else
+  fail "finish report configured 6432 (out=${listen_out})"
+fi
+
+pgb_ini_rc=0
+pgb_ini="$(
+  s2_lib_src
+  redgres_pgbouncer_ini
+)" || pgb_ini_rc=$?
+if [[ "${pgb_ini_rc}" -eq 0 && "${pgb_ini}" == *'listen_addr = 127.0.0.1'* && "${pgb_ini}" == *'listen_port = 6432'* && "${pgb_ini}" == *'admin_users = redgres_admin'* && "${pgb_ini}" == *'auth_user = redgres_admin'* && "${pgb_ini}" == *'auth_query ='* && "${pgb_ini}" == *'server_tls_sslmode = require'* && "${pgb_ini}" == *'client_tls_sslmode = require'* && "${pgb_ini}" != *'0.0.0.0'* && "${pgb_ini}" != *'PASSWORD'* && "${pgb_ini}" != *'postgres.pass'* ]]; then
+  pass 'fresh PgBouncer ini listens on loopback 6432 with TLS and no secrets'
+else
+  fail "fresh PgBouncer ini (rc=${pgb_ini_rc} out=${pgb_ini})"
+fi
+
+userlist_line="$(
+  s2_lib_src
+  redgres_pgbouncer_userlist_line redgres_admin 'p@ss"word'
+)"
+if [[ "${userlist_line}" == '"redgres_admin" "p@ss\"word"' ]]; then
+  pass 'PgBouncer userlist quotes the admin role and escapes password quotes'
+else
+  fail "PgBouncer userlist line (out=${userlist_line})"
+fi
+
+auth_sql="$(
+  s2_lib_src
+  redgres_pgbouncer_auth_sql
+)"
+if [[ "${auth_sql}" == *'pgbouncer.user_search'* && "${auth_sql}" == *'SECURITY DEFINER'* && "${auth_sql}" == *'redgres_admin'* && "${auth_sql}" != *'SUPERUSER'* ]]; then
+  pass 'PgBouncer auth_query SQL is SECURITY DEFINER and not SUPERUSER'
+else
+  fail "PgBouncer auth SQL (out=${auth_sql})"
+fi
+
+pooled_line="$(
+  s2_lib_src
+  redgres_pgbouncer_listen=1
+  redgres_pgbouncer_env_lines
+)"
+empty_pooled="$(
+  s2_lib_src
+  redgres_pgbouncer_listen=
+  pgbouncer_mode=fresh
+  redgres_pgbouncer_env_lines
+)"
+if [[ "${pooled_line}" == 'REDGRES_POSTGRES_POOLED_PORT=6432' && -z "${empty_pooled}" ]]; then
+  pass 'env writes POOLED_PORT only after PgBouncer listen is configured'
+else
+  fail "PgBouncer env lines (set=${pooled_line} empty=${empty_pooled})"
+fi
+
+cfg_rc=0
+cfg_err="$(
+  s2_lib_src
+  pgbouncer_mode=fresh
+  pgb_root="${tmpdir}/pgbouncer-cfg"
+  mkdir -p "${pgb_root}"
+  printf '%s\n' 'canary-admin-pass' >"${pgb_root}/postgres.pass"
+  export REDGRES_POSTGRES_PASSFILE="${pgb_root}/postgres.pass"
+  export REDGRES_PGBOUNCER_INI="${pgb_root}/pgbouncer.ini"
+  export REDGRES_PGBOUNCER_USERLIST="${pgb_root}/userlist.txt"
+  export REDGRES_PGBOUNCER_SKIP_HOST=1
+  redgres_configure_fresh_pgbouncer
+  [[ "${redgres_pgbouncer_listen}" == "1" ]]
+  grep -q 'listen_addr = 127.0.0.1' "${pgb_root}/pgbouncer.ini"
+  grep -q '"redgres_admin" "canary-admin-pass"' "${pgb_root}/userlist.txt"
+  ! grep -q 'canary-admin-pass' "${pgb_root}/pgbouncer.ini"
+) 2>&1" || cfg_rc=$?
+if [[ "${cfg_rc}" -eq 0 && "${cfg_err}" != *'canary-admin-pass'* ]]; then
+  pass 'fresh PgBouncer configure writes listen files and never logs the password'
+else
+  fail "fresh PgBouncer configure (rc=${cfg_rc} err=${cfg_err})"
+fi
+
+skip_rc=0
+skip_listen="$(
+  s2_lib_src
+  pgbouncer_mode=disabled
+  redgres_configure_fresh_pgbouncer
+  printf '%s' "${redgres_pgbouncer_listen:-}"
+)" || skip_rc=$?
+if [[ "${skip_rc}" -eq 0 && -z "${skip_listen}" ]]; then
+  pass 'disabled PgBouncer skips listen configuration'
+else
+  fail "disabled PgBouncer configure (rc=${skip_rc} listen=${skip_listen})"
+fi
+
+preflight_ports="$(
+  s2_lib_src
+  pgbouncer_mode=fresh
+  recorded=
+  redgres_port_free() { recorded="${recorded} $1"; }
+  redgres_live_preflight_ports
+  printf '%s' "${recorded}"
+)"
+disabled_ports="$(
+  s2_lib_src
+  pgbouncer_mode=disabled
+  recorded=
+  redgres_port_free() { recorded="${recorded} $1"; }
+  redgres_live_preflight_ports
+  printf '%s' "${recorded}"
+)"
+if [[ "${preflight_ports}" == ' 5432 6380 6432' && "${disabled_ports}" == ' 5432 6380' ]]; then
+  pass 'fresh preflight requires 6432 free; disabled does not'
+else
+  fail "preflight ports (fresh=${preflight_ports} disabled=${disabled_ports})"
+fi
+
 ip_rc=0
 ( s2_lib_src
   redgres_assert_bootstrap_allow_ip '203.0.113.10'
@@ -2031,9 +2159,11 @@ domain_env_err="$(
   REDGRES_SECRETS_DIR="${secrets_dir}"
   redgres_domain_secret_env_defaults | grep -q '^REDGRES_CLOUDFLARE_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-api-token$'
   redgres_domain_secret_env_defaults | grep -q '^REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token$'
+  redgres_domain_secret_env_defaults | grep -q '^REDGRES_TLS_ISSUE_REQUEST_FILE=/var/lib/redgres/tls-issue.request$'
   redgres_ensure_domain_secret_env "${env_file}"
   grep -q '^REDGRES_CLOUDFLARE_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-api-token$' "${env_file}"
   grep -q '^REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token$' "${env_file}"
+  grep -q '^REDGRES_TLS_ISSUE_REQUEST_FILE=/var/lib/redgres/tls-issue.request$' "${env_file}"
   grep -q '^REDGRES_ENVIRONMENT=production$' "${env_file}"
   printf '%s\n' 'REDGRES_CLOUDFLARE_TOKEN_FILE=/custom/token' >"${env_file}.keep"
   printf '%s\n' 'REDGRES_ENVIRONMENT=production' >>"${env_file}.keep"
@@ -2050,6 +2180,70 @@ if [[ "${domain_env_rc}" -eq 0 ]]; then
 else
   fail "domain secret env ensure (rc=${domain_env_rc})"
   printf '%s\n' "${domain_env_err}" >&2
+fi
+
+domain_runtime_rc=0
+domain_runtime_err="$(
+  s2_lib_src
+  redgres_cloudflared_apt_source_line | grep -q 'https://pkg.cloudflare.com/cloudflared any main'
+  units_src="${deploy_dir}/systemd"
+  libexec="${tmpdir}/domain-libexec"
+  sysd="${tmpdir}/domain-systemd"
+  hook="${tmpdir}/certbot-hooks"
+  REDGRES_DOMAIN_UNIT_SRC="${units_src}"
+  REDGRES_LIBEXEC_DIR="${libexec}"
+  REDGRES_SYSTEMD_UNIT_DIR="${sysd}"
+  REDGRES_CERTBOT_DEPLOY_HOOK_DIR="${hook}"
+  REDGRES_SKIP_DOMAIN_PACKAGES=1
+  redgres_install_cloudflared_units
+  redgres_install_tls_issue_helper
+  [[ -x "${libexec}/cloudflared-run.sh" ]]
+  [[ -f "${sysd}/cloudflared-redgres.path" ]]
+  grep -q 'LoadCredential=TUNNEL_TOKEN:' "${sysd}/cloudflared-redgres.service"
+  [[ -x "${libexec}/issue-tls.sh" ]]
+  [[ -f "${sysd}/redgres-tls-issue.path" ]]
+  grep -q 'PathExists=/var/lib/redgres/tls-issue.request' "${sysd}/redgres-tls-issue.path"
+  grep -q 'PathChanged=/var/lib/redgres/tls-issue.request' "${sysd}/redgres-tls-issue.path"
+  [[ -x "${hook}/redgres-copy-certs.sh" ]]
+  ! grep -Eiq 'eyJ|BEGIN PRIVATE|dns_cloudflare_api_token =' "${libexec}/issue-tls.sh"
+) 2>&1" || domain_runtime_rc=$?
+if [[ "${domain_runtime_rc}" -eq 0 ]]; then
+  pass 'domain runtime units install from deploy/systemd without embedding tokens'
+else
+  fail "domain runtime unit install (rc=${domain_runtime_rc})"
+  printf '%s\n' "${domain_runtime_err}" >&2
+fi
+
+tls_helper_rc=0
+(
+  req="${tmpdir}/tls-issue.request"
+  result="${tmpdir}/tls-issue.result"
+  creds="${tmpdir}/certbot-dns.ini"
+  live="${tmpdir}/le-live/db.example.com"
+  certdir="${tmpdir}/svc-tls"
+  fake="${tmpdir}/fake-certbot"
+  mkdir -p "${live}"
+  printf '%s\n' 'db.example.com' 'rs.example.com' >"${req}"
+  printf '%s\n' 'dns_cloudflare_api_token = canary-must-not-appear' >"${creds}"
+  printf '%s\n' '#!/bin/sh' "mkdir -p '${live}'" "printf 'chain' >'${live}/fullchain.pem'" "printf 'key' >'${live}/privkey.pem'" 'exit 0' >"${fake}"
+  chmod +x "${fake}"
+  export REDGRES_TLS_ISSUE_REQUEST_FILE="${req}"
+  export REDGRES_TLS_ISSUE_RESULT_FILE="${result}"
+  export REDGRES_CERTBOT_DNS_TOKEN_FILE="${creds}"
+  export REDGRES_CERT_LIVE_DIR="${tmpdir}/le-live"
+  export REDGRES_TLS_CERT_DIR="${certdir}"
+  export REDGRES_CERTBOT_BIN="${fake}"
+  export REDGRES_TLS_APPLY_POSTGRES_SSL=0
+  bash "${deploy_dir}/systemd/issue-tls.sh"
+  [[ -f "${certdir}/fullchain.pem" ]]
+  grep -q '^issued$' "${result}"
+  [[ ! -f "${req}" ]]
+  ! grep -q 'canary-must-not-appear' "${result}"
+) || tls_helper_rc=$?
+if [[ "${tls_helper_rc}" -eq 0 ]]; then
+  pass 'issue-tls helper copies certs and never prints the API token'
+else
+  fail "issue-tls helper (rc=${tls_helper_rc})"
 fi
 
 summary_load_rc=0
