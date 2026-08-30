@@ -291,7 +291,7 @@ All require a session cookie and the `platform.network` capability; mutations al
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/v1/domain` | Status: `hostnames`, `origin_ip`, `access`, `tls`, `credential`, `dns_provider`, `instructions` (manual), `bootstrap_still_open`, `tunnel_id` (Cloudflare resource id, not the connector token) |
+| GET | `/api/v1/domain` | Status: `hostnames`, `origin_ip`, `access`, `tls`, `credential`, `dns_provider`, `instructions` (manual), `bootstrap_still_open`, `tunnel_id` (Cloudflare resource id, not the connector token), optional `activity` |
 | POST | `/api/v1/domain/token` | Paste Cloudflare API token → server-side 0600 file |
 | POST | `/api/v1/domain/apply` | `{zone, origin_ip, hostnames:{console,db,redis}}` or `dns_provider:manual` → tunnel + proxied CNAME + grey-cloud db/redis A or AAAA + Access app (Cloudflare) or manual instructions |
 | POST | `/api/v1/domain/access-policy` | `{emails:[…]}` (max 8) → Access allow policy |
@@ -319,6 +319,21 @@ All require a session cookie and the `platform.network` capability; mutations al
 ```
 
 Defaults: `console.<zone>`, `db.<zone>`, `redis.<zone>`. Creates proxied CNAME for console, DNS-only **A or AAAA** (one record type per origin IP) for db/redis, deny-by-default Access app. When `REDGRES_CERTBOT_DNS_TOKEN_FILE` is set, apply writes certbot-dns-cloudflare credentials from the stored API token (`0600`, never returned) and, when `REDGRES_TLS_ISSUE_REQUEST_FILE` is set, queues hostnames-only TLS issue. Success includes `hostnames`, `origin_ip`, `tls`, `access: deny_by_default`, `bootstrap_still_open: true`.
+
+GET `/api/v1/domain` may include `activity` while a Domain mutation is running and after it finishes (cleared on successful disconnect):
+
+```json
+{
+  "operation": "apply",
+  "in_progress": true,
+  "steps": [
+    { "id": "discover_zone", "label": "Looking up the zone", "state": "done" },
+    { "id": "create_tunnel", "label": "Creating the tunnel", "state": "running" }
+  ]
+}
+```
+
+`operation`, `id`, `label`, and `state` are allow-listed (`pending` / `running` / `done` / `failed`). Activity never includes tokens, emails, hostnames, zone names, request IDs, or raw Cloudflare/certbot errors. Unconfigured GET still returns `activity` when apply is in flight. This is not journald, a log stream, or an automated reachability probe.
 
 Manual mode: `"dns_provider":"manual"` with the same hostname map returns `{instructions:[…]}` without Cloudflare mutations.
 
