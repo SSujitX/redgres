@@ -49,7 +49,8 @@ Recommended permissions, adjusted for the selected systemd credential mechanism:
 | Path | Owner/mode | Notes |
 |---|---|---|
 | `/opt/redgres` | `root:root 0755` | Releases immutable to service user |
-| `/etc/redgres` | `root:redgres 0750` | Directory traversal limited |
+| `/etc/redgres` | `root:redgres 0750` | Directory traversal limited; not used for PostgreSQL TLS files |
+| `/etc/ssl/redgres` | `root:ssl-cert 0750` | Let's Encrypt copies for PostgreSQL/PgBouncer (`fullchain.pem` `0644`, `privkey.pem` `0640`) |
 | `redgres.env` | `root:redgres 0640` | No secrets where avoidable |
 | secret source files | `root:root 0600` | Inject via systemd credentials; otherwise narrowly `root:redgres 0640` |
 | `/var/lib/redgres` | `redgres:redgres 0700` | SQLite/application state |
