@@ -1752,7 +1752,10 @@ expert_pin_err="$(
   printf '%s\n' "${yaml}" | /usr/bin/grep -q '127.0.0.1:5052:80'
   printf '%s\n' "${yaml}" | /usr/bin/grep -q '127.0.0.1:5542:5540'
   printf '%s\n' "${yaml}" | /usr/bin/grep -q "PGADMIN_CONFIG_AUTHENTICATION_SOURCES"
-  printf '%s\n' "${yaml}" | /usr/bin/grep -q 'PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"'
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q "PGADMIN_CONFIG_MASTER_PASSWORD_HOOK"
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q 'pgadmin.master:/run/redgres/pgadmin.master:ro'
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q 'pgadmin-master-hook:/pgadmin4/redgres-master-hook:ro'
+  ! printf '%s\n' "${yaml}" | /usr/bin/grep -q 'MASTER_PASSWORD_REQUIRED'
   ! printf '%s\n' "${yaml}" | /usr/bin/grep -qi 'DEFAULT_PASSWORD'
 )" 2>&1 || expert_pin_rc=$?
 if [[ "${expert_pin_rc}" -eq 0 ]]; then
@@ -1760,6 +1763,30 @@ if [[ "${expert_pin_rc}" -eq 0 ]]; then
 else
   fail "expert-tool pins/compose (rc=${expert_pin_rc})"
   printf '%s\n' "${expert_pin_err}" >&2
+fi
+
+upgrade_master_rc=0
+upgrade_master_err="$(
+  ! /usr/bin/grep -E 'sed[[:space:]]+-i.*MASTER_PASSWORD' "${deploy_dir%/*}/upgrade.sh"
+  ! /usr/bin/grep -E "sed[[:space:]]+-i.*/var/lib/redgres/pgadmin" "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q 'redgres_restore_pgadmin_master_ownership' "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q 'PGADMIN_CONFIG_MASTER_PASSWORD_HOOK' "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q 'pgadmin.master:/run/redgres/pgadmin.master:ro' "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q 'pgadmin-master-hook:/pgadmin4/redgres-master-hook:ro' "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/awk '/^redgres_upgrade_pgadmin_master\(\)/,/^redgres_write_app_unit\(\)/' "${deploy_dir%/*}/upgrade.sh" | /usr/bin/grep -F 'cat >"${yml}"'
+  /usr/bin/grep -q 'expert tools master password / compose rewrite failed' "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q 'existing pgAdmin volume may still prompt' "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q 'redgres_restore_pgadmin_master_ownership' "${deploy_dir%/*}/install.sh"
+  /usr/bin/grep -q 'redgres_restore_pgadmin_master_ownership' "${deploy_dir%/*}/install-dev.sh"
+  call_line="$(/usr/bin/grep -n 'redgres_upgrade_pgadmin_master || die' "${deploy_dir%/*}/upgrade.sh" | /usr/bin/head -n1 | /usr/bin/cut -d: -f1)"
+  reload_line="$(/usr/bin/grep -n '^systemctl daemon-reload$' "${deploy_dir%/*}/upgrade.sh" | /usr/bin/tail -n1 | /usr/bin/cut -d: -f1)"
+  [[ -n "${call_line}" && -n "${reload_line}" && "${call_line}" -lt "${reload_line}" ]]
+)" 2>&1 || upgrade_master_rc=$?
+if [[ "${upgrade_master_rc}" -eq 0 ]]; then
+  pass 'upgrade rewrites expert compose without sed'
+else
+  fail "upgrade pgadmin master rewrite (rc=${upgrade_master_rc})"
+  printf '%s\n' "${upgrade_master_err}" >&2
 fi
 encode_rc=0
 encode_got="$(
@@ -1986,9 +2013,13 @@ finish_out="$(
   redgres_have_owner_tty() { return 1; }
   REDGRES_FINISH_OWNER_PASSWORD='once-owner-secret'
   REDGRES_FINISH_SHOW_PASSWORD=1
+  REDGRES_PGADMIN_PASSWORD_FILE="${tmpdir}/pgadmin.pass"
+  REDGRES_PGADMIN_MASTER_PASSWORD_FILE="${tmpdir}/pgadmin.master"
+  printf '%s\n' 'pgadmin-login-canary-32chars!!!!' >"${REDGRES_PGADMIN_PASSWORD_FILE}"
+  printf '%s\n' 'pgadmin-master-canary-32chars!!!!' >"${REDGRES_PGADMIN_MASTER_PASSWORD_FILE}"
   redgres_finish_report
 ) 2>&1" || true
-if [[ "${finish_out}" == *'+-'* && "${finish_out}" == *'127.0.0.1:5432'* && "${finish_out}" == *'127.0.0.1:6380'* && "${finish_out}" == *'127.0.0.1:8790'* && "${finish_out}" == *'http://203.0.113.10:8989'* && "${finish_out}" == *'admin / once-owner-secret'* && "${finish_out}" == *'1.0.5'* && "${finish_out}" == *'UFW            off'* && "${finish_out}" == *'198.51.100.20'* && "${finish_out}" == *'fresh-postgres'* && "${finish_out}" == *'resolute'* ]]; then
+if [[ "${finish_out}" == *'+-'* && "${finish_out}" == *'127.0.0.1:5432'* && "${finish_out}" == *'127.0.0.1:6380'* && "${finish_out}" == *'127.0.0.1:8790'* && "${finish_out}" == *'127.0.0.1:5052'* && "${finish_out}" == *'http://203.0.113.10:8989'* && "${finish_out}" == *'admin / once-owner-secret'* && "${finish_out}" == *'pgadmin-login-canary-32chars!!!!'* && "${finish_out}" == *'pgadmin-master-canary-32chars!!!!'* && "${finish_out}" == *'1.0.5'* && "${finish_out}" == *'UFW            off'* && "${finish_out}" == *'198.51.100.20'* && "${finish_out}" == *'fresh-postgres'* && "${finish_out}" == *'resolute'* ]]; then
   pass 'finish report box includes listeners, versions, UFW, and TTY login'
 else
   fail "finish report box (out=${finish_out})"
@@ -2015,14 +2046,46 @@ hidden_out="$(
   REDGRES_FINISH_OWNER_PASSWORD='once-owner-secret'
   REDGRES_FINISH_SHOW_PASSWORD=
   REDGRES_FINISH_TTY="${hidden_tty}"
+  REDGRES_PGADMIN_PASSWORD_FILE="${tmpdir}/hidden-pgadmin.pass"
+  REDGRES_PGADMIN_MASTER_PASSWORD_FILE="${tmpdir}/hidden-pgadmin.master"
+  printf '%s\n' 'hidden-pgadmin-login-canary!!!!' >"${REDGRES_PGADMIN_PASSWORD_FILE}"
+  printf '%s\n' 'hidden-pgadmin-master-canary!!!!' >"${REDGRES_PGADMIN_MASTER_PASSWORD_FILE}"
   redgres_finish_report
 ) 2>&1" || true
-if [[ "${hidden_out}" == *'once-owner-secret'* ]]; then
+if [[ "${hidden_out}" == *'once-owner-secret'* || "${hidden_out}" == *'hidden-pgadmin-login-canary!!!!'* || "${hidden_out}" == *'hidden-pgadmin-master-canary!!!!'* ]]; then
   fail "finish report printed owner password without a TTY (out=${hidden_out})"
-elif [[ "${hidden_out}" == *'shown on this terminal only'* ]] && grep -q 'admin / once-owner-secret' "${hidden_tty}"; then
+elif [[ "${hidden_out}" == *'shown on this terminal only'* ]] && grep -q 'admin / once-owner-secret' "${hidden_tty}" && grep -q 'hidden-pgadmin-login-canary!!!!' "${hidden_tty}" && grep -q 'hidden-pgadmin-master-canary!!!!' "${hidden_tty}"; then
   pass 'finish report omits owner password from stdout and writes it to the TTY sink'
 else
   fail "finish report TTY omission (out=${hidden_out})"
+fi
+
+no_tty_out="$(
+  s2_lib_src
+  mode=fresh-postgres
+  postgres_version=18
+  redis_version=8.2
+  pgbouncer_mode=fresh
+  redgres_bootstrap_base_url() { printf 'http://203.0.113.10:8989\n'; }
+  redgres_pkg_version() { printf 'stub-pkg'; }
+  redgres_installed_app_version() { printf '1.0.5'; }
+  redgres_ufw_on_off() { printf 'off'; }
+  redgres_have_owner_tty() { return 1; }
+  REDGRES_FINISH_OWNER_PASSWORD='once-owner-secret'
+  REDGRES_FINISH_SHOW_PASSWORD=
+  REDGRES_FINISH_TTY=
+  REDGRES_PGADMIN_PASSWORD_FILE="${tmpdir}/notty-pgadmin.pass"
+  REDGRES_PGADMIN_MASTER_PASSWORD_FILE="${tmpdir}/notty-pgadmin.master"
+  printf '%s\n' 'notty-pgadmin-login-canary!!!!' >"${REDGRES_PGADMIN_PASSWORD_FILE}"
+  printf '%s\n' 'notty-pgadmin-master-canary!!!!' >"${REDGRES_PGADMIN_MASTER_PASSWORD_FILE}"
+  redgres_finish_report
+) 2>&1" || true
+if [[ "${no_tty_out}" == *'once-owner-secret'* || "${no_tty_out}" == *'notty-pgadmin-login-canary!!!!'* || "${no_tty_out}" == *'notty-pgadmin-master-canary!!!!'* ]]; then
+  fail "finish report leaked secrets with no TTY (out=${no_tty_out})"
+elif [[ "${no_tty_out}" == *'not shown (no TTY)'* && "${no_tty_out}" == *'Reveal in Expert tools'* && "${no_tty_out}" != *'shown on this terminal only'* ]]; then
+  pass 'finish report uses honest no-TTY copy without leaking secrets'
+else
+  fail "finish report no-TTY honesty (out=${no_tty_out})"
 fi
 
 listen_out="$(
@@ -2304,6 +2367,7 @@ expert_env_err="$(
   REDGRES_SECRETS_DIR="${secrets_dir}"
   redgres_ensure_expert_tool_env "${env_file}"
   grep -q '^REDGRES_PGADMIN_EMAIL=admin@redgres.com$' "${env_file}"
+  grep -q '^REDGRES_PGADMIN_MASTER_PASSWORD_FILE=/var/lib/redgres/secrets/pgadmin.master$' "${env_file}"
   grep -q '^REDGRES_TOOL_GATE_PGADMIN_LISTEN=127.0.0.1:5050$' "${env_file}"
   grep -q '^REDGRES_TOOL_GATE_REDISINSIGHT_UPSTREAM=http://127.0.0.1:5542$' "${env_file}"
   printf '%s\n' 'REDGRES_PGADMIN_EMAIL=custom@example.com' >"${env_file}.keep"
