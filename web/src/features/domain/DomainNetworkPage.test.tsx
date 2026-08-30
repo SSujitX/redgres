@@ -35,6 +35,36 @@ describe("DomainNetworkPage", () => {
     expect(await screen.findByLabelText("API token")).toBeInTheDocument();
   });
 
+  it("paints secret-safe activity steps and never shows tokens or emails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(200, {
+          configured: true,
+          zone: "example.com",
+          hostname: "console.example.com",
+          activity: {
+            operation: "apply",
+            in_progress: false,
+            steps: [
+              { id: "discover_zone", label: "Looking up the zone", state: "done" },
+              { id: "create_tunnel", label: "Creating the tunnel", state: "done" },
+              { id: "leak", label: "owner@example.com token=secret", state: "done" },
+            ],
+          },
+          request_id: "r1",
+        }),
+      ),
+    );
+    render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
+    expect(await screen.findByRole("heading", { name: "Adding the domain" })).toBeInTheDocument();
+    expect(screen.getByText("Looking up the zone")).toBeInTheDocument();
+    expect(screen.getByText("Creating the tunnel")).toBeInTheDocument();
+    expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("owner@example.com token=secret")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Remove this domain" })).toBeInTheDocument();
+  });
+
   it("hides the wizard when status is already configured", async () => {
     vi.stubGlobal(
       "fetch",

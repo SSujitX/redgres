@@ -12,6 +12,8 @@ import {
   setDomainToken,
   startDomainOAuth,
   verifyDomainManual,
+  type DomainActivity,
+  type DomainActivityStep,
   type DomainApplyPayload,
   type DomainStatusPayload,
 } from "../../api/domain";
@@ -118,6 +120,41 @@ function isDomainStatus(body: DomainStatusPayload): body is DomainStatusPayload 
   return typeof body.configured === "boolean";
 }
 
+const ACTIVITY_TITLES: Record<string, string> = {
+  apply: "Adding the domain",
+  manual_apply: "Saving the DNS plan",
+  access_policy: "Updating Access",
+  confirm_access: "Updating Access",
+  tls: "Issuing certificates",
+  confirm: "Closing bootstrap",
+  disconnect: "Disconnecting the domain",
+};
+
+const ACTIVITY_STATES: Record<string, string> = {
+  pending: "Waiting",
+  running: "In progress",
+  done: "Done",
+  failed: "Failed",
+};
+
+function safeActivityLabel(label: string): string | null {
+  const trimmed = label.trim();
+  if (trimmed === "" || trimmed.length > 80) {
+    return null;
+  }
+  if (/@|token|bearer|password|secret|sk-|cfargotunnel/i.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function activityTitle(operation: string | undefined): string {
+  if (!operation) {
+    return "Domain activity";
+  }
+  return ACTIVITY_TITLES[operation] ?? "Domain activity";
+}
+
 export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   const [status, setStatus] = useState<DomainStatusPayload | null>(null);
   const [statusError, setStatusError] = useState("");
@@ -174,6 +211,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   const [confirmBusy, setConfirmBusy] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
+  const pollAbortRef = useRef<AbortController | null>(null);
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
   const disconnectButtonRef = useRef<HTMLButtonElement | null>(null);
   const confirmButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -194,9 +232,39 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
     };
   }, []);
 
-  async function loadStatus(controller: AbortController) {
-    setLoading(true);
-    setStatusError("");
+  useEffect(() => {
+    const shouldPoll =
+      applyBusy ||
+      allowBusy ||
+      tlsBusy ||
+      confirmBusy ||
+      disconnectBusy ||
+      status?.activity?.in_progress === true;
+    if (!shouldPoll) {
+      return;
+    }
+    const poll = () => {
+      if (document.hidden) {
+        return;
+      }
+      pollAbortRef.current?.abort();
+      const controller = new AbortController();
+      pollAbortRef.current = controller;
+      void loadStatus(controller, { quiet: true });
+    };
+    poll();
+    const timer = window.setInterval(poll, 1500);
+    return () => {
+      window.clearInterval(timer);
+      pollAbortRef.current?.abort();
+    };
+  }, [applyBusy, allowBusy, tlsBusy, confirmBusy, disconnectBusy, status?.activity?.in_progress]);
+
+  async function loadStatus(controller: AbortController, opts?: { quiet?: boolean }) {
+    if (!opts?.quiet) {
+      setLoading(true);
+      setStatusError("");
+    }
     try {
       const result = await fetchDomain({ signal: controller.signal });
       if (controller.signal.aborted) {
@@ -220,6 +288,9 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
         setStatusError(sessionExpired);
         return;
       }
+      if (opts?.quiet) {
+        return;
+      }
       if (result.status === 403) {
         setStatusError(errorMessage(result.body, "You do not have permission to manage domain settings."));
         return;
@@ -227,6 +298,9 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
       setStatusError(errorMessage(result.body, domainUnavailable));
     } catch (err) {
       if (controller.signal.aborted || isAbortError(err)) {
+        return;
+      }
+      if (opts?.quiet) {
         return;
       }
       setStatusError(domainUnavailable);
@@ -592,14 +666,18 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   return (
     <article className="domain-page">
       <header className="page-header">
-        <h1>Domain & Network</h1>
-        <p>
-          Connect Cloudflare or save a manual DNS plan. Paste an API token once — the server reuses it for tunnel,
-          DNS, Access, and Let&apos;s Encrypt. Credentials stay on the server and are never returned.
-        </p>
-        <button type="button" className="text-button" onClick={refresh}>
-          Refresh
-        </button>
+        <div className="page-header-row">
+          <div className="page-header-copy">
+            <h1>Domain & Network</h1>
+            <p>
+              Connect Cloudflare or save a manual DNS plan. Paste an API token once — the server reuses it for
+              tunnel, DNS, Access, and Let&apos;s Encrypt. Credentials stay on the server and are never returned.
+            </p>
+          </div>
+          <button type="button" className="text-button" onClick={refresh}>
+            Refresh
+          </button>
+        </div>
       </header>
 
       {statusError ? (
@@ -666,6 +744,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               Tunnel ID is a Cloudflare resource identifier (also visible in the public CNAME), not a secret token.
             </p>
           ) : null}
+          <DomainActivityPanel activity={status.activity} fallbackBusy={applyBusy || allowBusy || tlsBusy || confirmBusy} />
           {configured && !isManual ? (
             <p className="muted-copy">
               The Cloudflare tunnel connector belongs on the Ubuntu server where you installed Redgres, not this
@@ -875,18 +954,25 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
             </div>
           ) : null}
           {configured ? (
-            <button
-              ref={disconnectButtonRef}
-              type="button"
-              className="danger-button"
-              onClick={() => {
-                setDisconnectConfirm("");
-                setDisconnectError("");
-                setDisconnectOpen(true);
-              }}
-            >
-              Disconnect domain
-            </button>
+            <div className="domain-danger-zone">
+              <h3>Remove this domain</h3>
+              <p className="muted-copy">
+                Disconnect deletes the saved tunnel, DNS, and Access objects for this zone. Type the console
+                hostname to confirm. This cannot be undone from the UI.
+              </p>
+              <button
+                ref={disconnectButtonRef}
+                type="button"
+                className="danger-button"
+                onClick={() => {
+                  setDisconnectConfirm("");
+                  setDisconnectError("");
+                  setDisconnectOpen(true);
+                }}
+              >
+                Disconnect domain
+              </button>
+            </div>
           ) : null}
         </section>
       ) : null}
@@ -1213,6 +1299,51 @@ function endpointCardClass(rail?: DomainEndpointDef["rail"]): string {
     classes.push("domain-endpoint-card-console");
   }
   return classes.join(" ");
+}
+
+function DomainActivityPanel({
+  activity,
+  fallbackBusy,
+}: {
+  activity?: DomainActivity;
+  fallbackBusy?: boolean;
+}) {
+  const steps = Array.isArray(activity?.steps) ? activity.steps : [];
+  const visible = steps
+    .map((step) => {
+      const label = typeof step.label === "string" ? safeActivityLabel(step.label) : null;
+      const state = typeof step.state === "string" ? ACTIVITY_STATES[step.state] : undefined;
+      if (!label || !state) {
+        return null;
+      }
+      return { key: typeof step.id === "string" && step.id !== "" ? step.id : label, label, state, raw: step };
+    })
+    .filter((row): row is { key: string; label: string; state: string; raw: DomainActivityStep } => row !== null);
+
+  if (visible.length === 0 && !fallbackBusy) {
+    return null;
+  }
+
+  return (
+    <div className="domain-activity" aria-live="polite">
+      <h3>{activityTitle(activity?.operation)}</h3>
+      <p className="muted-copy">
+        Secret-safe steps only. Tokens, emails, passwords, and raw errors are not shown.
+      </p>
+      {visible.length === 0 ? (
+        <p className="muted-copy">Waiting for the server to report the next step.</p>
+      ) : (
+        <ol className="domain-activity-list">
+          {visible.map((row) => (
+            <li key={row.key} className={`domain-activity-item is-${row.raw.state ?? "pending"}`}>
+              <span className="domain-activity-state">{row.state}</span>
+              <span className="bidi-isolate">{displayText(row.label)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
 }
 
 function DomainEndpointStatusCard({
