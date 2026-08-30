@@ -97,6 +97,18 @@ func (s *Server) removeCloudflareCredentialFiles() {
 	if s.cfg.CloudflareOAuthTokenFile != "" {
 		_ = os.Remove(s.cfg.CloudflareOAuthTokenFile)
 	}
+	if s.cfg.CloudflareOAuthClientFile != "" {
+		_ = os.Remove(s.cfg.CloudflareOAuthClientFile)
+	}
+	if s.cfg.CertbotDNSCredentialsFile != "" {
+		_ = os.Remove(s.cfg.CertbotDNSCredentialsFile)
+	}
+	if s.cfg.TLSIssueRequestFile != "" {
+		_ = os.Remove(s.cfg.TLSIssueRequestFile)
+	}
+	if s.cfg.TLSIssueResultFile != "" {
+		_ = os.Remove(s.cfg.TLSIssueResultFile)
+	}
 }
 
 func (s *Server) revokeOAuthIfPresent(ctx context.Context) {
