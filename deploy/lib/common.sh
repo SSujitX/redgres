@@ -3,7 +3,62 @@
 set -euo pipefail
 
 redgres_log() {
-  printf '%s\n' "$*"
+  printf '%s%s\n' "${REDGRES_LOG_PREFIX:-}" "$*"
+}
+
+redgres_color_ok() {
+  [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]
+}
+
+# Compact live-install progress. ASCII steps so SSH/scripted logs stay readable.
+redgres_section() {
+  local current="$1" total="$2" title="$3"
+  if redgres_color_ok; then
+    printf '\n  \033[0;36m[%s/%s]\033[0m %s\n' "${current}" "${total}" "${title}"
+  else
+    printf '\n  [%s/%s] %s\n' "${current}" "${total}" "${title}"
+  fi
+}
+
+# Drop secret-bearing lines; redact URL userinfo and token= in place so apt HTTPS errors remain.
+redgres_cmd_log_safe_stream() {
+  /usr/bin/awk 'BEGIN { IGNORECASE=1 }
+    /requirepass|password|AUTH |masterauth/ { next }
+    { gsub(/:\/\/[^\/[:space:]]+:[^@\/[:space:]]+@/, "://[redacted]@"); gsub(/token=[^[:space:]]+/, "token=[redacted]"); print }'
+}
+
+redgres_cmd_log_safe() {
+  printf '%s\n' "$1" | redgres_cmd_log_safe_stream
+}
+
+redgres_run_filtered() {
+  "$@" 2>&1 | redgres_cmd_log_safe_stream
+  return "${PIPESTATUS[0]}"
+}
+
+# Run a command with stdout/stderr captured. Success stays quiet. Failure
+# prints a secret-safe tail. Set REDGRES_INSTALL_VERBOSE=1 to pass through
+# (still filtered).
+redgres_run_quiet() {
+  local title="$1"
+  shift
+  local log rc=0
+  if [[ "${REDGRES_INSTALL_VERBOSE:-}" == '1' ]]; then
+    redgres_run_filtered "$@"
+    return $?
+  fi
+  log="$(/usr/bin/mktemp /tmp/redgres-cmd.XXXXXX)" || return 1
+  # shellcheck disable=SC2064
+  trap "rm -f $(printf '%q' "${log}")" RETURN
+  if "$@" >"${log}" 2>&1; then
+    /usr/bin/rm -f "${log}"
+    return 0
+  fi
+  rc=$?
+  redgres_log "${title} failed"
+  redgres_cmd_log_safe "$(/usr/bin/tail -n 50 "${log}")" >&2
+  /usr/bin/rm -f "${log}"
+  return "${rc}"
 }
 
 redgres_die() {
