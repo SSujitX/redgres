@@ -64,11 +64,27 @@ func (s *Server) handlePgAdminReveal(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
-	s.writeJSON(w, r, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"email":      email,
 		"password":   password,
 		"request_id": requestID(r),
-	})
+	}
+	if master := readPgAdminMasterPassword(s.cfg.PgAdminMasterPasswordFile); master != "" {
+		body["master_password"] = master
+	}
+	s.writeJSON(w, r, http.StatusOK, body)
+}
+
+func readPgAdminMasterPassword(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	raw, err := readPgAdminPasswordFile(path)
+	if err != nil || len(raw) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func readPgAdminPasswordFile(path string) ([]byte, error) {

@@ -97,8 +97,13 @@ func TestPgAdminReveal(t *testing.T) {
 	if err := os.WriteFile(passPath, []byte("pgadmin-canary-password-32chars!!\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	masterPath := filepath.Join(t.TempDir(), "pgadmin.master")
+	if err := os.WriteFile(masterPath, []byte("pgadmin-master-canary-32chars!!!!\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	srv.cfg.PgAdminEmail = "admin@redgres.com"
 	srv.cfg.PgAdminPasswordFile = passPath
+	srv.cfg.PgAdminMasterPasswordFile = masterPath
 	handler := srv.Handler()
 	cookie, csrf := login(t, handler)
 	rec := serve(handler, authed(http.MethodPost, "/api/v1/tools/pgadmin/credentials/reveal", cookie, csrf, ""))
@@ -108,6 +113,9 @@ func TestPgAdminReveal(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "pgadmin-canary-password-32chars!!") {
 		t.Fatalf("body missing password")
 	}
+	if !strings.Contains(rec.Body.String(), "pgadmin-master-canary-32chars!!!!") {
+		t.Fatalf("body missing master password")
+	}
 	if !strings.Contains(rec.Header().Get("Cache-Control"), "no-store") {
 		t.Fatalf("cache = %q", rec.Header().Get("Cache-Control"))
 	}
@@ -115,7 +123,7 @@ func TestPgAdminReveal(t *testing.T) {
 	if err := srv.db.QueryRow(`SELECT metadata FROM audit_events WHERE action = 'tools.pgadmin.reveal' ORDER BY id DESC LIMIT 1`).Scan(&metadata); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(metadata, "pgadmin-canary-password-32chars!!") {
+	if strings.Contains(metadata, "pgadmin-canary-password-32chars!!") || strings.Contains(metadata, "pgadmin-master-canary-32chars!!!!") {
 		t.Fatalf("audit leaked password: %s", metadata)
 	}
 }
