@@ -45,6 +45,8 @@ Core error codes: `unauthorized`, `forbidden`, `csrf_invalid`, `rate_limited`, `
 | GET | `/api/v1/search?q=&limit=` | Authenticated bounded search over manageable resource metadata/navigation; no secrets or destructive execution |
 | GET | `/api/v1/audit?cursor=&limit=` | Paginated redacted audit history (implemented) |
 | GET | `/api/v1/operations/{id}` | Long-operation state/result summary (`platform.read`; ADR-010; no CSRF) |
+| POST | `/api/v1/tools/{tool}/launch` | Mint a one-time expert-tool launch URL (`pgadmin` or `redisinsight`; `platform.network` + CSRF; ADR-014) |
+| POST | `/api/v1/tools/pgadmin/credentials/reveal` | Reveal saved pgAdmin email/password (`platform.network` + CSRF; `no-store`) |
 
 Session cookie name: `redgres_session` (opaque 64-hex token, `Path=/`, `HttpOnly`, `SameSite=Strict`, `Secure` from `REDGRES_COOKIE_SECURE`). Mutations send `X-CSRF-Token`. There is no HTTP bootstrap route.
 
@@ -88,7 +90,7 @@ Generic failure is `401` `unauthorized` with message `Invalid username or passwo
 }
 ```
 
-This GET is the only href source. Login JSON is unchanged and has no `tool_links`. GET `/session` still rotates CSRF and is not a mutation (no audit). Login and GET `/session` use `Cache-Control: no-store, max-age=0` plus `Pragma: no-cache`. The payload never includes passwords, session tokens, or CSRF in `tool_links`.
+GET `/session` still returns configured public hostnames so the UI can show Open controls. The owner opens those tools with `POST /api/v1/tools/{tool}/launch`, not a raw href. Login JSON is unchanged and has no `tool_links`. GET `/session` still rotates CSRF and is not a mutation (no audit). Login and GET `/session` use `Cache-Control: no-store, max-age=0` plus `Pragma: no-cache`. The payload never includes passwords, session tokens, launch tickets, or CSRF in `tool_links`.
 
 **GET `/api/v1/status`** requires a session cookie and the `platform.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
 
@@ -258,6 +260,26 @@ The Go binary serves the embedded Vite build for non-API `GET` requests:
 - If embedded assets are absent (clean checkout before `npm run build`), non-API `GET` returns `503` `dependency_unavailable`. There is no directory listing and no empty 200.
 
 Search requires a normalized minimum query length, a strict maximum length/limit, request cancellation/timeouts, and stable grouped result types. It returns only fields already safe for authenticated inventory views, excludes protected/hidden targets and credential material, rate-limits abusive use, and never accepts an action/command to execute. Documentation/navigation entries may be client-side. PostgreSQL search hits use the same manageability policy as **GET `/api/v1/postgres/databases`**. Redis ACL search hits are the exception: they omit protected usernames that **GET `/api/v1/redis/users`** still lists.
+
+## Expert tool launch (ADR-014 Partial)
+
+Session + `platform.network` + CSRF. Empty body; extra JSON is ignored. Responses are `Cache-Control: no-store, max-age=0`. Redgres does not proxy or iframe these tools on the console origin.
+
+**POST `/api/v1/tools/{tool}/launch`** — `{tool}` is `pgadmin` or `redisinsight`. Success `200`:
+
+```json
+{ "launch_url": "https://pgadmin.example.com/__redgres/launch?ticket=…", "request_id": "…" }
+```
+
+`launch_url` is the public tool hostname plus `/__redgres/launch?ticket=`. The raw ticket is one-time and expires in 60 seconds. It is not logged or audited (metadata is `{ "tool": "pgadmin" }` only). Unconfigured URL or unknown tool is `404` `not_found`. The loopback tool gate consumes the ticket, sets an HttpOnly `redgres_tool` cookie on that hostname, and proxies to the container. Requests without a valid cookie are not proxied.
+
+**POST `/api/v1/tools/pgadmin/credentials/reveal`** success `200`:
+
+```json
+{ "email": "admin@redgres.com", "password": "…", "request_id": "…" }
+```
+
+Password comes from `REDGRES_PGADMIN_PASSWORD_FILE`. Missing email/file/empty contents is `404` with no path echo. GET `/session` never includes this password. Audit metadata is `{ "tool": "pgadmin" }` only.
 
 ## Domain & Network endpoints (OPS-009 Partial, token-first)
 
