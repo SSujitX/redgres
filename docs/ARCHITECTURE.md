@@ -39,7 +39,7 @@ Do not bind both Redact and Redgres to 8787 during coexistence. After retirement
 - One SQLite database stores owner/session/audit/operation state only.
 - A [supported PostgreSQL selection](COMPATIBILITY.md) remains host-native with PgBouncer host-native.
 - A [supported Redis selection](COMPATIBILITY.md) remains Docker-managed with persistent host volumes.
-- pgAdmin and RedisInsight remain optional, isolated tools.
+- pgAdmin and RedisInsight remain optional, isolated tools. `internal/toolgate` mints hashed one-time launch tickets and runs loopback reverse-proxy gates; Redgres does not proxy those tools on the console origin ([ADR-014](decisions/ADR-014-expert-tool-launch.md)).
 
 ## 3. Modular monolith
 
