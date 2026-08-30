@@ -22,4 +22,4 @@ fi
 
 printf '%s\n' "$VERSION" >VERSION
 echo "Wrote VERSION=$VERSION"
-./scripts/sync-version.sh
+bash ./scripts/sync-version.sh

@@ -59,4 +59,4 @@ echo "Syncing product version $VERSION"
 )
 
 echo "Done: package files now at $VERSION"
-./scripts/sync-version.sh check
+bash ./scripts/sync-version.sh check

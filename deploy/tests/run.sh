@@ -1911,6 +1911,44 @@ else
   fail "upgrade pgadmin master rewrite (rc=${upgrade_master_rc})"
   printf '%s\n' "${upgrade_master_err}" >&2
 fi
+
+release_clean_rc=0
+release_clean_err="$(
+  release_workflow="${deploy_dir%/*}/.github/workflows/release.yml"
+  set_version="${deploy_dir%/*}/scripts/set-version.sh"
+  sync_version="${deploy_dir%/*}/scripts/sync-version.sh"
+  ! /usr/bin/grep -q 'chmod +x' "${release_workflow}" || exit 1
+  /usr/bin/grep -Fq 'bash ./scripts/set-version.sh "${{ steps.ver.outputs.version }}"' "${release_workflow}" || exit 1
+  /usr/bin/grep -Fq 'bash ./scripts/generate-release-notes.sh \' "${release_workflow}" || exit 1
+  /usr/bin/grep -Fq 'bash ./deploy/build-release.sh "${{ steps.ver.outputs.version }}"' "${release_workflow}" || exit 1
+  [[ "$(/usr/bin/grep -Fc 'git status --porcelain --untracked-files=no' "${release_workflow}")" -eq 2 ]] || exit 1
+  /usr/bin/grep -Fq 'vcs.revision=${REVISION}' "${release_workflow}" || exit 1
+  /usr/bin/grep -Fq 'vcs.modified=false' "${release_workflow}" || exit 1
+  /usr/bin/grep -Fq 'bash ./scripts/sync-version.sh' "${set_version}" || exit 1
+  /usr/bin/grep -Fq 'bash ./scripts/sync-version.sh check' "${sync_version}" || exit 1
+
+  mode_fixture="${tmpdir}/release-script-modes"
+  /usr/bin/mkdir -p "${mode_fixture}/scripts" "${mode_fixture}/web" || exit 1
+  /usr/bin/cp "${set_version}" "${sync_version}" "${mode_fixture}/scripts/" || exit 1
+  /usr/bin/cp "${deploy_dir%/*}/VERSION" "${deploy_dir%/*}/web/package.json" "${deploy_dir%/*}/web/package-lock.json" "${mode_fixture}/" || exit 1
+  /usr/bin/mv "${mode_fixture}/package.json" "${mode_fixture}/web/package.json" || exit 1
+  /usr/bin/mv "${mode_fixture}/package-lock.json" "${mode_fixture}/web/package-lock.json" || exit 1
+  /usr/bin/chmod 0644 "${mode_fixture}/scripts/set-version.sh" "${mode_fixture}/scripts/sync-version.sh" || exit 1
+  (
+    cd "${mode_fixture}"
+    bash ./scripts/set-version.sh 9.8.7 >/dev/null || exit 1
+    /usr/bin/grep -qx '9.8.7' VERSION || exit 1
+    [[ "$(node -p "require('./web/package.json').version")" == '9.8.7' ]] || exit 1
+    [[ "$(node -p "require('./web/package-lock.json').version")" == '9.8.7' ]] || exit 1
+  ) || exit 1
+)" 2>&1 || release_clean_rc=$?
+if [[ "${release_clean_rc}" -eq 0 ]]; then
+  pass 'release workflow builds without dirtying script modes'
+else
+  fail "release workflow dirty checkout guard (rc=${release_clean_rc})"
+  printf '%s\n' "${release_clean_err}" >&2
+fi
+
 encode_rc=0
 encode_got="$(
   s2_lib_src

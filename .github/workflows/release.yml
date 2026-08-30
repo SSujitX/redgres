@@ -117,8 +117,7 @@ jobs:
       - name: Write VERSION and sync packages
         run: |
           set -euo pipefail
-          chmod +x scripts/set-version.sh scripts/sync-version.sh deploy/build-release.sh
-          ./scripts/set-version.sh "${{ steps.ver.outputs.version }}"
+          bash ./scripts/set-version.sh "${{ steps.ver.outputs.version }}"
 
       - name: Commit VERSION onto branch
         run: |
@@ -142,8 +141,7 @@ jobs:
         id: notes
         run: |
           set -euo pipefail
-          chmod +x scripts/generate-release-notes.sh
-          ./scripts/generate-release-notes.sh \
+          bash ./scripts/generate-release-notes.sh \
             "${{ steps.ver.outputs.previous_tag }}" \
             "${{ steps.ver.outputs.tag }}" \
             "${{ steps.ver.outputs.bump }}" \
@@ -157,10 +155,16 @@ jobs:
       - name: Build release tarball
         run: |
           set -euo pipefail
-          ./deploy/build-release.sh "${{ steps.ver.outputs.version }}"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          bash ./deploy/build-release.sh "${{ steps.ver.outputs.version }}"
+          test -z "$(git status --porcelain --untracked-files=no)"
           ls -la dist/release
           test -f "dist/release/redgres_${{ steps.ver.outputs.version }}_linux_amd64.tar.gz"
           test -f dist/release/SHA256SUMS
+          METADATA="$(go version -m dist/release/stage/redgres)"
+          REVISION="$(git rev-parse HEAD)"
+          grep -Fq "vcs.revision=${REVISION}" <<<"${METADATA}"
+          grep -Fq 'vcs.modified=false' <<<"${METADATA}"
 
       - name: Publish GitHub Release + assets
         uses: softprops/action-gh-release@v3
