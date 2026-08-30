@@ -700,7 +700,7 @@ redgres_docker_containers() {
 redgres_docker_images() {
   command -v docker >/dev/null 2>&1 || return 0
   docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null |
-    awk '$0 ~ /^(redgres|redis-insight|redisinsight|pgadmin-redgres)/ && $0 !~ / /'
+    awk '$0 ~ /^(redgres|redis-insight|redisinsight|pgadmin-redgres|dpage\/pgadmin4|redis\/redisinsight)/ && $0 !~ / /'
 }
 
 redgres_docker_volumes() {
@@ -819,6 +819,9 @@ if [[ "${APP_ONLY}" -eq 0 ]]; then
     fi
     if [[ -f "${ETC_ROOT}/redis-compose.yml" ]]; then
       docker compose -f "${ETC_ROOT}/redis-compose.yml" down --volumes --remove-orphans 2>/dev/null || true
+    fi
+    if [[ -f "${ETC_ROOT}/expert-tools-compose.yml" ]]; then
+      docker compose -f "${ETC_ROOT}/expert-tools-compose.yml" down --volumes --remove-orphans 2>/dev/null || true
     fi
     CONTAINERS="$(redgres_docker_containers || true)"
     if [[ -n "${CONTAINERS}" ]]; then
