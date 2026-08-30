@@ -26,6 +26,8 @@ All capture screenshots live in `web/screenshots/` (Playwright, mocked `/api/v1/
 
 ## Changed in this pass
 
+- Domain & Network: secret-safe apply/access/TLS/confirm activity list (GET `/domain` `activity`, poll while in flight). Disconnect sits in a **Remove this domain** danger zone with page gaps (`--space-6` / `--space-4`). Header Refresh uses the shared header row. Tokens, emails, and raw errors are dropped client-side if a label is not allow-listed.
+
 - System **Expert tools** section: always shows both cards with Ready / Waiting for Domain. Open via POST launch; Reveal when `expert_tools.pgadmin_login`. Overview tool card uses the same Open buttons (no raw hrefs). Wider card padding, 44px buttons with 16px gaps, header Refresh in a row. Recent tool activity uses compact GET `/audit?limit=8` (client filter to tool actions; 8s poll while visible; no request IDs/secrets).
 
 - Domain wizard: API token vs OAuth chosen once; API-token apply never shows OAuth paste. Status copy says the installer enables the Ubuntu connector and apply starts it. TLS retry copy says the same API token is reused.
