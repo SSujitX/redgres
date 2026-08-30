@@ -301,6 +301,9 @@ redgres_update_apply() {
       redgres_ensure_domain_secret_env /etc/redgres/redgres.env || true
     fi
   fi
+  if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && declare -F redgres_install_domain_runtime >/dev/null 2>&1; then
+    redgres_install_domain_runtime || redgres_die 'domain runtime units or packages failed'
+  fi
 
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
