@@ -65,7 +65,7 @@ export default function AppShell({ username, csrf, toolLinks, expertTools = empt
     statusAbortRef.current = controller;
     void loadStatus(controller);
     return () => controller.abort();
-  }, [section]);
+  }, []);
 
   async function loadStatus(controller: AbortController) {
     setStatusLoading(true);

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import DomainNetworkPage, { CLOUDFLARE_TOKEN_PERMISSIONS } from "./DomainNetworkPage";
 
@@ -13,6 +13,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("DomainNetworkPage", () => {
@@ -48,7 +49,7 @@ describe("DomainNetworkPage", () => {
             in_progress: false,
             steps: [
               { id: "discover_zone", label: "Looking up the zone", state: "done" },
-              { id: "create_tunnel", label: "Creating the tunnel", state: "done" },
+              { id: "create_tunnel", label: "Creating tunnel for db.customer.example.com token=raw", state: "done" },
               { id: "leak", label: "owner@example.com token=secret", state: "done" },
             ],
           },
@@ -62,7 +63,136 @@ describe("DomainNetworkPage", () => {
     expect(screen.getByText("Creating the tunnel")).toBeInTheDocument();
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("owner@example.com token=secret")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("db.customer.example.com");
+    expect(document.body.textContent).not.toContain("token=raw");
     expect(screen.getByRole("heading", { name: "Remove this domain" })).toBeInTheDocument();
+  });
+
+  it("shows a retryable pending disconnect and hides other domain mutations", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(200, {
+          configured: true,
+          disconnect_pending: true,
+          zone: "example.com",
+          hostname: "console.example.com",
+          access: "allow",
+          bootstrap_still_open: true,
+          tls: { db: "failed", rs: "failed" },
+          request_id: "r1",
+        }),
+      ),
+    );
+    render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
+    expect(await screen.findByText(/Disconnect cleanup is pending on the server/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect domain" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Issue TLS certificates" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Console is reachable — close bootstrap" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Access allow policy" })).not.toBeInTheDocument();
+  });
+
+  it("labels prepared DB and legacy Redis certificate state without offering a no-op retry", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(200, {
+          configured: true,
+          zone: "example.com",
+          hostname: "console.example.com",
+          hostnames: { db: "db.example.com", rs: "rs.example.com" },
+          access: "allow",
+          dns_provider: "cloudflare",
+          tls: { db: "certificate_prepared", redis: "issued" },
+          request_id: "r1",
+        }),
+      ),
+    );
+    render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
+    expect(
+      await screen.findByText((_, element) =>
+        element?.textContent === "TLS: Certificate prepared; PostgreSQL TLS not applied"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) =>
+        element?.textContent === "TLS: Certificate prepared; Redis TLS not applied"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Issue TLS certificates" })).not.toBeInTheDocument();
+  });
+
+  it("re-enables TLS issue automatically when the cooldown expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(200, {
+          configured: true,
+          access: "allow",
+          tls: { db: "failed", rs: "failed" },
+          activity: {
+            operation: "tls",
+            in_progress: false,
+            steps: [
+              {
+                id: "issue_tls",
+                state: "failed",
+                failure_code: "rate_limited",
+                retry_after: "2030-01-01T00:00:01Z",
+              },
+            ],
+          },
+          request_id: "r1",
+        }),
+      ),
+    );
+
+    await act(async () => {
+      render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
+    });
+    expect(screen.getByRole("button", { name: /retry after/i })).toBeDisabled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_100);
+    });
+    expect(screen.getByRole("button", { name: "Issue TLS certificates" })).toBeEnabled();
+  });
+
+  it("shows an allow-listed TLS failure reason and retry time without raw logs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(200, {
+          configured: true,
+          zone: "example.com",
+          hostname: "console.example.com",
+          access: "allow",
+          tls: { db: "failed", rs: "failed" },
+          activity: {
+            operation: "tls",
+            in_progress: false,
+            steps: [
+              {
+                id: "issue_tls",
+                label: "Issuing certificates",
+                state: "failed",
+                failure_code: "rate_limited",
+                retry_after: "2099-08-31T10:43:35Z",
+                error: "canary raw Certbot error token=secret",
+              },
+            ],
+          },
+          request_id: "r1",
+        }),
+      ),
+    );
+
+    render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
+    expect(await screen.findByRole("heading", { name: "Issuing certificates" })).toBeInTheDocument();
+    expect(screen.getByText(/temporarily rate-limited certificate requests/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/31 Aug 2099/i)).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /retry after 31 Aug 2099/i })).toBeDisabled();
+    expect(document.body.textContent).not.toContain("canary raw Certbot error");
+    expect(document.body.textContent).not.toContain("token=secret");
   });
 
   it("hides the wizard when status is already configured", async () => {
@@ -345,6 +475,40 @@ describe("DomainNetworkPage", () => {
       expect(screen.getByText("No")).toBeInTheDocument();
     });
     expect(screen.queryByRole("dialog", { name: "Disconnect domain" })).not.toBeInTheDocument();
+  });
+
+  it("refreshes into pending cleanup state after a failed disconnect", async () => {
+    let pending = false;
+    const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/domain" && (!init?.method || init.method === "GET")) {
+        return jsonResponse(200, {
+          configured: true,
+          disconnect_pending: pending,
+          zone: "example.com",
+          hostname: "console.example.com",
+          access: "allow",
+          bootstrap_still_open: true,
+          tls: { db: "failed", rs: "failed" },
+          request_id: pending ? "r3" : "r1",
+        });
+      }
+      if (url === "/api/v1/domain" && init?.method === "DELETE") {
+        pending = true;
+        return jsonResponse(503, { error: { code: "dependency_unavailable", message: "Cleanup is still pending" } });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
+    await screen.findByText("Yes");
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect domain" }));
+    const dialog = await screen.findByRole("dialog", { name: "Disconnect domain" });
+    fireEvent.change(within(dialog).getByLabelText("Confirm hostname"), { target: { value: "console.example.com" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+    expect(await screen.findByText(/Disconnect cleanup is pending on the server/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Issue TLS certificates" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Console is reachable — close bootstrap" })).not.toBeInTheDocument();
   });
 
   it("surfaces forbidden without exposing secrets", async () => {

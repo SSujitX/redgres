@@ -137,15 +137,82 @@ const ACTIVITY_STATES: Record<string, string> = {
   failed: "Failed",
 };
 
-function safeActivityLabel(label: string): string | null {
-  const trimmed = label.trim();
-  if (trimmed === "" || trimmed.length > 80) {
+const ACTIVITY_LABELS: Record<string, string> = {
+  discover_zone: "Looking up the zone",
+  create_tunnel: "Creating the tunnel",
+  write_dns: "Writing DNS records",
+  create_access: "Creating Access applications",
+  store_connector: "Storing the connector on the server",
+  queue_tls: "Queuing certificates",
+  save_config: "Saving the domain record",
+  write_instructions: "Preparing DNS instructions",
+  access_policy: "Adding the Access allow policy",
+  confirm_access: "Recording that Access is configured",
+  issue_tls: "Issuing certificates",
+  close_bootstrap: "Closing the bootstrap listener",
+  disconnect: "Removing domain resources",
+};
+
+const TLS_FAILURE_MESSAGES: Record<string, string> = {
+  rate_limited: "Let’s Encrypt temporarily rate-limited certificate requests.",
+  busy: "Another certificate operation is already running. Wait a moment, then retry.",
+  dns: "The DNS challenge did not become ready. Check the DNS-only records, then retry.",
+  credentials: "Cloudflare rejected the DNS credentials. Replace the API token before retrying.",
+  dependency: "The certificate service did not complete the request. Check the server journal before retrying.",
+};
+
+function tlsStatusLabel(endpoint: DomainEndpointDef, status: string): string {
+  if (status === "failed") return "Failed";
+  if (status === "not_issued") return "Not issued";
+  if (endpoint.key === "rs") {
+    return status === "issued" || status === "certificate_prepared"
+      ? "Certificate prepared; Redis TLS not applied"
+      : "Unknown";
+  }
+  if (endpoint.key === "db") {
+    return status === "issued"
+      ? "Issued and applied"
+      : status === "certificate_prepared"
+        ? "Certificate prepared; PostgreSQL TLS not applied"
+        : "Unknown";
+  }
+  return "Unknown";
+}
+
+function safeRetryAfter(value: string | undefined): string | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)) {
     return null;
   }
-  if (/@|token|bearer|password|secret|sk-|cfargotunnel/i.test(trimmed)) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
     return null;
   }
-  return trimmed;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
+    timeZoneName: "short",
+  }).format(date);
+}
+
+function safeActivityFailure(step: DomainActivityStep): string | null {
+  if (step.state !== "failed" || typeof step.failure_code !== "string") {
+    return null;
+  }
+  const message = TLS_FAILURE_MESSAGES[step.failure_code];
+  if (!message) {
+    return null;
+  }
+  const retryAfter = step.failure_code === "rate_limited" ? safeRetryAfter(step.retry_after) : null;
+  return retryAfter ? `${message} Retry after ${retryAfter}.` : message;
+}
+
+function safeActivityLabel(step: DomainActivityStep): string | null {
+  return typeof step.id === "string" ? (ACTIVITY_LABELS[step.id] ?? null) : null;
 }
 
 function activityTitle(operation: string | undefined): string {
@@ -205,6 +272,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
 
   const [tlsError, setTlsError] = useState("");
   const [tlsBusy, setTlsBusy] = useState(false);
+  const [cooldownNow, setCooldownNow] = useState(() => Date.now());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTyped, setConfirmTyped] = useState("");
   const [confirmError, setConfirmError] = useState("");
@@ -474,8 +542,10 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
         return;
       }
       setDisconnectError(errorMessage(result.body, "Disconnect failed."));
+      refresh();
     } catch {
       setDisconnectError("Disconnect failed.");
+      refresh();
     } finally {
       setDisconnectBusy(false);
     }
@@ -558,8 +628,10 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
         return;
       }
       setTlsError(errorMessage(result.body, "TLS issuance failed."));
+      refresh();
     } catch {
       setTlsError("TLS issuance failed.");
+      refresh();
     } finally {
       setTlsBusy(false);
     }
@@ -640,6 +712,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   }
 
   const configured = status?.configured === true;
+  const disconnectPending = status?.disconnect_pending === true;
   const isManual = status?.dns_provider === "manual" || dnsProvider === "manual";
   const showWizard = status?.configured === false && !statusError;
   const showCloudflareTokenWizard = showWizard && dnsProvider === "cloudflare";
@@ -662,6 +735,24 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   const credential = status?.credential ?? "none";
   const tlsDb = status?.tls?.db ?? "not_issued";
   const tlsRS = status?.tls?.rs ?? status?.tls?.redis ?? "not_issued";
+  const tlsDBReady = tlsDb === "issued" || tlsDb === "certificate_prepared";
+  const tlsRSReady = tlsRS === "issued" || tlsRS === "certificate_prepared";
+  const tlsRateLimitStep = status?.activity?.steps?.find(
+    (step) => step.state === "failed" && step.failure_code === "rate_limited" && safeRetryAfter(step.retry_after),
+  );
+  const tlsRetryAfter = safeRetryAfter(tlsRateLimitStep?.retry_after);
+  const tlsRetryAt = tlsRateLimitStep?.retry_after ? new Date(tlsRateLimitStep.retry_after).getTime() : 0;
+  const tlsCooldownActive =
+    tlsRateLimitStep?.retry_after !== undefined && tlsRetryAt > cooldownNow;
+
+  useEffect(() => {
+    if (!tlsCooldownActive) {
+      return;
+    }
+    const delay = Math.min(Math.max(tlsRetryAt - Date.now() + 25, 25), 2_147_483_647);
+    const timer = window.setTimeout(() => setCooldownNow(Date.now()), delay);
+    return () => window.clearTimeout(timer);
+  }, [cooldownNow, tlsCooldownActive, tlsRetryAt]);
 
   return (
     <article className="domain-page">
@@ -745,7 +836,12 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
             </p>
           ) : null}
           <DomainActivityPanel activity={status.activity} fallbackBusy={applyBusy || allowBusy || tlsBusy || confirmBusy} />
-          {configured && !isManual ? (
+          {disconnectPending ? (
+            <p className="form-error" role="status">
+              Disconnect cleanup is pending on the server. Choose Disconnect again to finish it; other domain changes are paused.
+            </p>
+          ) : null}
+          {configured && !disconnectPending && !isManual ? (
             <p className="muted-copy">
               The Cloudflare tunnel connector belongs on the Ubuntu server where you installed Redgres, not this
               browser. The installer enables cloudflared there; apply writes the token and the server starts the
@@ -773,7 +869,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               })}
             </ul>
           ) : null}
-          {configured && !accessAllow && isManual ? (
+          {configured && !disconnectPending && !accessAllow && isManual ? (
             <div className="panel-sub">
               <h3>3. Manual DNS and Access</h3>
               <p className="muted-copy">
@@ -815,7 +911,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               ) : null}
             </div>
           ) : null}
-          {configured && !accessAllow && !isManual ? (
+          {configured && !disconnectPending && !accessAllow && !isManual ? (
             <form className="panel-sub" onSubmit={handleAccessAllow} autoComplete="off">
               <h3>3. Access allow policy</h3>
               <p className="muted-copy">
@@ -863,7 +959,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               </button>
             </form>
           ) : null}
-          {configured && accessAllow && !isManual && authMethod === "oauth" && credential !== "api_token" && credential !== "oauth" ? (
+          {configured && !disconnectPending && accessAllow && !isManual && authMethod === "oauth" && credential !== "api_token" && credential !== "oauth" ? (
             <form className="panel-sub" onSubmit={handleOAuthConnect} autoComplete="off">
               <h3>4. Connect Cloudflare OAuth</h3>
               <p className="muted-copy">
@@ -909,48 +1005,58 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               </button>
             </form>
           ) : null}
-          {configured && accessAllow && (tlsDb !== "issued" || tlsRS !== "issued") && status.dns_provider !== "manual" ? (
-            <div className="panel-sub">
-              <h3>4. Issue TLS certificates (db + rs)</h3>
-              <p className="muted-copy">
-                Uses the same API token for Let&apos;s Encrypt DNS-01 on grey-cloud db and rs. The server queues this
-                after apply; retry if status is still not issued.
-              </p>
-              {tlsError ? (
-                <p className="form-error" role="alert">
-                  {tlsError}
-                </p>
+          {configured && !disconnectPending && accessAllow &&
+          (((!tlsDBReady || !tlsRSReady) && status.dns_provider !== "manual") || bootstrapOpen) ? (
+            <div className="domain-action-grid">
+              {(!tlsDBReady || !tlsRSReady) && status.dns_provider !== "manual" ? (
+                <div className="panel-sub">
+                  <h3>4. Issue TLS certificates (db + rs)</h3>
+                  <p className="muted-copy">
+                    Uses the stored API token for DNS-01. A valid matching certificate is reused; a failed attempt adds
+                    a safe reason and retry time to Recent activity.
+                  </p>
+                  {tlsError ? (
+                    <p className="form-error" role="alert">
+                      {tlsError}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={tlsBusy || tlsCooldownActive}
+                    onClick={() => void handleTLSIssue()}
+                  >
+                    {tlsCooldownActive && tlsRetryAfter ? `Retry after ${tlsRetryAfter}` : "Issue TLS certificates"}
+                  </button>
+                </div>
               ) : null}
-              <button type="button" className="primary-button" disabled={tlsBusy} onClick={() => void handleTLSIssue()}>
-                Issue TLS certificates
-              </button>
-            </div>
-          ) : null}
-          {configured && accessAllow && bootstrapOpen ? (
-            <div className="panel-sub">
-              <h3>5. Close bootstrap</h3>
-              <p className="muted-copy">
-                After you can open the console hostname through Tunnel + Access, close the temporary public bootstrap
-                listener. This cannot be undone from the UI.
-              </p>
-              {confirmError && !confirmOpen ? (
-                <p className="form-error" role="alert">
-                  {confirmError}
-                </p>
+              {bootstrapOpen ? (
+                <div className="panel-sub">
+                  <h3>5. Close bootstrap</h3>
+                  <p className="muted-copy">
+                    After the console opens through Tunnel + Access, close the temporary public listener. This cannot
+                    be undone from the UI.
+                  </p>
+                  {confirmError && !confirmOpen ? (
+                    <p className="form-error" role="alert">
+                      {confirmError}
+                    </p>
+                  ) : null}
+                  <button
+                    ref={confirmButtonRef}
+                    type="button"
+                    className="primary-button"
+                    disabled={confirmBusy}
+                    onClick={() => {
+                      setConfirmTyped("");
+                      setConfirmError("");
+                      setConfirmOpen(true);
+                    }}
+                  >
+                    Console is reachable — close bootstrap
+                  </button>
+                </div>
               ) : null}
-              <button
-                ref={confirmButtonRef}
-                type="button"
-                className="primary-button"
-                disabled={confirmBusy}
-                onClick={() => {
-                  setConfirmTyped("");
-                  setConfirmError("");
-                  setConfirmOpen(true);
-                }}
-              >
-                Console is reachable — close bootstrap
-              </button>
             </div>
           ) : null}
           {configured ? (
@@ -1311,14 +1417,23 @@ function DomainActivityPanel({
   const steps = Array.isArray(activity?.steps) ? activity.steps : [];
   const visible = steps
     .map((step) => {
-      const label = typeof step.label === "string" ? safeActivityLabel(step.label) : null;
+      const label = safeActivityLabel(step);
       const state = typeof step.state === "string" ? ACTIVITY_STATES[step.state] : undefined;
       if (!label || !state) {
         return null;
       }
-      return { key: typeof step.id === "string" && step.id !== "" ? step.id : label, label, state, raw: step };
+      return {
+        key: typeof step.id === "string" && step.id !== "" ? step.id : label,
+        label,
+        state,
+        failure: safeActivityFailure(step),
+        raw: step,
+      };
     })
-    .filter((row): row is { key: string; label: string; state: string; raw: DomainActivityStep } => row !== null);
+    .filter(
+      (row): row is { key: string; label: string; state: string; failure: string | null; raw: DomainActivityStep } =>
+        row !== null,
+    );
 
   if (visible.length === 0 && !fallbackBusy) {
     return null;
@@ -1326,9 +1441,12 @@ function DomainActivityPanel({
 
   return (
     <div className="domain-activity" aria-live="polite">
-      <h3>{activityTitle(activity?.operation)}</h3>
+      <div className="domain-activity-heading">
+        <span>Recent activity</span>
+        <h3>{activityTitle(activity?.operation)}</h3>
+      </div>
       <p className="muted-copy">
-        Secret-safe steps only. Tokens, emails, passwords, and raw errors are not shown.
+        Safe operation log. Tokens, emails, passwords, hostnames, and raw errors are omitted.
       </p>
       {visible.length === 0 ? (
         <p className="muted-copy">Waiting for the server to report the next step.</p>
@@ -1337,7 +1455,10 @@ function DomainActivityPanel({
           {visible.map((row) => (
             <li key={row.key} className={`domain-activity-item is-${row.raw.state ?? "pending"}`}>
               <span className="domain-activity-state">{row.state}</span>
-              <span className="bidi-isolate">{displayText(row.label)}</span>
+              <span className="domain-activity-copy">
+                <span className="bidi-isolate">{displayText(row.label)}</span>
+                {row.failure ? <span className="domain-activity-detail">{row.failure}</span> : null}
+              </span>
             </li>
           ))}
         </ol>
@@ -1364,7 +1485,7 @@ function DomainEndpointStatusCard({
       </p>
       {tlsStatus ? (
         <p className="muted-copy">
-          TLS: {displayText(tlsStatus)}
+          TLS: {tlsStatusLabel(endpoint, tlsStatus)}
         </p>
       ) : null}
     </li>

@@ -12,6 +12,8 @@ export type DomainActivityStep = {
   id?: string;
   label?: string;
   state?: "pending" | "running" | "done" | "failed" | string;
+  failure_code?: "rate_limited" | "busy" | "dns" | "credentials" | "dependency" | string;
+  retry_after?: string;
 };
 
 export type DomainActivity = {
@@ -33,6 +35,7 @@ export type DomainStatusPayload = {
   dns_provider?: string;
   bootstrap_still_open?: boolean;
   tunnel_id?: string;
+  disconnect_pending?: boolean;
   activity?: DomainActivity;
   request_id?: string;
 };
