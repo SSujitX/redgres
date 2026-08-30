@@ -70,6 +70,27 @@ redgres_ensure_pgbouncer_env() {
   return 1
 }
 
+redgres_expert_tool_env_defaults() {
+  cat <<'EOF'
+REDGRES_PGADMIN_EMAIL=admin@redgres.com
+REDGRES_PGADMIN_PASSWORD_FILE=/var/lib/redgres/secrets/pgadmin.pass
+REDGRES_TOOL_GATE_PGADMIN_LISTEN=127.0.0.1:5050
+REDGRES_TOOL_GATE_PGADMIN_UPSTREAM=http://127.0.0.1:5052
+REDGRES_TOOL_GATE_REDISINSIGHT_LISTEN=127.0.0.1:5540
+REDGRES_TOOL_GATE_REDISINSIGHT_UPSTREAM=http://127.0.0.1:5542
+EOF
+}
+
+redgres_ensure_expert_tool_env() {
+  local env_file="${1:-/etc/redgres/redgres.env}"
+  redgres_ensure_secrets_dir
+  [[ -f "${env_file}" ]] || return 1
+  if redgres_expert_tool_env_defaults | redgres_env_ensure_lines "${env_file}"; then
+    return 0
+  fi
+  return 1
+}
+
 redgres_write_default_env() {
   local env_file='/etc/redgres/redgres.env' base added=0
   /usr/bin/getent group redgres >/dev/null || redgres_die 'redgres group is missing'
@@ -79,6 +100,9 @@ redgres_write_default_env() {
       added=1
     fi
     if redgres_ensure_pgbouncer_env "${env_file}"; then
+      added=1
+    fi
+    if redgres_ensure_expert_tool_env "${env_file}"; then
       added=1
     fi
     if [[ "${added}" -eq 1 ]]; then
@@ -115,6 +139,7 @@ REDGRES_REDIS_EXPECTED_SERIES=${redis_version}
 EOF
   redgres_domain_secret_env_defaults >>"${env_file}"
   redgres_pgbouncer_env_lines >>"${env_file}"
+  redgres_expert_tool_env_defaults >>"${env_file}"
   /usr/bin/chmod 660 "${env_file}"
   /usr/bin/chown root:redgres "${env_file}"
   redgres_log 'default /etc/redgres/redgres.env written (bootstrap HTTP; CookieSecure false until domain TLS)'
