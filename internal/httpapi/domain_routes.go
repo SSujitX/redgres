@@ -752,10 +752,21 @@ func (s *Server) writeCFError(w http.ResponseWriter, r *http.Request, err error)
 		s.writeError(w, r, http.StatusNotFound, CodeNotFound, "Cloudflare resource not found")
 		return
 	}
-	var apiErr *cloudflare.APIError
-	if errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden) {
-		s.writeError(w, r, http.StatusForbidden, CodeForbidden, "Cloudflare token is unauthorized")
+	if errors.Is(err, cloudflare.ErrTunnelNameInUse) {
+		s.writeError(w, r, http.StatusConflict, CodeConflict, "A Cloudflare tunnel with this hostname already exists")
 		return
+	}
+	var apiErr *cloudflare.APIError
+	if errors.As(err, &apiErr) {
+		s.log.Warn("domain.cloudflare",
+			slog.String("request_id", requestID(r)),
+			slog.Int("status", apiErr.StatusCode),
+			slog.Int("code", apiErr.Code),
+		)
+		if apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden {
+			s.writeError(w, r, http.StatusForbidden, CodeForbidden, "Cloudflare token is unauthorized")
+			return
+		}
 	}
 	s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "Cloudflare API error")
 }

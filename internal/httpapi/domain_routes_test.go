@@ -32,6 +32,7 @@ type fakeCF struct {
 	deletedA          []string
 	deletedP          []string
 	verifyErr         error
+	createTunnelErr   error
 	lastIngressHost   string
 	lastIngressOrigin string
 	lastIngressRoutes []cloudflare.IngressRoute
@@ -58,6 +59,9 @@ func (f *fakeCF) DiscoverZone(_ context.Context, name string) (cloudflare.Zone, 
 }
 
 func (f *fakeCF) CreateTunnel(_ context.Context, accountID, name string) (cloudflare.Tunnel, error) {
+	if f.createTunnelErr != nil {
+		return cloudflare.Tunnel{}, f.createTunnelErr
+	}
 	t := cloudflare.Tunnel{ID: "tun-1", Name: name, Token: "fake-tunnel-token"}
 	f.tunnels[t.ID] = t
 	return t, nil
@@ -453,6 +457,27 @@ func TestDomainApplyConflictsOnReapply(t *testing.T) {
 	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, body))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("reapply = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDomainApplyConflictWhenTunnelNameInUse(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeCF()
+	fake.createTunnelErr = cloudflare.ErrTunnelNameInUse
+	srv.cloudflare = fake
+
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"conflict"`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "already exists") {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
