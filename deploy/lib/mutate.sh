@@ -489,6 +489,110 @@ redgres_write_redis_compose() {
   /usr/bin/chmod 644 /etc/redgres/redis-compose.yml
 }
 
+redgres_generic_hostname() {
+  local current
+  current="$(/usr/bin/hostname -s 2>/dev/null || /usr/bin/hostname 2>/dev/null || true)"
+  current="$(printf '%s' "${current}" | /usr/bin/tr '[:upper:]' '[:lower:]')"
+  case "${current}" in
+    ''|test|ubuntu|localhost|debian|vultr|droplet) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+redgres_maybe_set_hostname() {
+  local current
+  current="$(/usr/bin/hostname -s 2>/dev/null || /usr/bin/hostname 2>/dev/null || true)"
+  if ! redgres_generic_hostname; then
+    redgres_log "hostname kept (${current})"
+    return 0
+  fi
+  if [[ -x /usr/bin/hostnamectl ]]; then
+    /usr/bin/hostnamectl set-hostname redgres || redgres_die 'hostnamectl set-hostname failed'
+  else
+    printf 'redgres\n' >/etc/hostname || redgres_die 'could not write /etc/hostname'
+    /usr/bin/hostname redgres || true
+  fi
+  redgres_log 'hostname set to redgres (previous name was a generic default)'
+}
+
+redgres_write_pgadmin_password() {
+  local passfile='/var/lib/redgres/secrets/pgadmin.pass'
+  redgres_ensure_secrets_dir
+  if [[ -f "${passfile}" && ! -L "${passfile}" ]]; then
+    redgres_log 'pgadmin password file already present'
+    return 0
+  fi
+  umask 077
+  /usr/bin/dd if=/dev/urandom bs=24 count=1 status=none | /usr/bin/base64 | /usr/bin/tr -d '\n' >"${passfile}"
+  printf '\n' >>"${passfile}"
+  /usr/bin/chown redgres:redgres "${passfile}"
+  /usr/bin/chmod 600 "${passfile}"
+  redgres_log 'pgadmin password written to /var/lib/redgres/secrets/pgadmin.pass (not logged)'
+}
+
+redgres_write_pgadmin_compose_env() {
+  local passfile='/var/lib/redgres/secrets/pgadmin.pass'
+  local envfile='/var/lib/redgres/secrets/pgadmin-compose.env'
+  local pass
+  [[ -f "${passfile}" && ! -L "${passfile}" ]] || redgres_die 'pgadmin passfile is not trusted'
+  pass="$(/usr/bin/tr -d '\n' <"${passfile}")"
+  [[ -n "${pass}" ]] || redgres_die 'pgadmin passfile is empty'
+  umask 077
+  printf 'PGADMIN_DEFAULT_EMAIL=admin@redgres.com\nPGADMIN_DEFAULT_PASSWORD=%s\n' "${pass}" >"${envfile}"
+  /usr/bin/chown redgres:redgres "${envfile}"
+  /usr/bin/chmod 600 "${envfile}"
+}
+
+redgres_expert_tools_compose_yaml() {
+  local pg_image ri_image
+  pg_image="$(redgres_pgadmin_image_pin)"
+  ri_image="$(redgres_redisinsight_image_pin)"
+  /usr/bin/cat <<EOF
+services:
+  pgadmin:
+    image: ${pg_image}
+    container_name: redgres-pgadmin
+    restart: unless-stopped
+    env_file:
+      - /var/lib/redgres/secrets/pgadmin-compose.env
+    environment:
+      PGADMIN_CONFIG_AUTHENTICATION_SOURCES: "['webserver']"
+      PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER: "True"
+      PGADMIN_CONFIG_WEBSERVER_REMOTE_USER: "'X-Forwarded-User'"
+    ports:
+      - "127.0.0.1:5052:80"
+    volumes:
+      - /var/lib/redgres/pgadmin:/var/lib/pgadmin
+  redisinsight:
+    image: ${ri_image}
+    container_name: redgres-redisinsight
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5542:5540"
+    volumes:
+      - /var/lib/redgres/redisinsight:/data
+EOF
+}
+
+redgres_write_expert_tools_compose() {
+  /usr/bin/mkdir -p /var/lib/redgres/pgadmin /var/lib/redgres/redisinsight
+  /usr/bin/chown 5050:5050 /var/lib/redgres/pgadmin
+  /usr/bin/chmod 700 /var/lib/redgres/pgadmin
+  /usr/bin/chmod 755 /var/lib/redgres/redisinsight
+  redgres_expert_tools_compose_yaml >'/etc/redgres/expert-tools-compose.yml'
+  /usr/bin/chmod 644 /etc/redgres/expert-tools-compose.yml
+}
+
+redgres_ensure_expert_tools() {
+  redgres_write_pgadmin_password
+  redgres_write_pgadmin_compose_env
+  redgres_write_expert_tools_compose
+  if [[ -f /etc/redgres/redgres.env ]]; then
+    redgres_ensure_expert_tool_env /etc/redgres/redgres.env || true
+  fi
+  redgres_run_quiet 'expert tools compose' /usr/bin/docker compose -f /etc/redgres/expert-tools-compose.yml up -d || redgres_die 'expert tools compose failed'
+}
+
 redgres_wait_docker() {
   local i=0
   while ! /usr/bin/docker info >/dev/null 2>&1; do
@@ -622,6 +726,7 @@ redgres_live_install() {
 
   redgres_section 1 8 'Preflight'
   redgres_log "os=${REDGRES_OS_ID} ${REDGRES_OS_VERSION_ID} (${REDGRES_OS_CODENAME}) postgres=${postgres_version}"
+  redgres_maybe_set_hostname
 
   redgres_section 2 8 'Packages'
   trap 'rm -f /tmp/redgres-cmd.*' EXIT
@@ -649,6 +754,7 @@ redgres_live_install() {
   redgres_wait_docker
   redgres_run_quiet 'redis compose' /usr/bin/docker compose -f /etc/redgres/redis-compose.yml up -d || redgres_die 'redis compose failed'
   redgres_wait_redis_container
+  redgres_ensure_expert_tools
 
   redgres_section 4 8 'PostgreSQL'
   if /usr/bin/pg_lsclusters -h | /usr/bin/awk -v v="${postgres_version}" '$1==v { found=1 } END { exit found ? 0 : 1 }'; then
