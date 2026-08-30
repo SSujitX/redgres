@@ -519,7 +519,6 @@ redgres_write_pgadmin_password() {
   local passfile='/var/lib/redgres/secrets/pgadmin.pass'
   redgres_ensure_secrets_dir
   if [[ -f "${passfile}" && ! -L "${passfile}" ]]; then
-    redgres_log 'pgadmin password file already present'
     return 0
   fi
   umask 077
@@ -527,7 +526,6 @@ redgres_write_pgadmin_password() {
   printf '\n' >>"${passfile}"
   /usr/bin/chown redgres:redgres "${passfile}"
   /usr/bin/chmod 600 "${passfile}"
-  redgres_log 'pgadmin password written to /var/lib/redgres/secrets/pgadmin.pass (not logged)'
 }
 
 redgres_write_pgadmin_compose_env() {
@@ -559,6 +557,7 @@ services:
       PGADMIN_CONFIG_AUTHENTICATION_SOURCES: "['webserver']"
       PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER: "True"
       PGADMIN_CONFIG_WEBSERVER_REMOTE_USER: "'X-Forwarded-User'"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
     ports:
       - "127.0.0.1:5052:80"
     volumes:
@@ -583,14 +582,39 @@ redgres_write_expert_tools_compose() {
   /usr/bin/chmod 644 /etc/redgres/expert-tools-compose.yml
 }
 
-redgres_ensure_expert_tools() {
+redgres_prepare_expert_tools_files() {
   redgres_write_pgadmin_password
   redgres_write_pgadmin_compose_env
   redgres_write_expert_tools_compose
   if [[ -f /etc/redgres/redgres.env ]]; then
     redgres_ensure_expert_tool_env /etc/redgres/redgres.env || true
   fi
+}
+
+redgres_expert_tools_compose_up() {
+  local service="${1:-}"
+  if [[ -n "${service}" ]]; then
+    redgres_run_quiet "${service} compose" /usr/bin/docker compose -f /etc/redgres/expert-tools-compose.yml up -d "${service}" || redgres_die 'expert tools compose failed'
+    return
+  fi
   redgres_run_quiet 'expert tools compose' /usr/bin/docker compose -f /etc/redgres/expert-tools-compose.yml up -d || redgres_die 'expert tools compose failed'
+}
+
+redgres_ensure_redisinsight() {
+  redgres_prepare_expert_tools_files
+  redgres_expert_tools_compose_up redisinsight
+  redgres_log 'Redis Insight 127.0.0.1:5542'
+}
+
+redgres_ensure_pgadmin() {
+  redgres_prepare_expert_tools_files
+  redgres_expert_tools_compose_up pgadmin
+  redgres_log 'pgAdmin 127.0.0.1:5052'
+}
+
+redgres_ensure_expert_tools() {
+  redgres_prepare_expert_tools_files
+  redgres_expert_tools_compose_up
 }
 
 redgres_wait_docker() {
@@ -754,7 +778,7 @@ redgres_live_install() {
   redgres_wait_docker
   redgres_run_quiet 'redis compose' /usr/bin/docker compose -f /etc/redgres/redis-compose.yml up -d || redgres_die 'redis compose failed'
   redgres_wait_redis_container
-  redgres_ensure_expert_tools
+  redgres_ensure_redisinsight
 
   redgres_section 4 8 'PostgreSQL'
   if /usr/bin/pg_lsclusters -h | /usr/bin/awk -v v="${postgres_version}" '$1==v { found=1 } END { exit found ? 0 : 1 }'; then
@@ -766,6 +790,7 @@ redgres_live_install() {
   redgres_postgres_health
   redgres_redis_health
   redgres_create_postgres_admin
+  redgres_ensure_pgadmin
 
   redgres_section 5 8 'PgBouncer'
   if [[ "${pgbouncer_mode}" == "fresh" ]]; then
