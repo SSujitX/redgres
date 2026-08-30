@@ -15,6 +15,7 @@ import (
 	"github.com/SSujitX/redgres/internal/operations"
 	"github.com/SSujitX/redgres/internal/postgresadmin"
 	"github.com/SSujitX/redgres/internal/redisadmin"
+	"github.com/SSujitX/redgres/internal/toolgate"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -44,6 +45,7 @@ type Server struct {
 	redis           redisHealth
 	cloudflare      cloudflare.Client
 	bootstrapCloser bootstrapCloser
+	tools           *toolgate.Memory
 }
 
 // bootstrapCloser is the optional first-run public listener (OPS-008).
@@ -70,7 +72,11 @@ func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger, postg
 	if db != nil {
 		ops = operations.NewStore(db)
 	}
-	return &Server{cfg: cfg, db: db, assets: assets, log: logger, audit: audit.Store{DB: db}, operations: ops, postgres: postgres, redis: redis}
+	return &Server{cfg: cfg, db: db, assets: assets, log: logger, audit: audit.Store{DB: db}, operations: ops, postgres: postgres, redis: redis, tools: toolgate.NewMemory()}
+}
+
+func (s *Server) ToolStore() *toolgate.Memory {
+	return s.tools
 }
 
 func (s *Server) Handler() http.Handler {
@@ -107,6 +113,8 @@ func (s *Server) Handler() http.Handler {
 	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/manual/verify", s.handleDomainManualVerify)
 	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/manual/confirm-access", s.handleDomainManualConfirmAccess)
 	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Delete("/api/v1/domain", s.handleDomainDisconnect)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/tools/{tool}/launch", s.handleToolLaunch)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/tools/pgadmin/credentials/reveal", s.handlePgAdminReveal)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/status", s.handleRedisStatus)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/presets", s.handleRedisPresets)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/commands", s.handleRedisCommands)
