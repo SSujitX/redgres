@@ -127,6 +127,7 @@ Security invariants and accepted ADRs outrank PRD, architecture/deployment docs,
 - Keep installer commits scoped to installer, deploy, and related auth work; leave unrelated UI/theme dirty files out of those commits.
 - While iterating the installer, do not delete `.github/workflows/ci.yml`; keep full CI off push until it is ready, and use a separate installer workflow for that gate.
 - Prefer finishing application code first, then verify on the Ubuntu test host; GitHub Actions service containers are development evidence, not production acceptance.
+- Atlanta VPS `45.76.250.202` (root) is the standing Redgres test host. SSH, installer uninstall/reinstall, and Cloudflare test-token use there are authorized without asking. Never commit that host password or API token; keep them only in the operator home env file.
 
 ## Learned Workspace Facts
 
