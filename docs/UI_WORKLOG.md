@@ -26,7 +26,7 @@ All capture screenshots live in `web/screenshots/` (Playwright, mocked `/api/v1/
 
 ## Changed in this pass
 
-- Sidebar System group: always-visible **Expert tools** page (Open + Reveal). Compose disables pgAdmin master-password vault (`MASTER_PASSWORD_REQUIRED=False`).
+- Sidebar System group: always-visible **Expert tools** page (Open + Reveal login and master password). Installer generates a master-password file and official `MASTER_PASSWORD_HOOK`. Finish box shows TTY-only pgAdmin login + master.
 
 - Domain & Network: secret-safe apply/access/TLS/confirm activity list (GET `/domain` `activity`, poll while in flight). Disconnect sits in a **Remove this domain** danger zone with page gaps (`--space-6` / `--space-4`). Header Refresh uses the shared header row. Tokens, emails, and raw errors are dropped client-side if a label is not allow-listed.
 
