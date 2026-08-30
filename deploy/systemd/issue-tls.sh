@@ -16,15 +16,32 @@ PGBOUNCER_INI="${REDGRES_PGBOUNCER_INI:-/etc/pgbouncer/pgbouncer.ini}"
 
 redgres_tls_prepare_dest() {
   local dir="$1"
-  /usr/bin/mkdir -p "${dir}"
+  /usr/bin/mkdir -p "${dir}" || return 1
   if /usr/bin/getent group ssl-cert >/dev/null 2>&1; then
-    /usr/bin/chown root:ssl-cert "${dir}" 2>/dev/null || true
-    /usr/bin/chmod 0750 "${dir}"
+    /usr/bin/chown root:ssl-cert "${dir}" || return 1
+    /usr/bin/chmod 0750 "${dir}" || return 1
   elif /usr/bin/getent group postgres >/dev/null 2>&1; then
-    /usr/bin/chown root:postgres "${dir}" 2>/dev/null || true
-    /usr/bin/chmod 0750 "${dir}"
+    /usr/bin/chown root:postgres "${dir}" || return 1
+    /usr/bin/chmod 0750 "${dir}" || return 1
   else
-    /usr/bin/chmod 0755 "${dir}"
+    /usr/bin/chmod 0755 "${dir}" || return 1
+  fi
+}
+
+redgres_tls_chown_key() {
+  local dest_key="$1"
+  if /usr/bin/getent group ssl-cert >/dev/null 2>&1; then
+    /usr/bin/chown root:ssl-cert "${dest_key}" || return 1
+  elif /usr/bin/getent group postgres >/dev/null 2>&1; then
+    /usr/bin/chown root:postgres "${dest_key}" || return 1
+  fi
+}
+
+redgres_tls_assert_readable() {
+  local dest_key="$1"
+  [[ -r "${dest_key}" ]] || return 1
+  if /usr/bin/getent passwd postgres >/dev/null 2>&1 && command -v runuser >/dev/null 2>&1; then
+    /usr/bin/runuser -u postgres -- /usr/bin/test -r "${dest_key}" || return 1
   fi
 }
 
@@ -37,10 +54,13 @@ redgres_tls_apply_pgbouncer() {
     /^client_tls_key_file[[:space:]]*=/ { print "client_tls_key_file = " k; next }
     { print }
   ' "${PGBOUNCER_INI}" >"${tmp}"
+  if ! grep -q '^client_tls_cert_file[[:space:]]*=' "${tmp}"; then
+    printf '%s\n' "client_tls_cert_file = ${dest_chain}" "client_tls_key_file = ${dest_key}" >>"${tmp}"
+  fi
   /usr/bin/chmod --reference="${PGBOUNCER_INI}" "${tmp}" 2>/dev/null || /usr/bin/chmod 640 "${tmp}"
   /usr/bin/mv "${tmp}" "${PGBOUNCER_INI}"
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl reload pgbouncer >/dev/null 2>&1 || systemctl restart pgbouncer >/dev/null 2>&1 || true
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet pgbouncer; then
+    systemctl reload pgbouncer >/dev/null 2>&1 || systemctl restart pgbouncer >/dev/null 2>&1 || return 1
   fi
 }
 
@@ -68,13 +88,10 @@ redgres_tls_copy_certs() {
   dest_key="${CERT_DIR}/privkey.pem"
   /usr/bin/install -m 0644 "${live}/fullchain.pem" "${dest_chain}"
   /usr/bin/install -m 0640 "${live}/privkey.pem" "${dest_key}"
-  if /usr/bin/getent group ssl-cert >/dev/null 2>&1; then
-    /usr/bin/chown root:ssl-cert "${dest_key}" 2>/dev/null || true
-  elif /usr/bin/getent group postgres >/dev/null 2>&1; then
-    /usr/bin/chown root:postgres "${dest_key}" 2>/dev/null || true
-  fi
+  redgres_tls_chown_key "${dest_key}" || return 1
+  redgres_tls_assert_readable "${dest_key}" || return 1
   if [[ "${REDGRES_TLS_APPLY_PGBOUNCER:-${REDGRES_TLS_APPLY_POSTGRES_SSL:-1}}" == "1" ]]; then
-    redgres_tls_apply_pgbouncer "${dest_chain}" "${dest_key}"
+    redgres_tls_apply_pgbouncer "${dest_chain}" "${dest_key}" || return 1
   fi
   if [[ "${REDGRES_TLS_APPLY_POSTGRES_SSL:-1}" != "1" ]]; then
     return 0
