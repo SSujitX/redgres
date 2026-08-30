@@ -49,6 +49,8 @@ type Config struct {
 	TunnelTokenFile           string
 	CertbotBin                string
 	CertbotDNSCredentialsFile string
+	TLSIssueRequestFile       string
+	TLSIssueResultFile        string
 	BootstrapUFWRemoveCmd     string
 	EnvFile                   string
 	SQLitePath                string
@@ -113,6 +115,8 @@ func Load(args []string) (Config, error) {
 		TunnelTokenFile:           envOr("REDGRES_TUNNEL_TOKEN_FILE", ""),
 		CertbotBin:                envOr("REDGRES_CERTBOT_BIN", "certbot"),
 		CertbotDNSCredentialsFile: envOr("REDGRES_CERTBOT_DNS_TOKEN_FILE", ""),
+		TLSIssueRequestFile:       envOr("REDGRES_TLS_ISSUE_REQUEST_FILE", ""),
+		TLSIssueResultFile:        envOr("REDGRES_TLS_ISSUE_RESULT_FILE", ""),
 		BootstrapUFWRemoveCmd:     envOr("REDGRES_BOOTSTRAP_UFW_REMOVE_CMD", ""),
 		SQLitePath:                envOr("REDGRES_SQLITE_PATH", DefaultSQLitePath),
 		SessionTTL:                DefaultSessionTTL,
@@ -153,6 +157,8 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&cfg.TunnelTokenFile, "tunnel-token-file", cfg.TunnelTokenFile, "path to the cloudflared tunnel token file (server-side secret)")
 	fs.StringVar(&cfg.CertbotBin, "certbot-bin", cfg.CertbotBin, "certbot executable for DNS-01 issuance")
 	fs.StringVar(&cfg.CertbotDNSCredentialsFile, "certbot-dns-token-file", cfg.CertbotDNSCredentialsFile, "certbot dns-cloudflare credentials file")
+	fs.StringVar(&cfg.TLSIssueRequestFile, "tls-issue-request-file", cfg.TLSIssueRequestFile, "path unit request file for privileged TLS issue (hostnames only)")
+	fs.StringVar(&cfg.TLSIssueResultFile, "tls-issue-result-file", cfg.TLSIssueResultFile, "privileged TLS helper result file (issued|failed)")
 	fs.StringVar(&cfg.BootstrapUFWRemoveCmd, "bootstrap-ufw-remove-cmd", cfg.BootstrapUFWRemoveCmd, "optional script to remove bootstrap UFW rule")
 	fs.StringVar(&cfg.SQLitePath, "sqlite-path", cfg.SQLitePath, "SQLite database path")
 	fs.DurationVar(&cfg.SessionTTL, "session-ttl", cfg.SessionTTL, "idle session TTL")
@@ -318,6 +324,12 @@ func (c Config) validate() error {
 		return err
 	}
 	if err := validateOptionalSecretFilePath(c.CertbotDNSCredentialsFile, "REDGRES_CERTBOT_DNS_TOKEN_FILE", c.Production()); err != nil {
+		return err
+	}
+	if err := validateOptionalSecretFilePath(c.TLSIssueRequestFile, "REDGRES_TLS_ISSUE_REQUEST_FILE", c.Production()); err != nil {
+		return err
+	}
+	if err := validateOptionalSecretFilePath(c.TLSIssueResultFile, "REDGRES_TLS_ISSUE_RESULT_FILE", c.Production()); err != nil {
 		return err
 	}
 	if c.BootstrapUFWRemoveCmd != "" {
