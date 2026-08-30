@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import type { ToolLinks } from "../../api/auth";
 import { errorMessage, fetchStatus, isStatusPayload, type StatusComponent } from "../../api/status";
+import ExpertToolsSection from "./ExpertToolsSection";
 
 type CardSpec = {
   id: string;
@@ -47,10 +49,11 @@ function indexById(components: StatusComponent[]): Map<string, StatusComponent> 
   return out;
 }
 
-export default function SystemPage() {
+export default function SystemPage({ csrf = "", toolLinks = {} }: { csrf?: string; toolLinks?: ToolLinks }) {
   const [components, setComponents] = useState<StatusComponent[] | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -97,6 +100,7 @@ export default function SystemPage() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    setRefreshNonce((value) => value + 1);
     void load(controller);
   }
 
@@ -106,11 +110,18 @@ export default function SystemPage() {
   return (
     <article>
       <header className="page-header">
-        <h1>System</h1>
-        <p>Component status for Redgres, PostgreSQL, PgBouncer, Redis, and tool links.</p>
-        <button type="button" className="text-button" onClick={refresh}>
-          Refresh
-        </button>
+        <div className="page-header-row">
+          <div className="page-header-copy">
+            <h1>System</h1>
+            <p>
+              Component status for Redgres, PostgreSQL, PgBouncer, Redis, and tool links. Open pgAdmin and RedisInsight
+              from Expert tools.
+            </p>
+          </div>
+          <button type="button" className="text-button" onClick={refresh}>
+            Refresh
+          </button>
+        </div>
       </header>
       {error ? (
         <p className="form-warning" role="alert">
@@ -152,6 +163,7 @@ export default function SystemPage() {
           })}
         </ul>
       ) : null}
+      <ExpertToolsSection csrf={csrf} toolLinks={toolLinks} variant="full" refreshNonce={refreshNonce} />
     </article>
   );
 }
