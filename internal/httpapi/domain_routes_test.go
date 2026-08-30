@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -20,22 +22,22 @@ import (
 )
 
 type fakeCF struct {
-	zone               cloudflare.Zone
-	tunnels            map[string]cloudflare.Tunnel
-	records            map[string]cloudflare.Record
-	apps               map[string]cloudflare.AccessApp
-	policies           map[string]cloudflare.AccessPolicy
-	deletedT           []string
-	deletedR           []string
-	deletedA           []string
-	deletedP           []string
-	verifyErr          error
-	lastIngressHost    string
-	lastIngressOrigin  string
-	lastIngressRoutes  []cloudflare.IngressRoute
-	lastPolicyEmails   []string
-	nextRecID          int
-	nextAppID          int
+	zone              cloudflare.Zone
+	tunnels           map[string]cloudflare.Tunnel
+	records           map[string]cloudflare.Record
+	apps              map[string]cloudflare.AccessApp
+	policies          map[string]cloudflare.AccessPolicy
+	deletedT          []string
+	deletedR          []string
+	deletedA          []string
+	deletedP          []string
+	verifyErr         error
+	lastIngressHost   string
+	lastIngressOrigin string
+	lastIngressRoutes []cloudflare.IngressRoute
+	lastPolicyEmails  []string
+	nextRecID         int
+	nextAppID         int
 }
 
 func newFakeCF() *fakeCF {
@@ -293,6 +295,103 @@ func TestDomainApplyCreatesPersistsAndDoesNotAutoClose(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"configured":true`) {
 		t.Fatalf("expected configured=true: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"tunnel_id":"tun-1"`) {
+		t.Fatalf("expected tunnel_id on GET: %s", rec.Body.String())
+	}
+}
+
+func TestDomainApplyLogsWithoutSecrets(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	srv.log = slog.New(slog.NewTextHandler(&logs, nil))
+	srv.cloudflare = newFakeCF()
+	srv.SetBootstrapCloser(&fakeBootstrap{open: true})
+
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	out := logs.String()
+	if !strings.Contains(out, "domain.apply") || !strings.Contains(out, "example.com") || !strings.Contains(out, "console.example.com") {
+		t.Fatalf("expected secret-safe apply log: %s", out)
+	}
+	for _, leak := range []string{"fake-tunnel-token", "test-token", "eyJ"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("apply log leaked %q: %s", leak, out)
+		}
+	}
+	for _, row := range auditRows(t, srv) {
+		if !strings.Contains(row, "domain.apply") {
+			continue
+		}
+		if !strings.Contains(row, `"zone":"example.com"`) {
+			t.Fatalf("apply audit missing zone: %s", row)
+		}
+		if strings.Contains(row, "fake-tunnel-token") || strings.Contains(row, "test-token") {
+			t.Fatalf("apply audit leaked secret: %s", row)
+		}
+	}
+}
+
+func TestDomainApplyWritesCertbotDNSCredentialsFromAPIToken(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	const apiToken = "canary-apply-api-token"
+	if err := writeTokenFile(tokenPath, apiToken); err != nil {
+		t.Fatal(err)
+	}
+	creds := filepath.Join(t.TempDir(), "certbot-dns.ini")
+	request := filepath.Join(t.TempDir(), "tls-issue.request")
+	srv.cfg.CertbotDNSCredentialsFile = creds
+	srv.cfg.TLSIssueRequestFile = request
+	srv.cloudflare = newFakeCF()
+	srv.SetBootstrapCloser(&fakeBootstrap{open: true})
+
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), apiToken) {
+		t.Fatal("API token leaked in apply response")
+	}
+	raw, err := os.ReadFile(creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "dns_cloudflare_api_token = "+apiToken+"\n" {
+		t.Fatalf("certbot ini = %q", raw)
+	}
+	reqRaw, err := os.ReadFile(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(reqRaw)) != "db.example.com\nrs.example.com" {
+		t.Fatalf("tls request = %q", reqRaw)
+	}
+	if strings.Contains(string(reqRaw), apiToken) {
+		t.Fatal("API token leaked in tls request")
+	}
+	for _, row := range auditRows(t, srv) {
+		if strings.Contains(row, apiToken) {
+			t.Fatalf("apply leaked token in audit: %s", row)
+		}
+	}
+
+	rec = serve(handler, authed(http.MethodDelete, "/api/v1/domain", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disconnect = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(creds); !os.IsNotExist(err) {
+		t.Fatal("certbot ini left after disconnect")
+	}
+	if _, err := os.Stat(request); !os.IsNotExist(err) {
+		t.Fatal("tls request left after disconnect")
+	}
+	if strings.Contains(rec.Body.String(), apiToken) {
+		t.Fatal("API token leaked in disconnect response")
 	}
 }
 
