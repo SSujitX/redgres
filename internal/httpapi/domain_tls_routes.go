@@ -48,6 +48,9 @@ func (s *Server) handleDomainTLSIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
+	ok := false
+	finish := s.beginDomainActivity("tls", "issue_tls")
+	defer finish(&ok)
 	for _, rec := range dep.Records {
 		if err := client.VerifyRecord(ctx, dep.ZoneID, rec.ID); err != nil {
 			s.writeCFError(w, r, err)
@@ -100,6 +103,7 @@ func (s *Server) handleDomainTLSIssue(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
+	ok = true
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
 		"ok":         true,
 		"tls":        dep.tlsMap(),
