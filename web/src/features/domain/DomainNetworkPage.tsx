@@ -71,8 +71,8 @@ export const DOMAIN_ENDPOINTS: DomainEndpointDef[] = [
   {
     key: "rs",
     title: "Redis connection",
-    description: "TLS client endpoint (6380) for applications.",
-    routing: "DNS-only (grey cloud) + Let's Encrypt TLS",
+    description: "Loopback Redis on 6380 today (plaintext). Public TLS is not enabled in this release.",
+    routing: "DNS-only (grey cloud); Let's Encrypt copy is prepared, Redis TLS not applied",
     rail: "redis",
     placeholder: "rs.example.com",
   },
@@ -136,6 +136,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   const [redisInsightHostname, setRedisInsightHostname] = useState("");
   const [originIP, setOriginIP] = useState("");
   const [dnsProvider, setDnsProvider] = useState<"cloudflare" | "manual">("cloudflare");
+  const [authMethod, setAuthMethod] = useState<"api_token" | "oauth">("api_token");
   const [manualInstructions, setManualInstructions] = useState<string[]>([]);
   const [manualVerifyBusy, setManualVerifyBusy] = useState(false);
   const [manualVerifyError, setManualVerifyError] = useState("");
@@ -196,7 +197,6 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
   async function loadStatus(controller: AbortController) {
     setLoading(true);
     setStatusError("");
-    setStatus(null);
     try {
       const result = await fetchDomain({ signal: controller.signal });
       if (controller.signal.aborted) {
@@ -578,9 +578,13 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
     pgadminHostname.trim() !== "" &&
     redisInsightHostname.trim() !== "" &&
     originIP.trim() !== "" &&
-    !applyBusy;
+    !applyBusy &&
+    (dnsProvider === "manual" || authMethod === "api_token");
   const accessAllow = status?.access === "allow";
   const bootstrapOpen = status?.bootstrap_still_open === true;
+  const resultAccess = status?.access ?? applyResult?.access;
+  const resultBootstrapOpen = status?.bootstrap_still_open ?? applyResult?.bootstrap_still_open;
+  const resultTunnelID = status?.tunnel_id ?? applyResult?.tunnel_id;
   const credential = status?.credential ?? "none";
   const tlsDb = status?.tls?.db ?? "not_issued";
   const tlsRS = status?.tls?.rs ?? status?.tls?.redis ?? "not_issued";
@@ -590,8 +594,8 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
       <header className="page-header">
         <h1>Domain & Network</h1>
         <p>
-          Connect Cloudflare (automated) or save a manual DNS plan. Credentials stay on the server and are never
-          returned.
+          Connect Cloudflare or save a manual DNS plan. Paste an API token once — the server reuses it for tunnel,
+          DNS, Access, and Let&apos;s Encrypt. Credentials stay on the server and are never returned.
         </p>
         <button type="button" className="text-button" onClick={refresh}>
           Refresh
@@ -650,7 +654,26 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               <dt>Bootstrap</dt>
               <dd>{bootstrapOpen ? "Still open" : "Closed or not configured"}</dd>
             </div>
+            {configured && (status.tunnel_id || resultTunnelID) ? (
+              <div>
+                <dt>Tunnel ID</dt>
+                <dd className="bidi-isolate identifier">{displayText(status.tunnel_id ?? resultTunnelID ?? "")}</dd>
+              </div>
+            ) : null}
           </dl>
+          {configured && (status.tunnel_id || resultTunnelID) ? (
+            <p className="muted-copy">
+              Tunnel ID is a Cloudflare resource identifier (also visible in the public CNAME), not a secret token.
+            </p>
+          ) : null}
+          {configured && !isManual ? (
+            <p className="muted-copy">
+              The Cloudflare tunnel connector belongs on the Ubuntu server where you installed Redgres, not this
+              browser. The installer enables cloudflared there; apply writes the token and the server starts the
+              connector. Do not install cloudflared on Windows from the Cloudflare dashboard. Add an Access allow
+              policy first, open the console hostname through Access, then use Console is reachable — close bootstrap.
+            </p>
+          ) : null}
           {configured ? (
             <ul className="domain-endpoint-cards" aria-label="Configured endpoints">
               {DOMAIN_ENDPOINTS.map((endpoint) => {
@@ -761,7 +784,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               </button>
             </form>
           ) : null}
-          {configured && accessAllow && credential !== "oauth" && !isManual ? (
+          {configured && accessAllow && !isManual && authMethod === "oauth" && credential !== "api_token" && credential !== "oauth" ? (
             <form className="panel-sub" onSubmit={handleOAuthConnect} autoComplete="off">
               <h3>4. Connect Cloudflare OAuth</h3>
               <p className="muted-copy">
@@ -809,9 +832,10 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
           ) : null}
           {configured && accessAllow && (tlsDb !== "issued" || tlsRS !== "issued") && status.dns_provider !== "manual" ? (
             <div className="panel-sub">
-              <h3>5. Issue TLS certificates (db + rs)</h3>
+              <h3>4. Issue TLS certificates (db + rs)</h3>
               <p className="muted-copy">
-                Issues Let&apos;s Encrypt DNS-01 certificates for grey-cloud db and rs hostnames via certbot.
+                Uses the same API token for Let&apos;s Encrypt DNS-01 on grey-cloud db and rs. The server queues this
+                after apply; retry if status is still not issued.
               </p>
               {tlsError ? (
                 <p className="form-error" role="alert">
@@ -825,7 +849,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
           ) : null}
           {configured && accessAllow && bootstrapOpen ? (
             <div className="panel-sub">
-              <h3>6. Close bootstrap</h3>
+              <h3>5. Close bootstrap</h3>
               <p className="muted-copy">
                 After you can open the console hostname through Tunnel + Access, close the temporary public bootstrap
                 listener. This cannot be undone from the UI.
@@ -880,7 +904,7 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                   checked={dnsProvider === "cloudflare"}
                   onChange={() => setDnsProvider("cloudflare")}
                 />
-                Cloudflare API (automated tunnel + DNS)
+                Cloudflare (API token; automated tunnel + DNS)
               </label>
               <label>
                 <input
@@ -897,9 +921,40 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
 
           {showCloudflareTokenWizard ? (
           <section className="panel" aria-labelledby="domain-token-heading">
-            <h2 id="domain-token-heading">2. Cloudflare API token</h2>
+            <h2 id="domain-token-heading">2. Cloudflare authorization</h2>
+            <fieldset className="field-stack provider-fieldset">
+              <legend className="muted-copy">Paste once. If you choose API token, Redgres will not ask for OAuth after apply.</legend>
+              <label>
+                <input
+                  type="radio"
+                  name="cloudflare_auth"
+                  value="api_token"
+                  checked={authMethod === "api_token"}
+                  onChange={() => setAuthMethod("api_token")}
+                />
+                API token — paste once; reused for DNS, Access, and Let&apos;s Encrypt
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="cloudflare_auth"
+                  value="oauth"
+                  checked={authMethod === "oauth"}
+                  onChange={() => setAuthMethod("oauth")}
+                />
+                OAuth — after the console hostname is live
+              </label>
+            </fieldset>
+            {authMethod === "oauth" ? (
+              <p className="muted-copy">
+                OAuth cannot add the domain from this bootstrap URL. Use an API token to apply, then the live console
+                hostname can complete OAuth if you still want it.
+              </p>
+            ) : (
+            <>
             <p className="muted-copy">
-              Create a custom token scoped to your zone with the permissions below. Redgres stores it server-side only.
+              Create a custom token scoped to your zone with the permissions below. Redgres stores it server-side only
+              and reuses it after apply.
             </p>
             <ul className="domain-token-permissions">
               {CLOUDFLARE_TOKEN_PERMISSIONS.map((item) => (
@@ -957,6 +1012,8 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                 Store token
               </button>
             </form>
+            </>
+            )}
           </section>
           ) : null}
 
@@ -1033,7 +1090,12 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
                   {applyError}
                 </p>
               ) : null}
-              {!tokenSaved && dnsProvider === "cloudflare" ? (
+              {dnsProvider === "cloudflare" && authMethod === "oauth" ? (
+                <p className="muted-copy">
+                  OAuth cannot add the domain from this bootstrap URL. Switch back to API token to apply.
+                </p>
+              ) : null}
+              {!tokenSaved && dnsProvider === "cloudflare" && authMethod === "api_token" ? (
                 <p className="muted-copy">
                   If this host has no Cloudflare API token yet, store one above first. Apply uses the server-side file
                   (it is not re-checked in this browser session).
@@ -1059,21 +1121,25 @@ export default function DomainNetworkPage({ csrf }: DomainNetworkPageProps) {
               <dt>Hostname</dt>
               <dd className="bidi-isolate identifier">{displayText(applyResult.hostname ?? "")}</dd>
             </div>
-            <div>
-              <dt>Tunnel ID</dt>
-              <dd className="bidi-isolate identifier">{displayText(applyResult.tunnel_id ?? "")}</dd>
-            </div>
+            {resultTunnelID ? (
+              <div>
+                <dt>Tunnel ID</dt>
+                <dd className="bidi-isolate identifier">{displayText(resultTunnelID)}</dd>
+              </div>
+            ) : null}
             <div>
               <dt>Access</dt>
-              <dd>{applyResult.access === "deny_by_default" ? "Deny by default (add an allow policy)" : displayText(applyResult.access ?? "")}</dd>
+              <dd>
+                {resultAccess === "allow"
+                  ? "Allow policy configured"
+                  : resultAccess === "deny_by_default"
+                    ? "Deny by default (add an allow policy)"
+                    : displayText(resultAccess ?? "")}
+              </dd>
             </div>
             <div>
               <dt>Bootstrap</dt>
-              <dd>
-                {applyResult.bootstrap_still_open
-                  ? "Still open — closes on hard-cap or a later console-reachable confirm"
-                  : "Closed"}
-              </dd>
+              <dd>{resultBootstrapOpen ? "Still open" : "Closed or not configured"}</dd>
             </div>
           </dl>
           <p className="muted-copy">
