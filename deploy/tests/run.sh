@@ -1706,6 +1706,13 @@ progress_err="$(
   ! ls /tmp/redgres-cmd.* >/dev/null 2>&1
   grep -q "redgres_section 1 8 'Preflight'" "${deploy_dir}/lib/mutate.sh"
   grep -q "redgres_section 8 8 'Application'" "${deploy_dir}/lib/mutate.sh"
+  redis_sec="$(/usr/bin/awk '/redgres_section 3 8 .Redis./,/redgres_section 4 8 .PostgreSQL./' "${deploy_dir}/lib/mutate.sh")"
+  pg_sec="$(/usr/bin/awk '/redgres_section 4 8 .PostgreSQL./,/redgres_section 5 8 .PgBouncer./' "${deploy_dir}/lib/mutate.sh")"
+  printf '%s\n' "${redis_sec}" | /usr/bin/grep -q redgres_ensure_redisinsight
+  ! printf '%s\n' "${redis_sec}" | /usr/bin/grep -q redgres_ensure_pgadmin
+  ! printf '%s\n' "${redis_sec}" | /usr/bin/grep -q redgres_ensure_expert_tools
+  printf '%s\n' "${pg_sec}" | /usr/bin/grep -q redgres_ensure_pgadmin
+  ! printf '%s\n' "${pg_sec}" | /usr/bin/grep -q redgres_ensure_redisinsight
   grep -q 'REDGRES_DOMAIN_RUNTIME_OPTIONAL=1' "${deploy_dir}/lib/mutate.sh"
   grep -q 'REDGRES_DOMAIN_RUNTIME_OPTIONAL' "${deploy_dir}/lib/release.sh"
   grep -q 'NEEDRESTART_SUSPEND=1' "${deploy_dir}/lib/mutate.sh"
@@ -1745,7 +1752,8 @@ expert_pin_err="$(
   printf '%s\n' "${yaml}" | /usr/bin/grep -q '127.0.0.1:5052:80'
   printf '%s\n' "${yaml}" | /usr/bin/grep -q '127.0.0.1:5542:5540'
   printf '%s\n' "${yaml}" | /usr/bin/grep -q "PGADMIN_CONFIG_AUTHENTICATION_SOURCES"
-  ! printf '%s\n' "${yaml}" | /usr/bin/grep -qi 'password'
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q 'PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"'
+  ! printf '%s\n' "${yaml}" | /usr/bin/grep -qi 'DEFAULT_PASSWORD'
 )" 2>&1 || expert_pin_rc=$?
 if [[ "${expert_pin_rc}" -eq 0 ]]; then
   pass 'expert-tool image pins and compose have no password'
