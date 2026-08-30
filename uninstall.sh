@@ -120,14 +120,91 @@ redgres_uninstall_drop_postgres_clusters() {
   done < <(pg_lsclusters --no-header 2>/dev/null || true)
 }
 
+# Operator command output must never echo passwords, URLs-with-userinfo, or AUTH.
+redgres_uninstall_cmd_log_safe() {
+  printf '%s\n' "$1" | awk 'BEGIN { IGNORECASE=1 }
+    /requirepass|password|AUTH |masterauth/ { next }
+    { gsub(/:\/\/[^\/[:space:]]+:[^@\/[:space:]]+@/, "://[redacted]@"); gsub(/token=[^[:space:]]+/, "token=[redacted]"); print }'
+}
+
+# Capture apt-get. Success is quiet; failure dumps a secret-safe tail.
+# Callers still use || true so a purge miss does not abort the rest.
+redgres_uninstall_apt_handle_log() {
+  local log="$1" rc="$2"
+  if [[ "${rc}" -ne 0 ]]; then
+    printf '%s\n' 'apt-get failed' >&2
+    redgres_uninstall_cmd_log_safe "$(tail -n 50 "${log}")" >&2
+    return 1
+  fi
+  return 0
+}
+
+redgres_uninstall_pkg_installed() {
+  local pkg="$1" status
+  command -v dpkg-query >/dev/null 2>&1 || return 1
+  status="$(dpkg-query -W -f '${Status}' "${pkg}" 2>/dev/null || true)"
+  [[ "${status}" == *"install ok installed"* ]]
+}
+
+# Purge only packages that are installed. Missing optional packages stay quiet.
+redgres_uninstall_purge_installed() {
+  local -a pkgs=()
+  local pkg
+  for pkg in "$@"; do
+    if redgres_uninstall_pkg_installed "${pkg}"; then
+      pkgs+=("${pkg}")
+    fi
+  done
+  [[ "${#pkgs[@]}" -gt 0 ]] || return 0
+  redgres_uninstall_apt_get purge -y "${pkgs[@]}"
+}
+
+redgres_uninstall_purge_postgresql_packages() {
+  local -a pkgs=()
+  local pkg status
+  command -v dpkg-query >/dev/null 2>&1 || return 0
+  while IFS=$'\t' read -r pkg status || [[ -n "${pkg}" ]]; do
+    [[ "${pkg}" == postgresql || "${pkg}" == postgresql-* ]] || continue
+    [[ "${status}" == *"install ok installed"* ]] || continue
+    pkgs+=("${pkg}")
+  done < <(dpkg-query -W -f '${Package}\t${Status}\n' 2>/dev/null || true)
+  [[ "${#pkgs[@]}" -gt 0 ]] || return 0
+  redgres_uninstall_apt_get purge -y "${pkgs[@]}"
+}
+
 redgres_uninstall_apt_get() {
+  local log rc=0 apt
+  apt="${REDGRES_UNINSTALL_APT_GET:-apt-get}"
   redgres_uninstall_export_apt_env
   # curl | bash re-execs with </dev/tty. apt/needrestart then SIGTTIN-stop (T+)
   # at the PostgreSQL purge summary and look hung. Never give them a TTY.
-  apt-get -o Dpkg::Use-Pty=0 -o APT::Get::Assume-Yes=true \
+  if [[ "${REDGRES_UNINSTALL_VERBOSE:-${REDGRES_INSTALL_VERBOSE:-}}" == '1' ]]; then
+    "${apt}" -o Dpkg::Use-Pty=0 -o APT::Get::Assume-Yes=true \
+      -o Dpkg::Options::=--force-confdef \
+      -o Dpkg::Options::=--force-confold \
+      "$@" </dev/null 2>&1 | awk 'BEGIN { IGNORECASE=1 }
+        /requirepass|password|AUTH |masterauth/ { next }
+        { gsub(/:\/\/[^\/[:space:]]+:[^@\/[:space:]]+@/, "://[redacted]@"); gsub(/token=[^[:space:]]+/, "token=[redacted]"); print }'
+    return "${PIPESTATUS[0]}"
+  fi
+  log="$(mktemp /tmp/redgres-uninstall-apt.XXXXXX)" || {
+    printf '%s\n' 'apt-get capture failed (mktemp)' >&2
+    return 1
+  }
+  # shellcheck disable=SC2064
+  trap "rm -f $(printf '%q' "${log}")" RETURN
+  if ! "${apt}" -o Dpkg::Use-Pty=0 -o APT::Get::Assume-Yes=true \
     -o Dpkg::Options::=--force-confdef \
     -o Dpkg::Options::=--force-confold \
-    "$@" </dev/null
+    "$@" </dev/null >"${log}" 2>&1; then
+    rc=$?
+  fi
+  if ! redgres_uninstall_apt_handle_log "${log}" "${rc}"; then
+    rm -f "${log}"
+    return "${rc}"
+  fi
+  rm -f "${log}"
+  return 0
 }
 
 if [[ "${REDGRES_UNINSTALL_FUNCTIONS_ONLY:-}" == "1" ]]; then
@@ -290,7 +367,9 @@ env_value_from_file() {
 
 DOMAIN_SNAPSHOT="$(mktemp /tmp/redgres-uninstall-domain.XXXXXX)"
 CF_API_STATUS="unknown"
-trap 'rm -f "${DOMAIN_SNAPSHOT}"' EXIT
+trap 'rm -f "${DOMAIN_SNAPSHOT}" /tmp/redgres-uninstall-apt.*' EXIT
+trap 'rm -f "${DOMAIN_SNAPSHOT}" /tmp/redgres-uninstall-apt.*; exit 130' INT
+trap 'rm -f "${DOMAIN_SNAPSHOT}" /tmp/redgres-uninstall-apt.*; exit 143' TERM
 
 write_domain_snapshot() {
   local sqlite env_file
@@ -603,7 +682,7 @@ purge_tls_local_copies() {
 purge_cloudflared_package() {
   [[ "${APP_ONLY}" -eq 1 ]] && return 0
   if command -v apt-get >/dev/null 2>&1; then
-    redgres_uninstall_apt_get purge -y cloudflared >/dev/null 2>&1 || true
+    redgres_uninstall_purge_installed cloudflared || true
   elif command -v dnf >/dev/null 2>&1; then
     dnf remove -y cloudflared 2>/dev/null || true
   elif command -v yum >/dev/null 2>&1; then
@@ -665,7 +744,7 @@ purge_postgresql() {
   stop_systemd_unit postgresql.service
   stop_systemd_unit postgresql@.service
   if command -v apt-get >/dev/null 2>&1; then
-    redgres_uninstall_apt_get purge -y postgresql 'postgresql-*' || true
+    redgres_uninstall_purge_postgresql_packages || true
   elif command -v dnf >/dev/null 2>&1; then
     dnf remove -y postgresql\* 2>/dev/null || true
   elif command -v yum >/dev/null 2>&1; then
@@ -678,7 +757,7 @@ purge_redis_native() {
   stop_systemd_unit redis-server.service
   stop_systemd_unit redis.service
   if command -v apt-get >/dev/null 2>&1; then
-    redgres_uninstall_apt_get purge -y redis-server redis >/dev/null 2>&1 || true
+    redgres_uninstall_purge_installed redis-server redis || true
   elif command -v dnf >/dev/null 2>&1; then
     dnf remove -y redis 2>/dev/null || true
   elif command -v yum >/dev/null 2>&1; then
@@ -689,7 +768,7 @@ purge_redis_native() {
 purge_pgbouncer() {
   stop_systemd_unit pgbouncer.service
   if command -v apt-get >/dev/null 2>&1; then
-    redgres_uninstall_apt_get purge -y pgbouncer >/dev/null 2>&1 || true
+    redgres_uninstall_purge_installed pgbouncer || true
   elif command -v dnf >/dev/null 2>&1; then
     dnf remove -y pgbouncer 2>/dev/null || true
   elif command -v yum >/dev/null 2>&1; then
@@ -767,7 +846,6 @@ fi
 # ── 4. PostgreSQL / Redis / PgBouncer ───────────────────────────────────────
 if [[ "${APP_ONLY}" -eq 0 ]]; then
   step "  ${CYAN}[4/8]${NC} Removing PostgreSQL clusters and packages... "
-  printf '\n'
   purge_postgresql
   step_done
 
@@ -836,7 +914,6 @@ step_done
 # ── 8. Leftover apt packages (after cwd is off the deleted checkout) ─────────
 if [[ "${APP_ONLY}" -eq 0 ]] && command -v apt-get >/dev/null 2>&1; then
   step "  ${CYAN}[8/8]${NC} Removing leftover packages... "
-  printf '\n'
   redgres_uninstall_enter_safe_cwd || true
   redgres_uninstall_apt_get autoremove -y || true
   step_done
