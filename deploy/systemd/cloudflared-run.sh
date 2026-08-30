@@ -26,4 +26,5 @@ if [[ -z "$CLOUDFLARED" ]]; then
     CLOUDFLARED="/usr/bin/cloudflared"
   fi
 fi
-exec "$CLOUDFLARED" tunnel --no-autoupdate run
+# QUIC on this VPS edge flaps (Application error 0x0 → Error 1033). HTTP/2 is stable.
+exec "$CLOUDFLARED" tunnel --no-autoupdate --protocol http2 run
