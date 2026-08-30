@@ -90,7 +90,9 @@ Generic failure is `401` `unauthorized` with message `Invalid username or passwo
 }
 ```
 
-GET `/session` still returns configured public hostnames so the UI can show Open controls. The owner opens those tools with `POST /api/v1/tools/{tool}/launch`, not a raw href. Login JSON is unchanged and has no `tool_links`. GET `/session` still rotates CSRF and is not a mutation (no audit). Login and GET `/session` use `Cache-Control: no-store, max-age=0` plus `Pragma: no-cache`. The payload never includes passwords, session tokens, launch tickets, or CSRF in `tool_links`.
+GET `/session` still returns configured public hostnames so the UI can show Open controls. The owner opens those tools with `POST /api/v1/tools/{tool}/launch`, not a raw href. Login JSON is unchanged and has no `tool_links` or `expert_tools`. GET `/session` still rotates CSRF and is not a mutation (no audit). Login and GET `/session` use `Cache-Control: no-store, max-age=0` plus `Pragma: no-cache`. The payload never includes passwords, session tokens, launch tickets, or CSRF in `tool_links`.
+
+`expert_tools` is an object, never `null`. It contains `pgadmin_login: true` only when both `REDGRES_PGADMIN_EMAIL` and `REDGRES_PGADMIN_PASSWORD_FILE` are set. It never includes a password, path, or email. Unconfigured is `{}`.
 
 **GET `/api/v1/status`** requires a session cookie and the `platform.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
 
@@ -271,7 +273,7 @@ Session + `platform.network` + CSRF. Empty body; extra JSON is ignored. Response
 { "launch_url": "https://pgadmin.example.com/__redgres/launch?ticket=…", "request_id": "…" }
 ```
 
-`launch_url` is the public tool hostname plus `/__redgres/launch?ticket=`. The raw ticket is one-time and expires in 60 seconds. It is not logged or audited (metadata is `{ "tool": "pgadmin" }` only). Unconfigured URL or unknown tool is `404` `not_found`. The loopback tool gate consumes the ticket, sets an HttpOnly `redgres_tool` cookie on that hostname, and proxies to the container. Requests without a valid cookie are not proxied.
+`launch_url` is the public tool hostname plus `/__redgres/launch?ticket=`. The raw ticket is one-time and expires in 60 seconds. It is not logged or audited (metadata is `{ "tool": "pgadmin" }` only). Unconfigured URL or unknown tool is `404` `not_found`. The loopback tool gate consumes the ticket, sets an HttpOnly `redgres_tool` cookie on that hostname, and proxies to the container. For pgAdmin the proxy sets `X-Forwarded-User` to the configured email after that cookie (client-supplied values are stripped) so official webserver authentication skips the login form. Requests without a valid cookie are not proxied. A deny redirect uses the persisted console HTTPS origin, never bootstrap `:8989`.
 
 **POST `/api/v1/tools/pgadmin/credentials/reveal`** success `200`:
 
