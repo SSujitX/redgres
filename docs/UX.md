@@ -111,6 +111,13 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 - Server revalidates every condition; UI state is not trusted.
 - Long action shows operation ID/progress and supports safe refresh.
 
+## Domain & Network
+
+- After apply, Status reports live Access, Bootstrap, and Tunnel ID. Refresh must not clear last-good status, so Access does not flash back to deny-by-default.
+- The owner chooses API token or OAuth once before apply. API token is pasted once and reused for tunnel, DNS, Access, and Let's Encrypt; the wizard must not ask for OAuth after an API-token apply. OAuth cannot add the domain from the bootstrap URL.
+- The Cloudflare connector belongs on the Ubuntu server where Redgres is installed, not the operator's browser. The installer enables `cloudflared`; apply writes the token and the server starts the connector. Do not install cloudflared on Windows from the Cloudflare dashboard.
+- Close bootstrap only after an Access allow policy, then opening the console hostname through Access, then **Console is reachable — close bootstrap**.
+
 ## Accessibility
 
 - Semantic headings/landmarks, labels and descriptions.
