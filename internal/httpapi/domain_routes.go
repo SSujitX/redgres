@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/SSujitX/redgres/internal/cloudflare"
 	"github.com/SSujitX/redgres/internal/config"
 	"github.com/SSujitX/redgres/internal/securefile"
+	"github.com/SSujitX/redgres/internal/tlsops"
 )
 
 var errNoDeployment = errors.New("no domain deployment")
@@ -155,11 +157,14 @@ func (s *Server) handleDomainGet(w http.ResponseWriter, r *http.Request) {
 		"hostnames":            dep.hostnamesMap(),
 		"origin_ip":            dep.OriginIP,
 		"access":               access,
-		"tls":                  dep.tlsMap(),
+		"tls":                  s.domainTLSMap(dep),
 		"credential":           s.domainCredentialKind(),
 		"dns_provider":         dep.DNSProvider,
 		"bootstrap_still_open": s.bootstrapOpen(),
 		"request_id":           requestID(r),
+	}
+	if dep.TunnelID != "" {
+		resp["tunnel_id"] = dep.TunnelID
 	}
 	if dep.DNSProvider == "manual" {
 		if instructions, err := manualInstructionsForDep(dep); err == nil {
@@ -422,8 +427,30 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "Tunnel token could not be stored")
 		return
 	}
+	if s.cfg.CertbotDNSCredentialsFile != "" {
+		if err := s.syncCertbotDNSCredentialsFromAPIToken(); err != nil {
+			_ = os.Remove(s.cfg.TunnelTokenFile)
+			compensate()
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "Certbot DNS credentials could not be stored")
+			return
+		}
+	}
+	if s.cfg.TLSIssueResultFile != "" {
+		_ = os.Remove(s.cfg.TLSIssueResultFile)
+	}
+	if s.cfg.TLSIssueRequestFile != "" {
+		if err := tlsops.WriteTLSIssueRequest(s.cfg.TLSIssueRequestFile, []string{hosts.DB, hosts.RS}); err != nil {
+			_ = os.Remove(s.cfg.TunnelTokenFile)
+			compensate()
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS issue could not be queued")
+			return
+		}
+	}
 	if err := (domainStore{s.db}).Save(ctx, dep); err != nil {
 		_ = os.Remove(s.cfg.TunnelTokenFile)
+		if s.cfg.TLSIssueRequestFile != "" {
+			_ = os.Remove(s.cfg.TLSIssueRequestFile)
+		}
 		compensate()
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
@@ -434,6 +461,14 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
+	s.log.Info("domain.apply",
+		slog.String("request_id", requestID(r)),
+		slog.String("zone", zone),
+		slog.String("hostname", hosts.Console),
+		slog.Int("hostname_count", len(dep.hostnamesMap())),
+		slog.String("access", "deny_by_default"),
+		slog.Bool("bootstrap_still_open", s.bootstrapOpen()),
+	)
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
 		"zone":                 z.Name,
 		"hostname":             hosts.Console,
@@ -533,6 +568,11 @@ func (s *Server) handleDomainAccessPolicy(w http.ResponseWriter, r *http.Request
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
+	s.log.Info("domain.access.allow",
+		slog.String("request_id", requestID(r)),
+		slog.String("hostname", dep.consoleHostname()),
+		slog.Int("email_count", len(emails)),
+	)
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
 		"ok":                   true,
 		"access":               "allow",
@@ -767,6 +807,26 @@ func validHostname(s string) bool {
 		}
 	}
 	return true
+}
+
+func (s *Server) domainTLSMap(dep deployment) map[string]string {
+	tls := dep.tlsMap()
+	if tlsops.IssueResultCovers(s.cfg.TLSIssueResultFile, []string{dep.DBHostname, dep.rsHostname()}) {
+		tls["db"] = "issued"
+		tls["rs"] = "issued"
+	}
+	return tls
+}
+
+func (s *Server) syncCertbotDNSCredentialsFromAPIToken() error {
+	if s.cfg.CertbotDNSCredentialsFile == "" {
+		return errors.New("certbot dns credentials file is not configured")
+	}
+	token, err := readTokenFile(s.cfg.CloudflareTokenFile)
+	if err != nil || token == "" {
+		return errors.New("cloudflare token is not configured")
+	}
+	return tlsops.WriteCloudflareDNSCredentials(s.cfg.CertbotDNSCredentialsFile, token)
 }
 
 func (s *Server) domainCredentialKind() string {
