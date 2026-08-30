@@ -31,6 +31,10 @@ Do not mark Complete.
 
 ## Current slice
 
+### Tunnel PathExists loop and postgres-readable TLS dest (2026-08-30)
+
+OPS-009 Partial: `cloudflared-redgres.path` watches **PathChanged only** (PathExists + oneshot restart retriggered every few seconds once the token file existed: register/unregister, Error 1033). `cloudflared-redgres.service` has `ConditionPathExists` on the token and is `systemctl enable`d for boot. TLS copies go to `/etc/ssl/redgres` (`0750` `root:ssl-cert`) because `/etc/redgres` `0750` `root:redgres` plus `umask 077` `0700` dest left `postgres` (in `ssl-cert`) unable to read the key; `SHOW ssl_cert_file` updated but STARTTLS stayed snakeoil `CN=test`. Helper also rewrites PgBouncer `client_tls_*`. `create-owner --password-fifo` no longer opens `/dev/tty`. Live Atlanta VPS after unit hotfix: connector `active` (http2, no restart loop), `https://console.redgres.com/` `302`, STARTTLS `CN=db.redgres.com`, PgBouncer `SELECT 1` on `127.0.0.1:6432`. Commands actually run: `go test ./cmd/redgres/ -count=1` (ok); Git Bash `bash deploy/tests/run.sh` (199 passed, 0 failed). Not done here: public `5432`/`6432`, Access allow email, clean reinstall of the tagged release, §6. Do not mark Complete.
+
 ### Fresh install defaults to working loopback PgBouncer (2026-08-30)
 
 OPS-001 / OPS-007 Partial: interactive install defaults remain `fresh-postgres` + Redis `fresh`, and PgBouncer now defaults to `fresh` (non-interactive still requires explicit `--pgbouncer-mode`). Live fresh PgBouncer writes `127.0.0.1:6432` (TLS/SCRAM to local PostgreSQL, `admin_users=redgres_admin`, `SECURITY DEFINER` `auth_query`; no `userlist` consumed by the app). `REDGRES_POSTGRES_POOLED_PORT=6432` is written only after listen is configured. Finish box claims `127.0.0.1:6432` only then. Commands actually run: Git Bash `bash deploy/tests/interactive_logic_test.sh` (passed); Git Bash `bash deploy/tests/run.sh` (199 passed, 0 failed). Not done here: live Ubuntu `fresh` PgBouncer e2e, public `6432`, §6. Do not mark Complete.
