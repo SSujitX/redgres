@@ -334,7 +334,7 @@ Emails are never returned. Empty/invalid email → `400` `validation_error`. No 
 
 **DELETE `/api/v1/domain`** success `200` `{"ok":true,"request_id":"…"}`. No deployment → `404` `not_found`. Deletes Access policy (if any), Access app, DNS records, and tunnel.
 
-Missing/invalid token or tunnel-token file config → `400` `validation_error`. Cloudflare auth failure → `403` `forbidden` (`Cloudflare token is unauthorized`). Cloudflare not-found → `404` `not_found`. Other Cloudflare failures → `503` `dependency_unavailable`. No response contains the token, the tunnel token, or a raw Cloudflare error body.
+Missing/invalid token or tunnel-token file config → `400` `validation_error`. Cloudflare auth failure → `403` `forbidden` (`Cloudflare token is unauthorized`). Cloudflare not-found → `404` `not_found`. An existing **healthy** or connected tunnel already named `redgres-{console hostname}` → `409` `conflict` (`A Cloudflare tunnel with this hostname already exists`). Apply replaces leftover tunnels with that name when Cloudflare reports `inactive` or `down` and no connections, and replaces conflicting DNS records and Access apps for the same wizard hostnames. Other Cloudflare failures → `503` `dependency_unavailable`. No response contains the token, the tunnel token, or a raw Cloudflare error body. Cloudflare API status/code may be logged without the error body.
 
 ## PostgreSQL endpoints
 
