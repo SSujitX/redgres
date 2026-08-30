@@ -302,7 +302,11 @@ redgres_update_apply() {
     fi
   fi
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && declare -F redgres_install_domain_runtime >/dev/null 2>&1; then
-    redgres_install_domain_runtime || redgres_die 'domain runtime units or packages failed'
+    if [[ "${REDGRES_DOMAIN_RUNTIME_OPTIONAL:-}" == "1" ]]; then
+      redgres_install_domain_runtime || redgres_log 'domain runtime: units/packages not fully applied'
+    else
+      redgres_install_domain_runtime || redgres_die 'domain runtime units or packages failed'
+    fi
   fi
 
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && command -v systemctl >/dev/null 2>&1; then
