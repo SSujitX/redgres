@@ -306,6 +306,7 @@ export default function AppShell({ username, csrf, toolLinks, version, onLogout,
           <main className="workspace">
             {section === "overview" ? (
               <OverviewPage
+                csrf={csrf}
                 toolLinks={toolLinks}
                 onNavigate={go}
                 statusComponents={statusComponents}
@@ -325,6 +326,7 @@ export default function AppShell({ username, csrf, toolLinks, version, onLogout,
               <SectionPage
                 section={section}
                 csrf={csrf}
+                toolLinks={toolLinks}
                 focusDatabase={focusDatabase}
                 focusUsername={focusUsername}
                 focusArticle={focusArticle}
