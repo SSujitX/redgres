@@ -696,7 +696,7 @@ redgres_interactive_selections() {
       [[ -z "${expect_postgres_major}" ]] && expect_postgres_major="$(redgres_ask "Expected PostgreSQL major (17|18; blank to detect)" "")"
       ;;
   esac
-  [[ -z "${pgbouncer_mode}" ]] && pgbouncer_mode="$(redgres_ask "PgBouncer mode (fresh|existing|disabled)" "disabled")"
+  [[ -z "${pgbouncer_mode}" ]] && pgbouncer_mode="$(redgres_ask "PgBouncer mode (fresh|existing|disabled)" "fresh")"
   [[ -z "${redis_mode}" ]] && redis_mode="$(redgres_ask "Redis mode (fresh|existing)" "fresh")"
   if [[ "${redis_mode}" == "fresh" ]]; then
     [[ -z "${redis_version}" ]] && redis_version="$(redgres_ask "Redis series (8.2|8.8)" "8.2")"
