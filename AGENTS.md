@@ -1,136 +1,83 @@
-# AGENTS.md — Redgres operating contract
+# Redgres agent contract
 
-This file is always loaded. Keep it compact; detailed truth belongs in routed canonical documents.
+Keep this always-loaded file compact; routed documents own detail.
 
-## Bootstrap
+## Start
 
 Before planning or editing:
 
-1. Read this file. Read `docs/PROJECT_CHARTER.md` for product scope/acceptance decisions; use `docs/INDEX.md` only when the routing table does not cover the task.
-2. Inspect Git status/diff and preserve unrelated or user-owned changes.
-3. Read the applicable row and latest slice in `docs/TRACEABILITY.md`; target prose is never implementation evidence.
-4. Identify the governing PRD IDs, acceptance criteria, invariants, and ADRs.
-5. Load only the task-relevant documents below. For large documents, locate the relevant heading or endpoint first; read the whole file only for a genuinely cross-cutting change.
+1. Read `docs/PROJECT_CHARTER.md`, then inspect Git status/diff and preserve user-owned work.
+2. Read the applicable `docs/TRACEABILITY.md` row and current slice. Freeze the PRD IDs, acceptance criteria, non-goals, invariants/ADRs, parity needs, and migration/rollback impact. Target prose is not implementation evidence.
+3. Load only the relevant route below, locating its heading/endpoint first. Use `docs/INDEX.md` only when no route fits; `README.md` is optional human guidance.
 
-`README.md` is human setup/run guidance, not mandatory agent context. Historical slice ledgers are Git history referenced by `docs/TRACEABILITY.md`, not always-loaded prose.
+Open `Redgres.code-workspace`. Use one writing command per checkout: `/start-redgres` for new work, `/resume-redgres` for an unfinished slice, `/status-redgres` for reports, or `/fix-redgres <issue>` for one reproduced issue.
 
-## Current boundary
+## Boundary and language
 
-Redgres is a self-hosted control plane for one PostgreSQL cluster and one Redis instance. Version 1 has one owner and is neither a public DBaaS nor a replacement for pgAdmin/RedisInsight.
+Redgres is a self-hosted, single-owner control plane for one PostgreSQL cluster and one Redis instance—not a public DBaaS or replacement for pgAdmin/RedisInsight. `docs/TRACEABILITY.md` owns current implementation status; every group is Partial until its listed evidence is accepted.
 
-The current implementation matrix is `docs/TRACEABILITY.md`. The codebase has substantial authenticated PostgreSQL/Redis administration and UI behavior, but every requirement group remains Partial; installer, recovery, complete compatibility evidence, staging, Cloudflare/DNS/TLS/firewall, canary observation, and production sign-off are not accepted. Documentation describing a target does not make it implemented.
+Qualify **user** as owner, PostgreSQL role, or Redis ACL user. Prefer **project database/role**, **Redis ACL user**, **direct** (5432), **pooled** (6432), **vault** (`database_console_vault`), **control state** (SQLite; no project credentials), and **protected resource**. `redis-admin` manages ACLs; `redis-insight` explores data. Put new terms in `docs/GLOSSARY.md`; do not recreate `CONTEXT.md`.
 
-Read-only behavioral references:
+Read-only parity sources are `D:\\code\\github\\database-app` (PostgreSQL) and `D:\\code\\github\\redis-ui` (Redis). Never edit or depend on them; pin reviewed commits in `docs/SOURCE_BASELINE.md`.
 
-| System | Path |
+## Routes and owners
+
+| Change | Read / update canonical owner |
 |---|---|
-| PostgreSQL console | `D:\\code\\github\\database-app` |
-| Redis console | `D:\\code\\github\\redis-ui` |
-
-Never edit those repositories or make Redgres depend on them. Pin reviewed source commits in `docs/SOURCE_BASELINE.md`.
-
-## Language
-
-Qualify **user** as owner, PostgreSQL role, or Redis ACL user. `redis-admin` is ACL administration; `redis-insight` is data exploration. Terms: **owner**, **project database/role**, **Redis ACL user**, **direct** (5432) vs **pooled** (6432) PostgreSQL, **vault** (`database_console_vault`), **control state** (SQLite; never project credentials), **protected resource**. Full glossary: `docs/GLOSSARY.md`. Packages: `auth`, `audit`, `postgresadmin`, `redisadmin`, `platform`, `database`, `operations`, `backup`, `httpapi`. Put new terms in `docs/GLOSSARY.md`; do not recreate `CONTEXT.md`.
-
-## Cursor commands
-
-Open `Redgres.code-workspace`. One writing command per checkout.
-
-| Situation | Command |
-|---|---|
-| Continue local product work | `/start-redgres` |
-| Recover an unfinished slice | `/resume-redgres` |
-| Report only | `/status-redgres` |
-| Reproduce and fix one issue | `/fix-redgres <issue>` |
-
-## Context routing
-
-| Change | Read |
-|---|---|
-| Product behavior/acceptance | relevant `docs/PRD.md` requirement; `docs/TRACEABILITY.md` |
-| HTTP endpoint | relevant `docs/API.md` endpoint; `docs/ARCHITECTURE.md`; security docs when sensitive |
-| Go/backend/data flow | relevant `docs/ARCHITECTURE.md`; `docs/COMPATIBILITY.md`; `docs/SOURCE_SYSTEMS.md` only for parity |
-| Secrets/auth/destructive actions | `docs/SECURITY.md`; `docs/DATA_AND_SECRETS.md`; governing ADR |
-| React/UI | `.agents/skills/redgres-ui-design/SKILL.md`; relevant `docs/UX.md`, `docs/UI_DESIGN_SYSTEM.md`, and API endpoint |
-| Deployment/installer | relevant `docs/INSTALLER_SPEC.md`, `docs/DEPLOYMENT.md`, `docs/CONFIGURATION.md`, `docs/COMPATIBILITY.md`; `docs/CLOUDFLARED.md` for tunnel units |
+| Product/acceptance | `docs/PRD.md`; `docs/TRACEABILITY.md` |
+| HTTP/API | `docs/API.md`; `docs/ARCHITECTURE.md`; security route when sensitive |
+| Go/data flow | `docs/ARCHITECTURE.md`; `docs/COMPATIBILITY.md`; `docs/SOURCE_SYSTEMS.md` only for parity; ADR for durable decisions |
+| Auth/secrets/destructive actions | `docs/SECURITY.md`; `docs/DATA_AND_SECRETS.md`; governing ADR |
+| React/UI | `.agents/skills/redgres-ui-design/SKILL.md`; `docs/UX.md`; `docs/UI_DESIGN_SYSTEM.md`; affected API |
+| Installer/runtime/network | `docs/INSTALLER_SPEC.md`; `docs/DEPLOYMENT.md`; `docs/CONFIGURATION.md`; `docs/DOMAIN_AND_NETWORK.md`; `docs/COMPATIBILITY.md`; `docs/CLOUDFLARED.md` for tunnel units |
 | PostgreSQL lifecycle/extensions | `docs/POSTGRESQL_PROVISIONING.md`; ADR-009 |
-| Backup/recovery | `docs/BACKUP_RECOVERY.md`; `docs/OPERATIONS.md`; ADR-011 and ADR-005 as applicable |
-| Migration/cutover | `docs/MIGRATION.md`; `docs/TESTING.md`; affected ADRs only |
-| Test/release evidence | relevant `docs/TESTING.md`; `docs/ACCEPTANCE_CHECKLIST.md`; `docs/TRACEABILITY.md` |
+| Backup/recovery | `docs/BACKUP_RECOVERY.md`; `docs/OPERATIONS.md`; ADR-011/ADR-005 |
+| Migration/cutover | `docs/MIGRATION.md`; `docs/ROADMAP.md`; `docs/TESTING.md`; affected ADRs |
+| Tests/release evidence | `docs/TESTING.md`; `docs/ACCEPTANCE_CHECKLIST.md`; `docs/TRACEABILITY.md` |
 | Public GitHub Pages | `site/` only; never publish `docs/` |
 
-`docs/INDEX.md` is a short human extras list. Do not preload it.
+## Invariants
 
-## Non-negotiable invariants
-
-1. Browser/admin origins bind loopback and are reached through Cloudflare Tunnel + Access; never expose origin ports.
-2. Tunnel does not proxy ordinary PostgreSQL/Redis clients. Raw endpoints use DNS-only records and end-to-end TLS.
-3. Never log, audit, cache, persist in browser storage, or return later: passwords, credential URLs, session/CSRF/tunnel/DNS tokens, or private keys.
-4. Credential responses use `Cache-Control: no-store`; UI clears them on dismiss, navigation, and selection change.
-5. Preserve the legacy Fernet vault and `SESSION_SECRET` compatibility until copied-record tests prove migration safety.
+1. Browser/admin origins bind loopback behind Cloudflare Tunnel + Access; origin ports stay private.
+2. Tunnel excludes ordinary PostgreSQL/Redis clients; raw endpoints use DNS-only records and end-to-end TLS.
+3. Passwords, credential URLs, session/CSRF/tunnel/DNS tokens, and private keys never enter logs, audits, caches, browser storage, or later responses; server storage is limited to documented mode-0600 secret files.
+4. Credential responses are `Cache-Control: no-store`; UI clears them on dismiss, navigation, and selection change.
+5. Preserve Fernet-vault and `SESSION_SECRET` compatibility until copied-record tests prove migration safety.
 6. PostgreSQL destructive actions default off and protect system/state/admin databases, roles, and the configured deny-list.
-7. Redis custom permissions are an explicit tested allow-list; arbitrary Redis commands are forbidden.
-8. Rollback switches application binaries/config only; it never reverses data, migrations, rotations, Redis state, or backups.
-9. Installer behavior is idempotent and cannot overwrite/reinitialize/remove an existing PostgreSQL cluster without explicit fresh-install mode and validated preconditions.
-10. Backup acceptance requires checksums and an isolated restore test; same-server copies are not disaster recovery.
-11. Support is the release-owned matrix in `docs/COMPATIBILITY.md`: exact immutable artifacts, no floating tags, implicit majors, or config-based widening.
-12. PostgreSQL adoption, packages/extensions, preload/restart, and PgBouncer are separate lifecycles. Existing mode preserves by default; no blanket extension enablement, `template1` changes, or unapproved restart.
+7. Redis custom permissions use an explicit tested allow-list; arbitrary commands remain unavailable.
+8. Rollback changes only application binaries/config—not data, migrations, rotations, Redis state, or backups.
+9. Installer runs are idempotent; only explicit fresh-install mode with validated preconditions may overwrite, reinitialize, or remove a PostgreSQL cluster.
+10. Backup acceptance requires checksums and an isolated restore; same-server copies are not disaster recovery.
+11. `docs/COMPATIBILITY.md` owns support: exact immutable artifacts only, with no floating tags, implicit majors, or config-based widening.
+12. PostgreSQL adoption, packages/extensions, preload/restart, and PgBouncer are separate lifecycles. Existing mode preserves by default; no blanket extension enabling, `template1` changes, or unapproved restart.
 
-## Engineering contract
+## Engineering
 
-- Stay within one accepted PRD slice and its explicit non-goals.
-- Verify APIs, flags, versions, service behavior, and external facts from code or exact primary sources; never invent them.
-- Use exact supported dependency pins. New dependencies require compatibility/security evidence.
-- Prefer the existing Go/React structure, with PostgreSQL behavior behind `postgresadmin`. PostgreSQL uses direct parameterized `pgx` without an ORM; identifiers are validated and safely quoted. HTTP endpoints are versioned under `/api/v1`.
-- State changes emit secret-safe actor/action/target/outcome/request-ID/client-IP audit events with redacted metadata. Typed errors map to stable API errors; raw dependency errors never reach browsers.
-- Production code is explicit, typed, bounded, cancellable where applicable, fail-closed, and covered by observable success/failure tests.
-- PostgreSQL/Redis claims require the applicable `docs/COMPATIBILITY.md` matrix jobs with detected full versions and immutable artifacts.
-- Preserve dirty work. Never commit runtime SQLite/WAL files, `.env`, certificates, tokens, binaries, backups, or credentials.
-- Update the canonical owner and `docs/TRACEABILITY.md` in the same implementation change. Avoid duplicate status ledgers.
-- UI changes use shared tokens/shell, responsive/accessibility evidence, and independent UI review.
-- Local implementation/commits are allowed by the active workflow. Never push or change production, DNS, Cloudflare, secrets, or legacy services without separate explicit authorization.
+- Work within one accepted PRD slice. Verify external/API/version facts from code or exact primary sources. Use supported pins; new dependencies need compatibility/security evidence.
+- Keep the Go/React structure. PostgreSQL lives behind `postgresadmin`, uses parameterized `pgx` without an ORM, and validates/quotes identifiers. APIs live under `/api/v1`.
+- State changes emit redacted, secret-safe actor/action/target/outcome/request-ID/client-IP audit events. Typed errors map to stable API errors; dependency errors stay server-side.
+- Production paths are explicit, typed, bounded, cancellable where applicable, fail-closed, and tested for observable success/failure.
+- PostgreSQL/Redis claims require applicable compatibility-matrix jobs reporting detected full versions and immutable artifacts.
+- Never commit runtime SQLite/WAL, `.env`, certificates, tokens, binaries, backups, or credentials.
+- Update the canonical owner and one current `docs/TRACEABILITY.md` block with implementation; create no duplicate status ledger. UI work also needs shared tokens/shell, responsive/accessibility evidence, and independent UI review.
+- Local edits/commits are allowed by the active workflow. Pushing or changing production, DNS, Cloudflare, secrets, or legacy services requires separate explicit authorization.
 
-## Documentation ownership
+## Completion
 
-| Change | Canonical owner |
-|---|---|
-| Product/acceptance | `docs/PRD.md` |
-| HTTP contract | `docs/API.md` |
-| Module/data flow | `docs/ARCHITECTURE.md` plus ADR for durable decisions |
-| Versions/support | `docs/COMPATIBILITY.md`, ADR-008 |
-| UI workflow/system | `docs/UX.md`, `docs/UI_DESIGN_SYSTEM.md` |
-| Configuration | `docs/CONFIGURATION.md` |
-| Installer/runtime/network | `docs/INSTALLER_SPEC.md`, `docs/DEPLOYMENT.md`, `docs/DOMAIN_AND_NETWORK.md` |
-| PostgreSQL lifecycle | `docs/POSTGRESQL_PROVISIONING.md`, ADR-009 |
-| Backup/runbook | `docs/BACKUP_RECOVERY.md`, `docs/OPERATIONS.md` |
-| Security/secrets | `docs/SECURITY.md`, `docs/DATA_AND_SECRETS.md`, ADR when architectural |
-| Source parity | `docs/SOURCE_SYSTEMS.md`, `docs/SOURCE_BASELINE.md` |
-| Tests/release gates | `docs/TESTING.md`, `docs/ACCEPTANCE_CHECKLIST.md` |
-| Milestones/cutover | `docs/ROADMAP.md`, `docs/MIGRATION.md` |
-| Public GitHub Pages | `site/` (do not publish `docs/`) |
+Before claiming a slice complete:
 
-## Completion protocol
+1. Run its focused and complete `docs/TESTING.md` checks.
+2. Inspect the diff for secrets/runtime artifacts and synchronize canonical docs plus one traceability block.
+3. Record exactly what ran, what did not, and why.
+4. Obtain required independent security/UI review and verify the corrected immutable commit.
 
-Before coding, freeze the requirement, acceptance criteria, affected invariants/ADRs, source parity, and migration/rollback impact. Before claiming a slice complete:
+Precedence: security invariants, accepted ADRs, PRD, architecture/deployment docs, roadmap, then targets. Resolve contradictions in the same change.
 
-1. Run the required focused and complete checks from `docs/TESTING.md`.
-2. Confirm the diff contains no secret or runtime artifact.
-3. Synchronize canonical docs and one current block in `docs/TRACEABILITY.md`.
-4. Record exactly what ran, what did not, and why.
-5. Obtain required independent security/UI review and verify the corrected immutable commit.
+## Local preferences and facts
 
-Security invariants and accepted ADRs outrank PRD, architecture/deployment docs, roadmap, and targets in that order. Resolve contradictions in the same change.
-
-## Learned User Preferences
-
-- Keep installer commits scoped to installer, deploy, and related auth work; leave unrelated UI/theme dirty files out of those commits.
-- While iterating the installer, do not delete `.github/workflows/ci.yml`; keep full CI off push until it is ready, and use a separate installer workflow for that gate.
-- Prefer finishing application code first, then verify on the Ubuntu test host; GitHub Actions service containers are development evidence, not production acceptance.
-- Atlanta VPS `45.76.250.202` (root) is the standing Redgres test host. SSH, installer uninstall/reinstall, and Cloudflare test-token use there are authorized without asking. Never commit that host password or API token; keep them only in the operator home env file.
-
-## Learned Workspace Facts
-
-- Root `install.sh` is application-only (`curl | bash`); full-stack PostgreSQL/Redis/PgBouncer is `git clone` then `sudo ./deploy/install.sh`.
-- Live installer checks on Windows must use Git Bash (`C:\Program Files\Git\bin\bash.exe`); WSL `bash` has no `/bin/bash`.
-- The live Ubuntu installer OS gate is 24.04 (`noble`) and 26.04 (`resolute`) via PGDG named packages; that is not 26.04-only exact apt pins and does not widen `docs/COMPATIBILITY.md` §6.
+- Installer commits contain only installer, deploy, and related auth work; exclude unrelated UI/theme changes. Keep `.github/workflows/ci.yml`, leave full CI off push until ready, and use a separate installer workflow gate.
+- Finish application code before Ubuntu-host verification. GitHub Actions service containers are development evidence, not production acceptance.
+- Atlanta VPS `45.76.250.202` (`root`) is the authorized Redgres test host. SSH, installer uninstall/reinstall, and Cloudflare test-token use there need no further approval. Keep its password/API token only in the operator home env file; never commit them.
+- Root `install.sh` is application-only (`curl | bash`); full-stack PostgreSQL/Redis/PgBouncer uses `git clone` then `sudo ./deploy/install.sh`.
+- Windows live-installer checks use `C:\\Program Files\\Git\\bin\\bash.exe`; WSL lacks `/bin/bash`.
+- The live Ubuntu gate covers 24.04 (`noble`) and 26.04 (`resolute`) through PGDG named packages; this is not 26.04-only exact apt pinning and does not widen `docs/COMPATIBILITY.md` section 6.
