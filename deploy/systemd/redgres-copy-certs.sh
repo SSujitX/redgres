@@ -12,10 +12,10 @@ CERT_DIR="${REDGRES_TLS_CERT_DIR:-/etc/ssl/redgres}"
 PGBOUNCER_INI="${REDGRES_PGBOUNCER_INI:-/etc/pgbouncer/pgbouncer.ini}"
 /usr/bin/mkdir -p "${CERT_DIR}"
 if /usr/bin/getent group ssl-cert >/dev/null 2>&1; then
-  /usr/bin/chown root:ssl-cert "${CERT_DIR}" 2>/dev/null || true
+  /usr/bin/chown root:ssl-cert "${CERT_DIR}"
   /usr/bin/chmod 0750 "${CERT_DIR}"
 elif /usr/bin/getent group postgres >/dev/null 2>&1; then
-  /usr/bin/chown root:postgres "${CERT_DIR}" 2>/dev/null || true
+  /usr/bin/chown root:postgres "${CERT_DIR}"
   /usr/bin/chmod 0750 "${CERT_DIR}"
 else
   /usr/bin/chmod 0755 "${CERT_DIR}"
@@ -23,9 +23,12 @@ fi
 /usr/bin/install -m 0644 "${LINEAGE}/fullchain.pem" "${CERT_DIR}/fullchain.pem"
 /usr/bin/install -m 0640 "${LINEAGE}/privkey.pem" "${CERT_DIR}/privkey.pem"
 if /usr/bin/getent group ssl-cert >/dev/null 2>&1; then
-  /usr/bin/chown root:ssl-cert "${CERT_DIR}/privkey.pem" 2>/dev/null || true
+  /usr/bin/chown root:ssl-cert "${CERT_DIR}/privkey.pem"
 elif /usr/bin/getent group postgres >/dev/null 2>&1; then
-  /usr/bin/chown root:postgres "${CERT_DIR}/privkey.pem" 2>/dev/null || true
+  /usr/bin/chown root:postgres "${CERT_DIR}/privkey.pem"
+fi
+if /usr/bin/getent passwd postgres >/dev/null 2>&1 && command -v runuser >/dev/null 2>&1; then
+  /usr/bin/runuser -u postgres -- /usr/bin/test -r "${CERT_DIR}/privkey.pem"
 fi
 if [[ -f "${PGBOUNCER_INI}" ]]; then
   tmp="$(/usr/bin/mktemp "${PGBOUNCER_INI}.XXXXXX")"
@@ -34,10 +37,13 @@ if [[ -f "${PGBOUNCER_INI}" ]]; then
     /^client_tls_key_file[[:space:]]*=/ { print "client_tls_key_file = " k; next }
     { print }
   ' "${PGBOUNCER_INI}" >"${tmp}"
+  if ! grep -q '^client_tls_cert_file[[:space:]]*=' "${tmp}"; then
+    printf '%s\n' "client_tls_cert_file = ${CERT_DIR}/fullchain.pem" "client_tls_key_file = ${CERT_DIR}/privkey.pem" >>"${tmp}"
+  fi
   /usr/bin/chmod --reference="${PGBOUNCER_INI}" "${tmp}" 2>/dev/null || /usr/bin/chmod 640 "${tmp}"
   /usr/bin/mv "${tmp}" "${PGBOUNCER_INI}"
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl reload pgbouncer >/dev/null 2>&1 || systemctl restart pgbouncer >/dev/null 2>&1 || true
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet pgbouncer; then
+    systemctl reload pgbouncer >/dev/null 2>&1 || systemctl restart pgbouncer >/dev/null 2>&1
   fi
 fi
 
