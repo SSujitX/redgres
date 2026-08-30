@@ -1832,8 +1832,17 @@ progress_err="$(
   ! ls /tmp/redgres-cmd.* >/dev/null 2>&1
   grep -q "redgres_section 1 8 'Preflight'" "${deploy_dir}/lib/mutate.sh"
   grep -q "redgres_section 8 8 'Application'" "${deploy_dir}/lib/mutate.sh"
+  package_sec="$(/usr/bin/awk '/redgres_section 2 8 .Packages./,/redgres_section 3 8 .Redis./' "${deploy_dir}/lib/mutate.sh")"
   redis_sec="$(/usr/bin/awk '/redgres_section 3 8 .Redis./,/redgres_section 4 8 .PostgreSQL./' "${deploy_dir}/lib/mutate.sh")"
   pg_sec="$(/usr/bin/awk '/redgres_section 4 8 .PostgreSQL./,/redgres_section 5 8 .PgBouncer./' "${deploy_dir}/lib/mutate.sh")"
+  printf '%s\n' "${package_sec}" | /usr/bin/grep -Fq 'redgres_apt_candidate python3' || exit 1
+  printf '%s\n' "${package_sec}" | /usr/bin/grep -Fq 'redgres_apt_install python3' || exit 1
+  printf '%s\n' "${package_sec}" | /usr/bin/grep -Fq '[[ -x /usr/bin/python3 ]]' || exit 1
+  python_candidate_line="$(printf '%s\n' "${package_sec}" | /usr/bin/awk '/redgres_apt_candidate python3/ { print NR; exit }')" || exit 1
+  python_install_line="$(printf '%s\n' "${package_sec}" | /usr/bin/awk '/redgres_apt_install python3/ { print NR; exit }')" || exit 1
+  ca_install_line="$(printf '%s\n' "${package_sec}" | /usr/bin/awk '/redgres_apt_install ca-certificates/ { print NR; exit }')" || exit 1
+  [[ -n "${python_candidate_line}" && -n "${python_install_line}" && -n "${ca_install_line}" ]] || exit 1
+  (( python_candidate_line < python_install_line && python_install_line < ca_install_line )) || exit 1
   printf '%s\n' "${redis_sec}" | /usr/bin/grep -q redgres_ensure_redisinsight
   ! printf '%s\n' "${redis_sec}" | /usr/bin/grep -q redgres_ensure_pgadmin
   ! printf '%s\n' "${redis_sec}" | /usr/bin/grep -q redgres_ensure_expert_tools
@@ -1871,21 +1880,56 @@ compose_yaml_err="$(
 
 expert_pin_rc=0
 expert_pin_err="$(
-  s2_lib_src
-  printf '%s\n' "$(redgres_pgadmin_image_pin)" | /usr/bin/grep -q 'dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d'
-  printf '%s\n' "$(redgres_redisinsight_image_pin)" | /usr/bin/grep -q 'redis/redisinsight:3.8.0@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84'
-  yaml="$(redgres_expert_tools_compose_yaml)"
-  printf '%s\n' "${yaml}" | /usr/bin/grep -q '127.0.0.1:5052:80'
-  printf '%s\n' "${yaml}" | /usr/bin/grep -q '127.0.0.1:5542:5540'
-  printf '%s\n' "${yaml}" | /usr/bin/grep -q "PGADMIN_CONFIG_AUTHENTICATION_SOURCES"
-  printf '%s\n' "${yaml}" | /usr/bin/grep -q "PGADMIN_CONFIG_MASTER_PASSWORD_HOOK"
-  printf '%s\n' "${yaml}" | /usr/bin/grep -q 'pgadmin.master:/run/redgres/pgadmin.master:ro'
-  printf '%s\n' "${yaml}" | /usr/bin/grep -q 'pgadmin-master-hook:/pgadmin4/redgres-master-hook:ro'
-  ! printf '%s\n' "${yaml}" | /usr/bin/grep -q 'MASTER_PASSWORD_REQUIRED'
-  ! printf '%s\n' "${yaml}" | /usr/bin/grep -qi 'DEFAULT_PASSWORD'
+  s2_lib_src || exit 1
+  printf '%s\n' "$(redgres_pgadmin_image_pin)" | /usr/bin/grep -q 'dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d' || exit 1
+  printf '%s\n' "$(redgres_redisinsight_image_pin)" | /usr/bin/grep -q 'redis/redisinsight:3.8.0@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84' || exit 1
+  yaml="$(redgres_expert_tools_compose_yaml)" || exit 1
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q '127.0.0.1:5052:80' || exit 1
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q '127.0.0.1:5542:5540' || exit 1
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q "PGADMIN_CONFIG_AUTHENTICATION_SOURCES" || exit 1
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q "PGADMIN_CONFIG_MASTER_PASSWORD_HOOK" || exit 1
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q 'pgadmin.master:/run/redgres/pgadmin.master:ro' || exit 1
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q 'pgadmin-master-hook:/pgadmin4/redgres-master-hook:ro' || exit 1
+  ! printf '%s\n' "${yaml}" | /usr/bin/grep -q 'MASTER_PASSWORD_REQUIRED' || exit 1
+  ! printf '%s\n' "${yaml}" | /usr/bin/grep -qi 'DEFAULT_PASSWORD' || exit 1
+  expert_write="$(/usr/bin/awk '/^redgres_write_expert_tools_compose\(\)/,/^}/' "${deploy_dir}/lib/mutate.sh")" || exit 1
+  printf '%s\n' "${expert_write}" | /usr/bin/grep -Fq 'redgres_prepare_owned_dir_no_follow /var/lib/redgres pgadmin 5050 5050 700' || exit 1
+  printf '%s\n' "${expert_write}" | /usr/bin/grep -Fq 'redgres_prepare_owned_dir_no_follow /var/lib/redgres redisinsight 1000 1000 700' || exit 1
+  ! printf '%s\n' "${expert_write}" | /usr/bin/grep -Eq '/usr/bin/(mkdir|chown|chmod) .*\b(pgadmin|redisinsight)\b' || exit 1
+  owned_helper="$(/usr/bin/awk '/^redgres_prepare_owned_dir_no_follow\(\)/,/^}/' "${deploy_dir}/lib/mutate.sh")" || exit 1
+  printf '%s\n' "${owned_helper}" | /usr/bin/grep -Fq 'os.O_NOFOLLOW' || exit 1
+  printf '%s\n' "${owned_helper}" | /usr/bin/grep -Fq 'dir_fd=parent_fd' || exit 1
+  printf '%s\n' "${owned_helper}" | /usr/bin/grep -Fq 'os.fchown(child_fd' || exit 1
+  printf '%s\n' "${owned_helper}" | /usr/bin/grep -Fq 'os.fchmod(child_fd' || exit 1
+
+  if [[ "$(/usr/bin/uname -s)" == Linux* ]]; then
+    [[ -x /usr/bin/python3 ]] || exit 1
+    owned_parent="${tmpdir}/redisinsight-owned-parent"
+    outside="${tmpdir}/redisinsight-outside"
+    /usr/bin/mkdir -p "${owned_parent}" "${outside}" || exit 1
+    /usr/bin/chmod 755 "${outside}" || exit 1
+    test_uid="$(/usr/bin/id -u)" || exit 1
+    test_gid="$(/usr/bin/id -g)" || exit 1
+    redgres_prepare_owned_dir_no_follow "${owned_parent}" redisinsight "${test_uid}" "${test_gid}" 700 || exit 1
+    [[ "$(/usr/bin/stat -c '%u:%g %a' "${owned_parent}/redisinsight")" == "${test_uid}:${test_gid} 700" ]] || exit 1
+    redgres_prepare_owned_dir_no_follow "${owned_parent}" redisinsight "${test_uid}" "${test_gid}" 700 || exit 1
+    [[ "$(/usr/bin/stat -c '%u:%g %a' "${owned_parent}/redisinsight")" == "${test_uid}:${test_gid} 700" ]] || exit 1
+    /usr/bin/rm -rf -- "${owned_parent}/redisinsight" || exit 1
+    /usr/bin/ln -s -- "${outside}" "${owned_parent}/redisinsight" || exit 1
+    if redgres_prepare_owned_dir_no_follow "${owned_parent}" redisinsight "${test_uid}" "${test_gid}" 700 >/dev/null 2>&1; then
+      exit 1
+    fi
+    [[ "$(/usr/bin/stat -c '%a' "${outside}")" == 755 ]] || exit 1
+    parent_link="${tmpdir}/redisinsight-parent-link"
+    /usr/bin/ln -s -- "${owned_parent}" "${parent_link}" || exit 1
+    if redgres_prepare_owned_dir_no_follow "${parent_link}" other "${test_uid}" "${test_gid}" 700 >/dev/null 2>&1; then
+      exit 1
+    fi
+    [[ ! -e "${owned_parent}/other" ]] || exit 1
+  fi
 )" 2>&1 || expert_pin_rc=$?
 if [[ "${expert_pin_rc}" -eq 0 ]]; then
-  pass 'expert-tool image pins and compose have no password'
+  pass 'expert-tool pins, secret-free compose, and Redis Insight data ownership'
 else
   fail "expert-tool pins/compose (rc=${expert_pin_rc})"
   printf '%s\n' "${expert_pin_err}" >&2

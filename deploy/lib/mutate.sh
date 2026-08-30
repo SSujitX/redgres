@@ -616,11 +616,44 @@ services:
 EOF
 }
 
+redgres_prepare_owned_dir_no_follow() {
+  local parent="$1" name="$2" uid="$3" gid="$4" mode="$5"
+  /usr/bin/python3 - "${parent}" "${name}" "${uid}" "${gid}" "${mode}" <<'PY'
+import os
+import re
+import sys
+
+parent, name, uid_text, gid_text, mode_text = sys.argv[1:]
+if not os.path.isabs(parent) or os.path.normpath(parent) != parent:
+    raise SystemExit("owned directory parent is invalid")
+if not re.fullmatch(r"[A-Za-z0-9._-]+", name) or name in {".", ".."}:
+    raise SystemExit("owned directory name is invalid")
+if not uid_text.isdecimal() or not gid_text.isdecimal():
+    raise SystemExit("owned directory identity is invalid")
+if not re.fullmatch(r"0?[0-7]{3}", mode_text):
+    raise SystemExit("owned directory mode is invalid")
+
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+parent_fd = os.open(parent, flags)
+try:
+    try:
+        os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    child_fd = os.open(name, flags, dir_fd=parent_fd)
+    try:
+        os.fchown(child_fd, int(uid_text), int(gid_text))
+        os.fchmod(child_fd, int(mode_text, 8))
+    finally:
+        os.close(child_fd)
+finally:
+    os.close(parent_fd)
+PY
+}
+
 redgres_write_expert_tools_compose() {
-  /usr/bin/mkdir -p /var/lib/redgres/pgadmin /var/lib/redgres/redisinsight
-  /usr/bin/chown 5050:5050 /var/lib/redgres/pgadmin
-  /usr/bin/chmod 700 /var/lib/redgres/pgadmin
-  /usr/bin/chmod 755 /var/lib/redgres/redisinsight
+  redgres_prepare_owned_dir_no_follow /var/lib/redgres pgadmin 5050 5050 700 || redgres_die 'pgAdmin data path is not trusted'
+  redgres_prepare_owned_dir_no_follow /var/lib/redgres redisinsight 1000 1000 700 || redgres_die 'Redis Insight data path is not trusted'
   redgres_expert_tools_compose_yaml >'/etc/redgres/expert-tools-compose.yml'
   /usr/bin/chmod 644 /etc/redgres/expert-tools-compose.yml
 }
@@ -812,6 +845,9 @@ redgres_live_install() {
   trap 'rm -f /tmp/redgres-cmd.*; exit 130' INT
   trap 'rm -f /tmp/redgres-cmd.*; exit 143' TERM
   redgres_apt_get update || redgres_die 'apt-get update failed'
+  redgres_apt_candidate python3 >/dev/null || redgres_die 'python3 package is unavailable'
+  redgres_apt_install python3 || redgres_die 'apt-get failed'
+  [[ -x /usr/bin/python3 ]] || redgres_die 'python3 runtime is unavailable'
   redgres_apt_install ca-certificates || redgres_die 'apt-get failed'
   redgres_apt_install postgresql-common || redgres_die 'apt-get failed'
   redgres_disable_auto_cluster
