@@ -92,7 +92,7 @@ Generic failure is `401` `unauthorized` with message `Invalid username or passwo
 
 GET `/session` still returns configured public hostnames so the UI can show Open controls. The owner opens those tools with `POST /api/v1/tools/{tool}/launch`, not a raw href. Login JSON is unchanged and has no `tool_links` or `expert_tools`. GET `/session` still rotates CSRF and is not a mutation (no audit). Login and GET `/session` use `Cache-Control: no-store, max-age=0` plus `Pragma: no-cache`. The payload never includes passwords, session tokens, launch tickets, or CSRF in `tool_links`.
 
-`expert_tools` is an object, never `null`. It contains `pgadmin_login: true` only when both `REDGRES_PGADMIN_EMAIL` and `REDGRES_PGADMIN_PASSWORD_FILE` are set. It never includes a password, path, or email. Unconfigured is `{}`.
+`expert_tools` is an object, never `null`. It contains `pgadmin_login: true` only when both `REDGRES_PGADMIN_EMAIL` and `REDGRES_PGADMIN_PASSWORD_FILE` are set. It never includes a password, path, email, or master password. Unconfigured is `{}`.
 
 **GET `/api/v1/status`** requires a session cookie and the `platform.read` capability, and does not require CSRF. The capability set is currently a static single-owner grant (the same list `GET /api/v1/session` returns), so the capability check cannot deny this route today; the session check is what enforces access.
 
@@ -278,10 +278,10 @@ Session + `platform.network` + CSRF. Empty body; extra JSON is ignored. Response
 **POST `/api/v1/tools/pgadmin/credentials/reveal`** success `200`:
 
 ```json
-{ "email": "admin@redgres.com", "password": "…", "request_id": "…" }
+{ "email": "admin@redgres.com", "password": "…", "master_password": "…", "request_id": "…" }
 ```
 
-Password comes from `REDGRES_PGADMIN_PASSWORD_FILE`. Missing email/file/empty contents is `404` with no path echo. GET `/session` never includes this password. Audit metadata is `{ "tool": "pgadmin" }` only.
+Password comes from `REDGRES_PGADMIN_PASSWORD_FILE`. `master_password` comes from `REDGRES_PGADMIN_MASTER_PASSWORD_FILE` when that regular file is present and readable; the key is omitted when the file is missing so older hosts still reveal login. Missing email/login-file/empty contents is `404` with no path echo. GET `/session` never includes these passwords. Audit metadata is `{ "tool": "pgadmin" }` only.
 
 ## Domain & Network endpoints (OPS-009 Partial, token-first)
 
