@@ -12973,8 +12973,10 @@ describe("System status page", () => {
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Expert tools" })).toBeInTheDocument();
-    expect(screen.getByText("pgAdmin and RedisInsight are not configured on this host.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open pgAdmin" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("Waiting for Domain").length).toBe(2);
+    expect(screen.getByRole("button", { name: "Open pgAdmin" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open RedisInsight" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reveal pgAdmin login" })).toBeDisabled();
   });
 
   it("keeps all five System cards when one component is Unavailable", async () => {
