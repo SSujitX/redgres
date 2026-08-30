@@ -2200,13 +2200,20 @@ domain_runtime_err="$(
   [[ -x "${libexec}/cloudflared-run.sh" ]]
   [[ -f "${sysd}/cloudflared-redgres.path" ]]
   grep -q 'LoadCredential=TUNNEL_TOKEN:' "${sysd}/cloudflared-redgres.service"
+  grep -q 'ConditionPathExists=/var/lib/redgres/secrets/cloudflared-tunnel-token' "${sysd}/cloudflared-redgres.service"
+  grep -q 'PathChanged=/var/lib/redgres/secrets/cloudflared-tunnel-token' "${sysd}/cloudflared-redgres.path"
+  ! grep -q 'PathExists=/var/lib/redgres/secrets/cloudflared-tunnel-token' "${sysd}/cloudflared-redgres.path"
   grep -q -- '--protocol http2' "${libexec}/cloudflared-run.sh"
   [[ -x "${libexec}/issue-tls.sh" ]]
   grep -q -- '--dns-cloudflare-propagation-seconds 60' "${libexec}/issue-tls.sh"
+  grep -q '/etc/ssl/redgres' "${libexec}/issue-tls.sh"
+  grep -q 'chmod 0750' "${libexec}/issue-tls.sh"
+  grep -q 'client_tls_cert_file' "${libexec}/issue-tls.sh"
   [[ -f "${sysd}/redgres-tls-issue.path" ]]
   grep -q 'PathExists=/var/lib/redgres/tls-issue.request' "${sysd}/redgres-tls-issue.path"
   grep -q 'PathChanged=/var/lib/redgres/tls-issue.request' "${sysd}/redgres-tls-issue.path"
   [[ -x "${hook}/redgres-copy-certs.sh" ]]
+  grep -q '/etc/ssl/redgres' "${hook}/redgres-copy-certs.sh"
   ! grep -Eiq 'eyJ|BEGIN PRIVATE|dns_cloudflare_api_token =' "${libexec}/issue-tls.sh"
 ) 2>&1" || domain_runtime_rc=$?
 if [[ "${domain_runtime_rc}" -eq 0 ]]; then
@@ -2236,8 +2243,13 @@ tls_helper_rc=0
   export REDGRES_TLS_CERT_DIR="${certdir}"
   export REDGRES_CERTBOT_BIN="${fake}"
   export REDGRES_TLS_APPLY_POSTGRES_SSL=0
+  export REDGRES_TLS_APPLY_PGBOUNCER=1
+  export REDGRES_PGBOUNCER_INI="${tmpdir}/pgbouncer.ini"
+  printf '%s\n' 'client_tls_sslmode = require' 'client_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem' 'client_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key' >"${REDGRES_PGBOUNCER_INI}"
   bash "${deploy_dir}/systemd/issue-tls.sh"
   [[ -f "${certdir}/fullchain.pem" ]]
+  grep -q "client_tls_cert_file = ${certdir}/fullchain.pem" "${REDGRES_PGBOUNCER_INI}"
+  grep -q "client_tls_key_file = ${certdir}/privkey.pem" "${REDGRES_PGBOUNCER_INI}"
   grep -q '^issued$' "${result}"
   [[ ! -f "${req}" ]]
   ! grep -q 'canary-must-not-appear' "${result}"
