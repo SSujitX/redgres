@@ -590,7 +590,14 @@ PY
 purge_tls_local_copies() {
   rm -rf /etc/ssl/redgres /etc/redgres/tls 2>/dev/null || true
   rm -f /etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh 2>/dev/null || true
-  rm -f /etc/postgresql/*/main/conf.d/redgres-ssl.conf 2>/dev/null || true
+  rm -f /etc/postgresql/*/main/conf.d/redgres-ssl.conf \
+    /etc/postgresql/*/main/redgres-fullchain.pem \
+    /etc/postgresql/*/main/redgres-privkey.pem \
+    /etc/pgbouncer/redgres-fullchain.pem \
+    /etc/pgbouncer/redgres-privkey.pem 2>/dev/null || true
+  # Leftover lineage makes the next issue-tls exit 0 with "not yet due" and skip a real copy path.
+  rm -rf /etc/letsencrypt/live/db.redgres.com /etc/letsencrypt/archive/db.redgres.com \
+    /etc/letsencrypt/renewal/db.redgres.com.conf 2>/dev/null || true
 }
 
 purge_cloudflared_package() {
