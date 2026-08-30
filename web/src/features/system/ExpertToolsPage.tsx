@@ -15,8 +15,8 @@ export default function ExpertToolsPage({
       <header className="page-header">
         <h1>Expert tools</h1>
         <p>
-          Open pgAdmin and Redis Insight from this signed-in console. Reveal shows the saved pgAdmin email and
-          password. That is not the pgAdmin master-password dialog.
+          Open pgAdmin and Redis Insight from this signed-in console. Reveal shows the saved pgAdmin email, login
+          password, and master password.
         </p>
       </header>
       <ExpertToolsSection csrf={csrf} toolLinks={toolLinks} expertTools={expertTools} variant="full" />
