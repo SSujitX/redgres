@@ -59,7 +59,7 @@ Ubuntu 24.04 or 26.04. Clone anywhere you can write; the commands below use your
 
 ## One command
 
-Creates `~/redgres` and starts the interactive installer (defaults: PostgreSQL 18, Redis 8.2, PgBouncer off). If `~/redgres` already exists, remove or rename it first.
+Creates `~/redgres` and starts the interactive installer (defaults: PostgreSQL 18, Redis 8.2, PgBouncer fresh on loopback `6432`). If `~/redgres` already exists, remove or rename it first.
 
 ```bash
 cd && git clone https://github.com/SSujitX/redgres.git && cd redgres && sudo ./deploy/install.sh
@@ -85,11 +85,11 @@ git clone https://github.com/SSujitX/redgres.git
 cd ~/redgres
 ```
 
-PostgreSQL **17 or 18**. Redis **8.2 or 8.8**. PgBouncer **disabled or fresh**. No `latest`. Live install is a **new** cluster + **new** Redis only.
+PostgreSQL **17 or 18**. Redis **8.2 or 8.8**. PgBouncer **fresh or disabled**. No `latest`. Live install is a **new** cluster + **new** Redis only. Fresh PgBouncer listens on `127.0.0.1:6432` (not public).
 
 ## Ask on the terminal
 
-Defaults: PostgreSQL 18, Redis 8.2, PgBouncer off.
+Defaults: PostgreSQL 18, Redis 8.2, PgBouncer fresh.
 
 ```bash
 sudo ./deploy/install.sh
@@ -100,37 +100,37 @@ sudo ./deploy/install.sh
 Add `--dry-run` to any live command. Swap `17`/`18`, `8.2`/`8.8`, `disabled`/`fresh`.
 
 ```bash
-sudo ./deploy/install.sh --non-interactive --dry-run --mode fresh-postgres --postgres-version 18 --redis-mode fresh --redis-version 8.2 --pgbouncer-mode disabled
+sudo ./deploy/install.sh --non-interactive --dry-run --mode fresh-postgres --postgres-version 18 --redis-mode fresh --redis-version 8.2 --pgbouncer-mode fresh
 ```
 
 ## PostgreSQL 18 + Redis 8.2
 
 ```bash
-sudo ./deploy/install.sh --non-interactive --mode fresh-postgres --postgres-version 18 --redis-mode fresh --redis-version 8.2 --pgbouncer-mode disabled
+sudo ./deploy/install.sh --non-interactive --mode fresh-postgres --postgres-version 18 --redis-mode fresh --redis-version 8.2 --pgbouncer-mode fresh
 ```
 
 ## PostgreSQL 17 + Redis 8.2
 
 ```bash
-sudo ./deploy/install.sh --non-interactive --mode fresh-postgres --postgres-version 17 --redis-mode fresh --redis-version 8.2 --pgbouncer-mode disabled
+sudo ./deploy/install.sh --non-interactive --mode fresh-postgres --postgres-version 17 --redis-mode fresh --redis-version 8.2 --pgbouncer-mode fresh
 ```
 
 ## PostgreSQL 18 + Redis 8.8
 
 ```bash
-sudo ./deploy/install.sh --non-interactive --mode fresh-postgres --postgres-version 18 --redis-mode fresh --redis-version 8.8 --pgbouncer-mode disabled
+sudo ./deploy/install.sh --non-interactive --mode fresh-postgres --postgres-version 18 --redis-mode fresh --redis-version 8.8 --pgbouncer-mode fresh
 ```
 
 ## PostgreSQL 17 + Redis 8.8
 
 ```bash
-sudo ./deploy/install.sh --non-interactive --mode fresh-postgres --postgres-version 17 --redis-mode fresh --redis-version 8.8 --pgbouncer-mode disabled
+sudo ./deploy/install.sh --non-interactive --mode fresh-postgres --postgres-version 17 --redis-mode fresh --redis-version 8.8 --pgbouncer-mode fresh
 ```
 
-## PostgreSQL 18 + Redis 8.2 + PgBouncer
+## PostgreSQL 18 + Redis 8.2 without PgBouncer
 
 ```bash
-sudo ./deploy/install.sh --non-interactive --mode fresh-postgres --postgres-version 18 --redis-mode fresh --redis-version 8.2 --pgbouncer-mode fresh
+sudo ./deploy/install.sh --non-interactive --mode fresh-postgres --postgres-version 18 --redis-mode fresh --redis-version 8.2 --pgbouncer-mode disabled
 ```
 
 Password prints once on your TTY. Open the printed `:8989` URL.
