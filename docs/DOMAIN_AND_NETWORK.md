@@ -7,8 +7,8 @@
 | `console.onelifeltd.xyz` | Redgres Console | `127.0.0.1:8790` during migration; selected final loopback port | Tunnel + Access | Primary UI |
 | `database.onelifeltd.xyz` | Legacy FastAPI PostgreSQL console | `127.0.0.1:6969` | Tunnel + Access | Retire after observation |
 | `redis-admin.onelifeltd.xyz` | Legacy Redact ACL console | `127.0.0.1:8787` | Tunnel + Access | Retire after observation |
-| `pgadmin.onelifeltd.xyz` | Optional pgAdmin | loopback Apache/container port | Tunnel + Access | Expert tool |
-| `redis-insight.onelifeltd.xyz` | Optional RedisInsight | `127.0.0.1:5540` | Tunnel + Access | Data explorer |
+| `pgadmin.onelifeltd.xyz` | Optional pgAdmin | loopback tool gate (default `127.0.0.1:5050`) → container | Tunnel + Access | Expert tool; open from Redgres System |
+| `redis-insight.onelifeltd.xyz` | Optional RedisInsight | loopback tool gate (default `127.0.0.1:5540`) → container | Tunnel + Access | Data explorer; open from Redgres System |
 | `db.onelifeltd.xyz` | PostgreSQL direct and pooled client endpoint | public `5432`, `6432` | DNS-only | Permanent raw DB endpoint |
 | `rs.onelifeltd.xyz` | Redis TLS client endpoint | public `6380` | DNS-only | Permanent raw DB endpoint |
 
