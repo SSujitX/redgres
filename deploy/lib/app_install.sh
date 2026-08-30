@@ -522,6 +522,8 @@ redgres_install_domain_runtime() {
     systemctl daemon-reload || return 1
     systemctl disable --now cloudflared.service >/dev/null 2>&1 || true
     systemctl enable cloudflared-redgres.service >/dev/null 2>&1 || return 1
+    # ConditionPathExists skips this when the token is not written yet.
+    systemctl start cloudflared-redgres.service >/dev/null 2>&1 || true
     systemctl enable --now cloudflared-redgres.path >/dev/null 2>&1 || return 1
     systemctl enable --now redgres-tls-issue.path >/dev/null 2>&1 || return 1
     systemctl enable --now certbot.timer >/dev/null 2>&1 || true
