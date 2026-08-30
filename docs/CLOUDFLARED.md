@@ -1,6 +1,6 @@
 # Cloudflare Tunnel (cloudflared) wiring for Redgres
 
-Status: **OPS-009 Partial** — apply writes remote ingress + connector token; systemd units are in-repo. Installing the `cloudflared` package is still an operator step (not yet automated by `deploy/install.sh`). No live Cloudflare/`cloudflared` e2e evidence in CI.
+Status: **OPS-009 Partial** — `deploy/install.sh` live install and `/opt/redgres` update install the official `cloudflared` apt package ([pkg.cloudflare.com](https://pkg.cloudflare.com/) `any` suite), Redgres units, and enable `cloudflared-redgres.path`. Apply writes the connector token; the path unit starts the connector. No live Cloudflare/`cloudflared` e2e evidence in CI.
 
 Primary Cloudflare references:
 
@@ -46,14 +46,12 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8790/api/v1/healthz
 
 ### 2. Install cloudflared (official apt repo)
 
-Use Cloudflare’s package repository ([pkg.cloudflare.com](https://pkg.cloudflare.com/)). Prefer the **codename** matching your Ubuntu release (`noble` = 24.04, `jammy` = 22.04, `focal` = 20.04). The `any` suite also works on Debian-based systems.
-
-**Ubuntu 24.04 (noble):**
+`deploy/install.sh` live install and update do this. Official source is the **`any` suite** on [pkg.cloudflare.com](https://pkg.cloudflare.com/) (covers Ubuntu 24.04 and 26.04). The installer pins the apt Candidate version (same as other host packages).
 
 ```bash
 mkdir -p --mode=0755 /usr/share/keyrings
 curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
-echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared noble main' \
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' \
   | tee /etc/apt/sources.list.d/cloudflared.list
 apt-get update && apt-get install -y cloudflared
 command -v cloudflared
