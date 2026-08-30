@@ -47,6 +47,7 @@ type Server struct {
 	bootstrapCloser bootstrapCloser
 	tools           *toolgate.Memory
 	console         *toolgate.Origin
+	domainActivity  domainActivity
 }
 
 // bootstrapCloser is the optional first-run public listener (OPS-008).
