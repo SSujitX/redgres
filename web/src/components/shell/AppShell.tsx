@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { lookupDoc, navEntries, visibleNavEntries, type SectionId } from "../../nav";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
-import type { ToolLinks } from "../../api/auth";
+import type { ExpertToolsStatus, ToolLinks } from "../../api/auth";
 import { errorMessage, fetchStatus, isStatusPayload, type StatusComponent } from "../../api/status";
 import Icon from "../icons";
 import BrandLogo from "../BrandLogo";
@@ -17,12 +17,14 @@ type AppShellProps = {
   username: string;
   csrf: string;
   toolLinks: ToolLinks;
+  expertTools?: ExpertToolsStatus;
   version?: string;
   onLogout: () => void;
   onPasswordChanged: () => void;
   loggingOut: boolean;
 };
 
+const emptyExpertTools: ExpertToolsStatus = {};
 const NAV_GROUPS = ["Overview", "PostgreSQL", "Redis ACL", "Audit", "System", "Documentation"];
 const sessionExpired = "Your session has expired. Sign in again to continue.";
 const statusUnavailable = "Component status is unavailable. Try again.";
@@ -30,7 +32,7 @@ const HEALTH_COMPONENT_IDS: StatusComponent["id"][] = ["redgres_state", "postgre
 
 type AggregateHealthState = "loading" | "healthy" | "degraded" | "unavailable";
 
-export default function AppShell({ username, csrf, toolLinks, version, onLogout, onPasswordChanged, loggingOut }: AppShellProps) {
+export default function AppShell({ username, csrf, toolLinks, expertTools = emptyExpertTools, version, onLogout, onPasswordChanged, loggingOut }: AppShellProps) {
   const [section, setSection] = useState<SectionId>("overview");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [ownerOpen, setOwnerOpen] = useState(false);
@@ -327,6 +329,7 @@ export default function AppShell({ username, csrf, toolLinks, version, onLogout,
                 section={section}
                 csrf={csrf}
                 toolLinks={toolLinks}
+                expertTools={expertTools}
                 focusDatabase={focusDatabase}
                 focusUsername={focusUsername}
                 focusArticle={focusArticle}
