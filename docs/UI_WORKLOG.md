@@ -26,6 +26,8 @@ All capture screenshots live in `web/screenshots/` (Playwright, mocked `/api/v1/
 
 ## Changed in this pass
 
+- Domain wizard: API token vs OAuth chosen once; API-token apply never shows OAuth paste. Status copy says the installer enables the Ubuntu connector and apply starts it. TLS retry copy says the same API token is reused.
+
 - `web/src/styles/tokens.css` — accent palette, dark theme, typography, radii, elevation, motion.
 - `web/src/styles/globals.css` — typography, buttons, `.panel`, databases page.
 - `web/src/styles/shell.css` — sidebar/topbar/cards, nav section gaps (no left service lines on nav), domain page.
