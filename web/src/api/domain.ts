@@ -20,6 +20,7 @@ export type DomainStatusPayload = {
   credential?: "api_token" | "oauth" | "none";
   dns_provider?: string;
   bootstrap_still_open?: boolean;
+  tunnel_id?: string;
   request_id?: string;
 };
 
