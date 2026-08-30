@@ -19,10 +19,11 @@ describe("visibleNavEntries", () => {
     expect(visibleNavEntries("postgres").map((entry) => entry.id)).not.toContain("redis-presets");
   });
 
-  it("keeps Domain & Network visible in the System group", () => {
+  it("keeps Domain & Network and Expert tools visible in the System group", () => {
     const ids = visibleNavEntries("overview").map((entry) => entry.id);
     expect(ids).toContain("system");
     expect(ids).toContain("domain");
+    expect(ids).toContain("tools");
   });
 });
 

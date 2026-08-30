@@ -17,6 +17,7 @@ export type SectionId =
   | "audit"
   | "system"
   | "domain"
+  | "tools"
   | "docs";
 
 export type ServiceId = "postgres" | "redis";
@@ -30,6 +31,7 @@ export type NavIconId =
   | "sliders"
   | "audit"
   | "system"
+  | "tools"
   | "docs";
 
 export type NavEntry = {
@@ -51,6 +53,7 @@ export const navEntries: NavEntry[] = [
   { id: "audit", label: "Audit", group: "Audit", service: null, icon: "audit", nested: false },
   { id: "system", label: "System", group: "System", service: null, icon: "system", nested: false },
   { id: "domain", label: "Domain & Network", group: "System", service: null, icon: "shield", nested: false },
+  { id: "tools", label: "Expert tools", group: "System", service: null, icon: "tools", nested: false },
   { id: "docs", label: "Documentation", group: "Documentation", service: null, icon: "docs", nested: false },
 ];
 
