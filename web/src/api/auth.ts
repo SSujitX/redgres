@@ -5,10 +5,15 @@ export type ToolLinks = {
   redisinsight?: string;
 };
 
+export type ExpertToolsStatus = {
+  pgadmin_login?: boolean;
+};
+
 export type SessionPayload = {
   owner?: { username?: string };
   csrf_token?: string;
   tool_links?: ToolLinks;
+  expert_tools?: ExpertToolsStatus;
   version?: string;
 };
 
@@ -28,6 +33,18 @@ export function parseToolLinks(raw: unknown): ToolLinks {
   }
   if (typeof source.redisinsight === "string" && source.redisinsight !== "") {
     parsed.redisinsight = source.redisinsight;
+  }
+  return parsed;
+}
+
+export function parseExpertTools(raw: unknown): ExpertToolsStatus {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const source = raw as Record<string, unknown>;
+  const parsed: ExpertToolsStatus = {};
+  if (source.pgadmin_login === true) {
+    parsed.pgadmin_login = true;
   }
   return parsed;
 }
