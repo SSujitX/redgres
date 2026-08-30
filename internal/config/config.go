@@ -81,14 +81,15 @@ type Config struct {
 	RedisPublicPort     string
 	RedisExpectedSeries string
 
-	PgAdminURL              string
-	RedisInsightURL         string
-	PgAdminEmail            string
-	PgAdminPasswordFile     string
-	ToolGatePgAdminListen   string
-	ToolGatePgAdminUpstream string
-	ToolGateRedisListen     string
-	ToolGateRedisUpstream   string
+	PgAdminURL                string
+	RedisInsightURL           string
+	PgAdminEmail              string
+	PgAdminPasswordFile       string
+	PgAdminMasterPasswordFile string
+	ToolGatePgAdminListen     string
+	ToolGatePgAdminUpstream   string
+	ToolGateRedisListen       string
+	ToolGateRedisUpstream     string
 
 	FeaturePostgresRowDelete bool
 	FeaturePostgresTruncate  bool
