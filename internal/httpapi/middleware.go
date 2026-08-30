@@ -58,7 +58,7 @@ func credentialBearingRequest(r *http.Request) bool {
 		return false
 	}
 	switch path {
-	case "/api/v1/auth/login", "/api/v1/auth/password", "/api/v1/redis/users", "/api/v1/postgres/databases":
+	case "/api/v1/auth/login", "/api/v1/auth/password", "/api/v1/redis/users", "/api/v1/postgres/databases", "/api/v1/tools/pgadmin/credentials/reveal":
 		return true
 	}
 	if strings.HasPrefix(path, "/api/v1/redis/users/") {
@@ -68,6 +68,9 @@ func credentialBearingRequest(r *http.Request) bool {
 		return strings.HasSuffix(path, "/connection/reveal") ||
 			strings.HasSuffix(path, "/credentials/rotate") ||
 			strings.HasSuffix(path, "/duplicate")
+	}
+	if strings.HasPrefix(path, "/api/v1/tools/") {
+		return strings.HasSuffix(path, "/launch") || strings.HasSuffix(path, "/credentials/reveal")
 	}
 	return false
 }
