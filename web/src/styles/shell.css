@@ -362,6 +362,25 @@
   padding: var(--space-5);
 }
 
+.expert-tool-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.expert-tool-card-head > h3 {
+  margin: 0;
+}
+
+.expert-tool-card-head > p {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
 .expert-tool-card > h3 {
   margin: 0;
 }
