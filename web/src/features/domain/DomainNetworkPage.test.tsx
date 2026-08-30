@@ -248,8 +248,8 @@ describe("DomainNetworkPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply domain" }));
 
     expect(await screen.findByRole("heading", { name: "Apply result" })).toBeInTheDocument();
-    expect(screen.getByText("tun-1")).toBeInTheDocument();
-    expect(screen.getByText(/not a secret token/i)).toBeInTheDocument();
+    expect(screen.getAllByText("tun-1").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/not a secret token/i).length).toBeGreaterThanOrEqual(1);
     const applyResult = screen.getByRole("heading", { name: "Apply result" }).closest("section");
     expect(applyResult).not.toBeNull();
     expect(within(applyResult as HTMLElement).getByText(/Deny by default/)).toBeInTheDocument();
@@ -257,6 +257,10 @@ describe("DomainNetworkPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Yes")).toBeInTheDocument();
     });
+    const statusAfterApply = screen.getByRole("heading", { name: "Status" }).closest("section");
+    expect(statusAfterApply).not.toBeNull();
+    expect(within(statusAfterApply as HTMLElement).getByText(/belongs on the Ubuntu server/)).toBeInTheDocument();
+    expect(within(statusAfterApply as HTMLElement).getByText(/Add an Access allow policy first/)).toBeInTheDocument();
     expect(screen.queryByLabelText("API token")).not.toBeInTheDocument();
   });
 
@@ -386,6 +390,66 @@ describe("DomainNetworkPage", () => {
     expect(screen.queryByRole("button", { name: "Console is reachable — close bootstrap" })).not.toBeInTheDocument();
   });
 
+  it("keeps Apply result access in sync after allow policy", async () => {
+    let configured = false;
+    let access = "deny_by_default";
+    const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/domain" && (!init || !init.method || init.method === "GET")) {
+        if (!configured) {
+          return jsonResponse(200, { configured: false, request_id: "r1" });
+        }
+        return jsonResponse(200, {
+          configured: true,
+          zone: "example.com",
+          hostname: "console.example.com",
+          tunnel_id: "tun-1",
+          access,
+          bootstrap_still_open: true,
+          request_id: "r4",
+        });
+      }
+      if (url === "/api/v1/domain/apply") {
+        configured = true;
+        return jsonResponse(200, {
+          zone: "example.com",
+          hostname: "console.example.com",
+          tunnel_id: "tun-1",
+          bootstrap_still_open: true,
+          access: "deny_by_default",
+          request_id: "r2",
+        });
+      }
+      if (url === "/api/v1/domain/access-policy") {
+        access = "allow";
+        return jsonResponse(200, { ok: true, access: "allow", bootstrap_still_open: true, request_id: "r3" });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
+    await screen.findByText("No");
+    fireEvent.change(screen.getByLabelText("Zone"), { target: { value: "example.com" } });
+    fireEvent.change(screen.getByPlaceholderText("203.0.113.10"), { target: { value: "203.0.113.10" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply domain" }));
+    expect(await screen.findByRole("heading", { name: "Apply result" })).toBeInTheDocument();
+    expect(within(screen.getByRole("heading", { name: "Apply result" }).closest("section") as HTMLElement).getByText(/Deny by default/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Allowed email 1"), { target: { value: "owner@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Access allow policy" }));
+
+    expect((await screen.findAllByText("Allow policy configured")).length).toBeGreaterThanOrEqual(1);
+    const applyResult = screen.getByRole("heading", { name: "Apply result" }).closest("section");
+    expect(applyResult).not.toBeNull();
+    expect(within(applyResult as HTMLElement).getByText("Allow policy configured")).toBeInTheDocument();
+    expect(within(applyResult as HTMLElement).queryByText(/Deny by default/)).not.toBeInTheDocument();
+    expect(within(applyResult as HTMLElement).getByText("tun-1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(screen.queryByText(/Deny by default/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("Allow policy configured").length).toBeGreaterThanOrEqual(1);
+  });
+
   it("completes manual DNS wizard through confirm-access to close bootstrap", async () => {
     let configured = false;
     let access: string | undefined;
@@ -459,7 +523,49 @@ describe("DomainNetworkPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Access configured manually" }));
 
-    expect(await screen.findByText("Allow policy configured")).toBeInTheDocument();
+    expect((await screen.findAllByText("Allow policy configured")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("button", { name: "Console is reachable — close bootstrap" })).toBeInTheDocument();
+  });
+
+  it("does not ask for OAuth after an API-token apply", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(200, {
+          configured: true,
+          zone: "example.com",
+          hostname: "console.example.com",
+          credential: "api_token",
+          access: "allow",
+          bootstrap_still_open: true,
+          tls: { db: "not_issued", rs: "not_issued" },
+          request_id: "r1",
+        }),
+      ),
+    );
+    render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
+    const statusSection = await screen.findByRole("heading", { name: "Status" });
+    expect(within(statusSection.closest("section") as HTMLElement).getByText("API token")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Console is reachable — close bootstrap" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Connect Cloudflare OAuth/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("OAuth client ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("OAuth client secret")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect Cloudflare" })).not.toBeInTheDocument();
+  });
+
+  it("lets the owner choose API token once and hides OAuth fields", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(200, { configured: false, request_id: "r1" })),
+    );
+    render(<DomainNetworkPage csrf={"csrf".padEnd(64, "0")} />);
+    expect(await screen.findByLabelText("API token")).toBeInTheDocument();
+    expect(screen.getByLabelText(/API token — paste once/i)).toBeChecked();
+    expect(screen.queryByLabelText("OAuth client ID")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/OAuth — after the console hostname is live/i));
+    expect(screen.queryByLabelText("API token")).not.toBeInTheDocument();
+    expect(screen.getAllByText(/cannot add the domain from this bootstrap URL/i).length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(screen.getByLabelText(/API token — paste once/i));
+    expect(screen.getByLabelText("API token")).toBeInTheDocument();
   });
 });
