@@ -17,6 +17,8 @@ REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token
 REDGRES_CLOUDFLARE_OAUTH_CLIENT_FILE=/var/lib/redgres/secrets/cloudflare-oauth-client.json
 REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-oauth-token.json
 REDGRES_CERTBOT_DNS_TOKEN_FILE=/var/lib/redgres/secrets/certbot-dns.ini
+REDGRES_TLS_ISSUE_REQUEST_FILE=/var/lib/redgres/tls-issue.request
+REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result
 EOF
 }
 
