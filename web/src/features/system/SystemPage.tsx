@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ToolLinks } from "../../api/auth";
+import type { ExpertToolsStatus, ToolLinks } from "../../api/auth";
 import { errorMessage, fetchStatus, isStatusPayload, type StatusComponent } from "../../api/status";
 import ExpertToolsSection from "./ExpertToolsSection";
 
@@ -49,7 +49,15 @@ function indexById(components: StatusComponent[]): Map<string, StatusComponent> 
   return out;
 }
 
-export default function SystemPage({ csrf = "", toolLinks = {} }: { csrf?: string; toolLinks?: ToolLinks }) {
+export default function SystemPage({
+  csrf = "",
+  toolLinks = {},
+  expertTools = {},
+}: {
+  csrf?: string;
+  toolLinks?: ToolLinks;
+  expertTools?: ExpertToolsStatus;
+}) {
   const [components, setComponents] = useState<StatusComponent[] | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -115,7 +123,7 @@ export default function SystemPage({ csrf = "", toolLinks = {} }: { csrf?: strin
             <h1>System</h1>
             <p>
               Component status for Redgres, PostgreSQL, PgBouncer, Redis, and tool links. Open pgAdmin and RedisInsight
-              from Expert tools.
+              from Expert tools below — Domain & Network never shows those logins.
             </p>
           </div>
           <button type="button" className="text-button" onClick={refresh}>
@@ -163,7 +171,13 @@ export default function SystemPage({ csrf = "", toolLinks = {} }: { csrf?: strin
           })}
         </ul>
       ) : null}
-      <ExpertToolsSection csrf={csrf} toolLinks={toolLinks} variant="full" refreshNonce={refreshNonce} />
+      <ExpertToolsSection
+        csrf={csrf}
+        toolLinks={toolLinks}
+        expertTools={expertTools}
+        variant="full"
+        refreshNonce={refreshNonce}
+      />
     </article>
   );
 }
