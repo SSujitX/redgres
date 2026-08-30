@@ -85,3 +85,38 @@ func TestCreateOwnerGeneratePasswordFifo(t *testing.T) {
 		t.Fatalf("generated password does not verify: %v", err)
 	}
 }
+
+func TestCreateOwnerGeneratePasswordFifoWithoutTTY(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redgres.db")
+	fifo := filepath.Join(t.TempDir(), "owner.fifo")
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	openOwnerTTY = func() (*os.File, error) { return nil, os.ErrNotExist }
+	generateOwnerPassword = func() (string, error) { return "generated-owner-password-2", nil }
+	t.Cleanup(func() {
+		openOwnerTTY = func() (*os.File, error) { return os.OpenFile("/dev/tty", os.O_WRONLY, 0) }
+		generateOwnerPassword = auth.GeneratePassword
+	})
+	gotCh := make(chan string, 1)
+	go func() {
+		f, err := os.OpenFile(fifo, os.O_RDONLY, 0)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer f.Close()
+		b, err := io.ReadAll(f)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		gotCh <- string(b)
+	}()
+	if err := createOwner([]string{"-username", "admin", "-sqlite-path", path, "-generate", "-password-fifo", fifo}); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-gotCh; got != "generated-owner-password-2\n" {
+		t.Fatalf("fifo = %q", got)
+	}
+}

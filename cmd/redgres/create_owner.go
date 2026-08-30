@@ -47,12 +47,15 @@ func createOwner(args []string) error {
 	var password string
 	var generatedTTY *os.File
 	if *generate {
-		tty, err := openOwnerTTY()
-		if err != nil {
-			return errors.New("create-owner --generate requires a controlling terminal")
+		if *passwordFifo == "" {
+			tty, err := openOwnerTTY()
+			if err != nil {
+				return errors.New("create-owner --generate requires a controlling terminal")
+			}
+			generatedTTY = tty
+			defer tty.Close()
 		}
-		generatedTTY = tty
-		defer tty.Close()
+		var err error
 		password, err = generateOwnerPassword()
 		if err != nil {
 			return err
