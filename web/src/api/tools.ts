@@ -10,6 +10,7 @@ export type ToolLaunchPayload = {
 export type PgAdminRevealPayload = {
   email?: string;
   password?: string;
+  master_password?: string;
   request_id?: string;
 };
 
