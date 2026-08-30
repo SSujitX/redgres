@@ -88,6 +88,7 @@ if ! "${CERTBOT}" certonly \
   --register-unsafely-without-email \
   --dns-cloudflare \
   --dns-cloudflare-credentials "${CREDS}" \
+  --dns-cloudflare-propagation-seconds 60 \
   "${args[@]}"; then
   fail
 fi
