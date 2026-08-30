@@ -21,9 +21,9 @@ Cloudflare, the VPS provider, OS root, and backup administrator are privileged t
 
 | Threat | Required controls |
 |---|---|
-| Credential theft from response/cache/history | POST-only reveal/issue, `no-store`, no-referrer, no URL secrets, frontend memory clearing, Access + app auth |
+| Credential theft from response/cache/history | POST-only reveal/issue, `no-store`, no-referrer, no URL secrets (exception: one-time `?ticket=` on the expert-tool hostname only; 60s, hashed at rest, not logged or audited), frontend memory clearing, Access + app auth |
 | Session theft/fixation | 256-bit random opaque tokens, hash-at-rest, regenerate on login, idle+absolute expiry, Secure/HttpOnly/SameSite Strict, logout deletion |
-| CSRF | Same-origin Origin/Referer validation plus per-session CSRF token for all mutations. `GET /api/v1/session` rotates the CSRF hash. The UI retries a mutation once after `403` `csrf_invalid` **CSRF token is invalid** by refreshing `/session` and sending the new header; **Origin check failed** is not retried. The shell CSRF copy may stay stale; the next mutation uses the same one-shot refresh. |
+| CSRF | Same-origin Origin/Referer validation plus per-session CSRF token for all mutations. Login and mutations accept `REDGRES_BASE_URL` and, when Domain apply has persisted a console hostname, `https://{console}`. That covers the bootstrap window when the file still has `:8989` but the owner is already on the tunneled hostname. `GET /api/v1/session` rotates the CSRF hash. The UI retries a mutation once after `403` `csrf_invalid` **CSRF token is invalid** by refreshing `/session` and sending the new header; **Origin check failed** is not retried. The shell CSRF copy may stay stale; the next mutation uses the same one-shot refresh. |
 | Brute force | Argon2id (in-process serialized to one hash), generic login errors, fail-closed persistent username+effective-IP throttling (5 failures / 15m, exponential then 15m cap; failure reserved before hash), 20-failure/15m IP-wide spray lockout only for non-loopback identity, separate persistent reauth throttling, bounded attempt retention, Cloudflare Access/rate controls |
 | SQL injection/identifier confusion | Parameterized values, `pgx.Identifier`/quoted identifiers, strict normalized identifiers, no arbitrary SQL endpoint |
 | Redis privilege escalation | Dedicated ACL admin, protected users, one prefix, `-@all`, explicit command allow-list, no generic command API |
@@ -35,7 +35,7 @@ Cloudflare, the VPS provider, OS root, and backup administrator are privileged t
 | Backup theft or unusable backup | root-only local permissions, encryption off-host/in transit, checksums, retention, periodic isolated restore |
 | Vault incompatibility/key loss | Immutable legacy secret backup, compatibility vectors, copied-record dry run, no in-place conversion during cutover |
 | Cross-site scripting | React escaping, no unsafe HTML by default, self-only CSP, no external runtime script/font CDN |
-| SSRF | No arbitrary connection tester/URL fetch endpoint; admin endpoints come only from trusted server config. Optional `REDGRES_PGADMIN_URL` / `REDGRES_REDISINSIGHT_URL` are operator-configured hrefs returned on GET `/session` only; Load and GET `/status` never fetch, ping, proxy, or embed them. |
+| SSRF | No arbitrary connection tester/URL fetch endpoint; admin endpoints come only from trusted server config. Optional `REDGRES_PGADMIN_URL` / `REDGRES_REDISINSIGHT_URL` are operator-configured public hostnames returned on GET `/session` only; Load and GET `/status` never fetch, ping, proxy, or embed them. Opening uses `POST /api/v1/tools/{tool}/launch` (session + CSRF + `platform.network`). A loopback tool gate on the Tunnel origin ports reverse-proxies to the container after a one-time ticket; Redgres does not proxy or iframe those tools on the console origin ([ADR-014](decisions/ADR-014-expert-tool-launch.md)). |
 
 `rediss` administrator URLs that set go-redis `skip_verify` so TLS `InsecureSkipVerify` is true are rejected in every environment; the error names `REDGRES_REDIS_ADMIN_URL_FILE` and never includes the URL or password.
 
