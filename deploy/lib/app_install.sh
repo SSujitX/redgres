@@ -521,6 +521,7 @@ redgres_install_domain_runtime() {
   if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || return 1
     systemctl disable --now cloudflared.service >/dev/null 2>&1 || true
+    systemctl enable cloudflared-redgres.service >/dev/null 2>&1 || return 1
     systemctl enable --now cloudflared-redgres.path >/dev/null 2>&1 || return 1
     systemctl enable --now redgres-tls-issue.path >/dev/null 2>&1 || return 1
     systemctl enable --now certbot.timer >/dev/null 2>&1 || true
