@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -64,6 +65,62 @@ func authed(method, path, cookie, csrf, body string) *http.Request {
 	req.Header.Set("Origin", "http://127.0.0.1:8790")
 	req.Header.Set("Content-Type", "application/json")
 	return req
+}
+
+func TestLoginAcceptsConfiguredConsoleOrigin(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	srv.cfg.BaseURL = "http://203.0.113.10:8989"
+	srv.cfg.BootstrapAddress = "0.0.0.0:8989"
+	if err := (domainStore{srv.db}).Save(context.Background(), deployment{
+		ZoneName:        "example.com",
+		ConsoleHostname: "console.example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler := srv.Handler()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"`+ownerPassword+`"}`))
+	req.Header.Set("Origin", "https://console.example.com")
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "127.0.0.1:12345"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("console origin = %d %s", rec.Code, rec.Body.String())
+	}
+
+	evil := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"`+ownerPassword+`"}`))
+	evil.Header.Set("Origin", "https://evil.example")
+	evil.Header.Set("Content-Type", "application/json")
+	evil.RemoteAddr = "127.0.0.1:12345"
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, evil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("evil origin = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLoginRejectsInvalidStoredConsoleHostname(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	seedOwner(t, srv)
+	srv.cfg.BaseURL = "http://203.0.113.10:8989"
+	srv.cfg.BootstrapAddress = "0.0.0.0:8989"
+	if err := (domainStore{srv.db}).Save(context.Background(), deployment{
+		ZoneName:        "example.com",
+		ConsoleHostname: "not a host",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"`+ownerPassword+`"}`))
+	req.Header.Set("Origin", "https://not a host")
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "127.0.0.1:12345"
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("invalid stored host origin = %d %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestLoginSetsCookieFlags(t *testing.T) {

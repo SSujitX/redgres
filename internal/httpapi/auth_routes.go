@@ -80,7 +80,7 @@ func (s *Server) requireCapability(name string) func(http.Handler) http.Handler 
 
 func (s *Server) requireMutation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !auth.SameOrigin(r.Header.Get("Origin"), r.Header.Get("Referer"), s.cfg.BaseURL) {
+		if !s.originAllowed(r) {
 			s.writeError(w, r, http.StatusForbidden, CodeCSRFInvalid, originFailedMessage)
 			return
 		}
@@ -113,7 +113,7 @@ func (s *Server) writeLoginRateLimited(w http.ResponseWriter, r *http.Request, r
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if !auth.SameOrigin(r.Header.Get("Origin"), r.Header.Get("Referer"), s.cfg.BaseURL) {
+	if !s.originAllowed(r) {
 		s.writeError(w, r, http.StatusForbidden, CodeCSRFInvalid, originFailedMessage)
 		return
 	}
