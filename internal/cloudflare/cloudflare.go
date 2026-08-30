@@ -231,7 +231,12 @@ func tunnelOrphan(item tunnelListItem) bool {
 	if item.ID == "" || len(item.Connections) > 0 {
 		return false
 	}
-	return strings.EqualFold(item.Status, "inactive") || item.Status == ""
+	switch strings.ToLower(item.Status) {
+	case "inactive", "down", "":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *HTTPClient) deleteOrphanTunnelByName(ctx context.Context, accountID, name string) error {
@@ -276,6 +281,10 @@ func (c *HTTPClient) createTunnelOnce(ctx context.Context, accountID, name strin
 }
 
 func isTunnelNameConflict(err error) bool {
+	return isAlreadyExists(err)
+}
+
+func isAlreadyExists(err error) bool {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		return false
@@ -283,7 +292,8 @@ func isTunnelNameConflict(err error) bool {
 	if apiErr.StatusCode == http.StatusConflict {
 		return true
 	}
-	return strings.Contains(strings.ToLower(apiErr.Message), "already exists")
+	msg := strings.ToLower(apiErr.Message)
+	return strings.Contains(msg, "already exists") || strings.Contains(msg, "already been taken") || apiErr.Code == 81053
 }
 
 // IngressRoute is one hostname → loopback HTTP service pair for tunnel ingress.
@@ -338,7 +348,7 @@ func OriginHTTPService(listenAddr string) (string, error) {
 // DeleteTunnel deletes a tunnel.
 func (c *HTTPClient) DeleteTunnel(ctx context.Context, accountID, tunnelID string) error {
 	var result any
-	return c.call(ctx, http.MethodDelete, "/accounts/"+accountID+"/cfd_tunnel/"+tunnelID, nil, &result)
+	return c.call(ctx, http.MethodDelete, "/accounts/"+accountID+"/cfd_tunnel/"+tunnelID+"?cascade=true", nil, &result)
 }
 
 // VerifyTunnel checks a tunnel still exists.
@@ -378,9 +388,48 @@ func (c *HTTPClient) CreateDNSRecord(ctx context.Context, zoneID, name, recordTy
 		"ttl":     1,
 	}
 	if err := c.call(ctx, http.MethodPost, "/zones/"+zoneID+"/dns_records", body, &result); err != nil {
-		return Record{}, err
+		if !isAlreadyExists(err) {
+			return Record{}, err
+		}
+		if delErr := c.deleteDNSRecordsByNameType(ctx, zoneID, name, recordType); delErr != nil {
+			return Record{}, err
+		}
+		if err := c.call(ctx, http.MethodPost, "/zones/"+zoneID+"/dns_records", body, &result); err != nil {
+			return Record{}, err
+		}
 	}
 	return Record{ID: result.ID, Name: result.Name, Type: recordType, Proxied: proxied}, nil
+}
+
+func (c *HTTPClient) deleteDNSRecordsByNameType(ctx context.Context, zoneID, name, recordType string) error {
+	var result []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	path := "/zones/" + zoneID + "/dns_records?name=" + url.QueryEscape(name) + "&type=" + url.QueryEscape(recordType)
+	if err := c.call(ctx, http.MethodGet, path, nil, &result); err != nil {
+		return err
+	}
+	deleted := 0
+	var lastErr error
+	for _, rec := range result {
+		if rec.ID == "" {
+			continue
+		}
+		if err := c.DeleteRecord(ctx, zoneID, rec.ID); err != nil {
+			lastErr = err
+			continue
+		}
+		deleted++
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	if deleted == 0 {
+		return errors.New("dns record already exists but no matching record was listed")
+	}
+	return nil
 }
 
 // DeleteRecord deletes a DNS record.
@@ -406,9 +455,62 @@ func (c *HTTPClient) CreateAccessApp(ctx context.Context, accountID, domain stri
 	}
 	body := map[string]string{"name": domain, "domain": domain, "type": "self_hosted"}
 	if err := c.call(ctx, http.MethodPost, "/accounts/"+accountID+"/access/apps", body, &result); err != nil {
-		return AccessApp{}, err
+		if !isAlreadyExists(err) {
+			return AccessApp{}, err
+		}
+		if delErr := c.deleteAccessAppsByDomain(ctx, accountID, domain); delErr != nil {
+			return AccessApp{}, err
+		}
+		if err := c.call(ctx, http.MethodPost, "/accounts/"+accountID+"/access/apps", body, &result); err != nil {
+			return AccessApp{}, err
+		}
 	}
 	return AccessApp{ID: result.ID, Domain: result.Domain}, nil
+}
+
+func (c *HTTPClient) deleteAccessAppsByDomain(ctx context.Context, accountID, domain string) error {
+	var result []struct {
+		ID     string `json:"id"`
+		Domain string `json:"domain"`
+		Name   string `json:"name"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/accounts/"+accountID+"/access/apps", nil, &result); err != nil {
+		return err
+	}
+	deleted := 0
+	var lastErr error
+	for _, app := range result {
+		if app.ID == "" {
+			continue
+		}
+		if !accessAppMatchesDomain(app.Domain, app.Name, domain) {
+			continue
+		}
+		if err := c.DeleteAccessApp(ctx, accountID, app.ID); err != nil {
+			lastErr = err
+			continue
+		}
+		deleted++
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	if deleted == 0 {
+		return errors.New("access app already exists but no matching app was listed")
+	}
+	return nil
+}
+
+func accessAppMatchesDomain(appDomain, appName, domain string) bool {
+	want := normalizeAccessDomain(domain)
+	return normalizeAccessDomain(appDomain) == want || normalizeAccessDomain(appName) == want
+}
+
+func normalizeAccessDomain(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	return strings.TrimSuffix(value, "/")
 }
 
 // CreateAccessPolicy attaches an allow policy for exact emails to an Access app.
