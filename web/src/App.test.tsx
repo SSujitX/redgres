@@ -730,6 +730,11 @@ function goToSystem() {
   fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "System" }));
 }
 
+function goToExpertTools() {
+  fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Expert tools" }));
+}
+
 function fillDeleteRowsDialog(dialog: HTMLElement, table = "items", password = "owner-secret-15") {
   fireEvent.change(within(dialog).getByLabelText("Confirm table name"), { target: { value: table } });
   fireEvent.change(within(dialog).getByLabelText("Owner password"), { target: { value: password } });
@@ -12912,6 +12917,36 @@ describe("System status page", () => {
     expect(screen.getByRole("button", { name: "Open RedisInsight" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
+  });
+
+  it("opens Expert tools from the System group with Reveal", async () => {
+    stubFetch((url) => {
+      if (url.includes("/api/v1/session")) {
+        return jsonResponse(200, {
+          owner: { username: "admin" },
+          csrf_token: "tools-nav".padEnd(64, "0"),
+          tool_links: {
+            pgadmin: "https://pgadmin.example.com",
+            redisinsight: "https://redis-insight.example.com",
+          },
+          expert_tools: { pgadmin_login: true },
+        });
+      }
+      if (isStatusUrl(url)) {
+        return toolLinksOkStatus();
+      }
+      if (url === "/api/v1/audit" || url.startsWith("/api/v1/audit?")) {
+        return jsonResponse(200, { events: [], has_more: false, limit: 8 });
+      }
+      return unknownApi(url);
+    });
+    render(<App />);
+    await landOnOverview();
+    goToExpertTools();
+    expect(await screen.findByRole("heading", { name: "Expert tools", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reveal pgAdmin login" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Open pgAdmin" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open RedisInsight" })).toBeInTheDocument();
   });
 
   it("GETs one additional /api/v1/status with no CSRF or query and no extra Redis metrics", async () => {
