@@ -17,7 +17,9 @@
 - **Cloudflare Access** — identity/access policy in front of browser applications.
 - **DNS-only** — Cloudflare DNS record that resolves directly to the server; traffic is not HTTP-proxied by Cloudflare.
 - **One-time credential** — secret returned on create/rotate and not persistently recoverable from Redgres (Redis).
-- **Revealable credential** — PostgreSQL project secret intentionally encrypted in the vault and returned only by explicit reveal.
+- **Revealable credential** — PostgreSQL project secret intentionally encrypted in the vault and returned only by explicit reveal. pgAdmin login from the server password file uses the same UI pattern.
+- **Expert tool** — optional pgAdmin or RedisInsight instance. Opened from the signed-in Redgres UI via a one-time launch ticket; not a standalone Redgres session.
+- **Tool gate** — loopback reverse proxy in `redgres serve` that consumes a launch ticket and then proxies the expert-tool container.
 - **RPO** — maximum accepted data loss measured in time.
 - **RTO** — target time to restore service.
 - **Parity** — required source behavior reproduced and proven by tests, not similarity of UI/code.
