@@ -11,6 +11,7 @@
 | `/etc/redgres` | Non-secret service configuration | World-readable secrets |
 | `/etc/redgres/secrets` | Root-protected token/admin credential files | Application logs or backups without encryption |
 | `/var/backups/redgres` | Consistent backup sets, checksums, manifests | Unencrypted off-host transport credentials |
+| `/var/lib/redgres-tls` | Root-owned TLS result/cooldown, active request, cleanup acknowledgement, and Certbot renewal credential snapshot | Application-writable state or raw diagnostic output |
 
 ## Secret classes
 
@@ -23,7 +24,7 @@
 7. Redis project passwords: shown only on create/rotate, not persisted by Redgres. DELETE `/api/v1/redis/users/{username}` request body `owner_password` is the Redgres owner password for AUTH-006 reauth; it is never logged, audited, cached, persisted, or returned. DELETE `/api/v1/postgres/databases/{db}/tables/{schema}/{table}/rows` request body `owner_password` is the same owner password class; it is never logged, audited, cached, persisted, or returned. POST `/api/v1/postgres/databases/{db}/truncate` request body `owner_password` is the same owner password class; it is never logged, audited, cached, persisted, or returned. DELETE `/api/v1/postgres/databases/{db}` request body `owner_password` is the same owner password class; it is never logged, audited, cached, persisted, or returned. `primary_key_values` are not secrets but must not appear in audit metadata.
 8. Cloudflare tunnel token: root-owned bearer token file.
 9. Cloudflare OAuth access/refresh tokens: root-owned; issued by the self-created minimal-scope OAuth app (or a per-zone API token as fallback); authorize the DNS/TLS/tunnel/Access API calls. Never in SQLite, browser storage, logs, or audit.
-10. Cloudflare Certbot DNS token: separate least-privilege root-owned file; used for the Let's Encrypt DNS-01 challenge when not covered by the OAuth `dns.write` scope.
+10. Cloudflare Certbot DNS token: the app writes `/var/lib/redgres/secrets/certbot-dns.ini`; the fixed root helper validates it with no-follow/bounded reads and atomically snapshots only the strict token line to `/var/lib/redgres-tls/certbot-dns.ini` (`root:root 0600`) for Certbot renewal. A normal issue/reuse refreshes the snapshot. Domain disconnect deletes the root snapshot after acknowledged cleanup but preserves the certificate lineage/cooldown; full uninstall deletes both.
 11. TLS private keys: readable only by root and the exact service group where necessary.
 12. Backup encryption/off-host credentials: isolated from application runtime where practical.
 13. Expert-tool launch tickets and tool-session cookies: process-local SHA-256 hashes only; raw ticket is one-time (60s) in `launch_url` query and is not logged or audited. pgAdmin login password lives in `REDGRES_PGADMIN_PASSWORD_FILE`. The generated master-password key lives in `REDGRES_PGADMIN_MASTER_PASSWORD_FILE` and is supplied to pgAdmin only through official `MASTER_PASSWORD_HOOK`. Both are revealed only by POST reveal (`no-store`); never on GET `/session`. The install finish box prints them once on a TTY (or test TTY sink) and never to installer logs.
@@ -115,6 +116,9 @@ Recommended:
 /var/lib/redgres/secrets/cloudflare-oauth-client.json redgres:redgres 0600
 /var/lib/redgres/secrets/cloudflare-oauth-token.json  redgres:redgres 0600
 /var/lib/redgres/secrets/certbot-dns.ini          redgres:redgres 0600
+/var/lib/redgres-tls/certbot-dns.ini              root:root       0600
+/var/lib/redgres-tls/issue.result                 root:root       0644
+/var/lib/redgres-tls/cleanup.result               root:root       0644
 ```
 
 If systemd runs as `redgres`, root-only secret files cannot be read directly after privilege drop. Prefer systemd credentials (`LoadCredential=`) or a narrowly permissioned `root:redgres 0640` application secret file. The implementation must choose and document one coherent mechanism; do not publish an impossible permission model.

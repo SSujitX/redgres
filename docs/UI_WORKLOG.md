@@ -28,7 +28,7 @@ All capture screenshots live in `web/screenshots/` (Playwright, mocked `/api/v1/
 
 - Sidebar System group: always-visible **Expert tools** page (Open + Reveal login and master password). Installer generates a master-password file and official `MASTER_PASSWORD_HOOK`. Finish box shows TTY-only pgAdmin login + master.
 
-- Domain & Network: secret-safe apply/access/TLS/confirm activity list (GET `/domain` `activity`, poll while in flight). Disconnect sits in a **Remove this domain** danger zone with page gaps (`--space-6` / `--space-4`). Header Refresh uses the shared header row. Tokens, emails, and raw errors are dropped client-side if a label is not allow-listed.
+- Domain & Network: compact secret-safe apply/access/TLS/confirm activity log (GET `/domain` `activity`, poll while in flight). TLS failures render only an allow-listed reason and optional retry time; a prepared Redis certificate is not mislabeled as applied TLS. Status facts use denser responsive columns; TLS/close-bootstrap actions share available width. Disconnect stays in a separate **Remove this domain** danger zone and exposes a retryable pending-cleanup state. Tokens, emails, hostnames, and raw errors are dropped client-side.
 
 - System **Expert tools** section: always shows both cards with Ready / Waiting for Domain. Open via POST launch; Reveal when `expert_tools.pgadmin_login`. Overview tool card uses the same Open buttons (no raw hrefs). Wider card padding, 44px buttons with 16px gaps, header Refresh in a row. Recent tool activity uses compact GET `/audit?limit=8` (client filter to tool actions; 8s poll while visible; no request IDs/secrets).
 
@@ -46,7 +46,6 @@ All capture screenshots live in `web/screenshots/` (Playwright, mocked `/api/v1/
 - `web/src/components/shell/AppShell.tsx` — theme toggle in topbar, logo→home button, footer version pill.
 - `internal/version/version.go` (+ test) — build-time release version, exposed on `/api/v1/session` (`auth_routes.go` + test).
 
-## Pre-existing failures (not caused by UI work)
+## Known browser-harness limitation
 
-- vitest: 2 in `web/src/App.test.tsx` (shell status re-fetch on nav vs mount-only expectation; from commit `6416f9c`).
-- e2e: 2 in `e2e/domain-wizard.spec.ts` (route interception/backend-dependent at :8790).
+- e2e: 2 in `e2e/domain-wizard.spec.ts` remain backend-dependent at `:8790`; component/API contract coverage is retained, but this is not live Access/TLS evidence.

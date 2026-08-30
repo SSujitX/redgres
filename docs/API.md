@@ -298,7 +298,7 @@ All require a session cookie and the `platform.network` capability; mutations al
 | POST | `/api/v1/domain/oauth-client` | Store OAuth `{client_id, client_secret}` |
 | POST | `/api/v1/domain/oauth/start` | PKCE start → `{authorize_url, redirect_uri, scopes}` |
 | GET | `/api/v1/domain/oauth/callback` | OAuth callback (session); redirects to `/` |
-| POST | `/api/v1/domain/tls/issue` | certbot DNS-01 for db + redis hostnames |
+| POST | `/api/v1/domain/tls/issue` | certbot DNS-01 for db + rs hostnames |
 | POST | `/api/v1/domain/manual/verify` | Public DNS check for manual mode db/redis |
 | POST | `/api/v1/domain/manual/confirm-access` | Operator attests manual Access configured (manual DNS only) |
 | POST | `/api/v1/domain/confirm-reachable` | Close bootstrap; optional UFW helper |
@@ -313,12 +313,12 @@ All require a session cookie and the `platform.network` capability; mutations al
   "hostnames": {
     "console": "console.example.com",
     "db": "db.example.com",
-    "redis": "redis.example.com"
+    "rs": "rs.example.com"
   }
 }
 ```
 
-Defaults: `console.<zone>`, `db.<zone>`, `redis.<zone>`. Creates proxied CNAME for console, DNS-only **A or AAAA** (one record type per origin IP) for db/redis, deny-by-default Access app. When `REDGRES_CERTBOT_DNS_TOKEN_FILE` is set, apply writes certbot-dns-cloudflare credentials from the stored API token (`0600`, never returned) and, when `REDGRES_TLS_ISSUE_REQUEST_FILE` is set, queues hostnames-only TLS issue. Success includes `hostnames`, `origin_ip`, `tls`, `access: deny_by_default`, `bootstrap_still_open: true`.
+Defaults: `console.<zone>`, `db.<zone>`, `rs.<zone>`. Creates proxied CNAME for console, DNS-only **A or AAAA** (one record type per origin IP) for db/rs, deny-by-default Access app. Apply durably saves the deployment before dispatching the hostnames-only TLS request, so a queue failure remains retryable through GET/TLS issue/disconnect. Success includes `hostnames`, `origin_ip`, `tls`, `access: deny_by_default`, `bootstrap_still_open: true`.
 
 GET `/api/v1/domain` may include `activity` while a Domain mutation is running and after it finishes (cleared on successful disconnect):
 
@@ -328,18 +328,23 @@ GET `/api/v1/domain` may include `activity` while a Domain mutation is running a
   "in_progress": true,
   "steps": [
     { "id": "discover_zone", "label": "Looking up the zone", "state": "done" },
-    { "id": "create_tunnel", "label": "Creating the tunnel", "state": "running" }
+    { "id": "create_tunnel", "label": "Creating the tunnel", "state": "running" },
+    { "id": "issue_tls", "label": "Issuing certificates", "state": "failed", "failure_code": "rate_limited", "retry_after": "2026-08-31T10:43:35Z" }
   ]
 }
 ```
 
-`operation`, `id`, `label`, and `state` are allow-listed (`pending` / `running` / `done` / `failed`). Activity never includes tokens, emails, hostnames, zone names, request IDs, or raw Cloudflare/certbot errors. Unconfigured GET still returns `activity` when apply is in flight. This is not journald, a log stream, or an automated reachability probe.
+`operation`, `id`, `label`, and `state` are allow-listed (`pending` / `running` / `done` / `failed`). A failed `issue_tls` step may also contain allow-listed `failure_code` (`rate_limited`, `busy`, `dns`, `credentials`, or `dependency`) and an RFC 3339 UTC `retry_after` only for `rate_limited`. Activity never includes tokens, emails, hostnames, zone names, request IDs, or raw Cloudflare/certbot errors. Unconfigured GET still returns `activity` when apply is in flight. This is a compact safe operation log, not journald or an automated reachability probe.
+
+Apply, TLS issue, and disconnect reserve a durable secret-safe audit event with outcome `started` before external mutation. Terminal `success` or `failure` events use the same request ID; if the initial audit insert fails, mutation does not start. Operator diagnostics remain in `journalctl -u redgres.service`, `journalctl -u redgres-tls-issue.service`, and `/var/log/letsencrypt/letsencrypt.log`; raw server diagnostics are never copied into API activity.
+
+Domain mutations are serialized in-process. A second apply/access/TLS/confirm request while one is active returns `409 operation_in_progress`. Disconnect may supersede a queued/running TLS request and waits for acknowledged privileged credential cleanup before deleting the durable deployment.
 
 Manual mode: `"dns_provider":"manual"` with the same hostname map returns `{instructions:[…]}` without Cloudflare mutations.
 
 **POST `/api/v1/domain/oauth/start`** returns `{authorize_url, redirect_uri, scopes}`. Callback redirect URI: `https://{console_hostname}/api/v1/domain/oauth/callback`. On success the API token file is removed and `credential` becomes `oauth`.
 
-**POST `/api/v1/domain/tls/issue`** writes certbot DNS credentials from the stored API token if the ini is missing, then runs certbot DNS-01 for persisted db/redis hostnames; success `{ok:true, tls:{db:"issued",redis:"issued"}}`. Failure → `503` without success audit.
+**POST `/api/v1/domain/tls/issue`** writes certbot DNS credentials from the stored API token if the ini is missing. The privileged helper snapshots that credential into root-only renewal state, then scans canonical and suffixed lineages for an existing matching certificate with at least seven days remaining; an expiring suffixed exact-set lineage is renewed by its own Certbot name. It validates the cert/key pair, atomically updates selected targets, rolls all copies/config back on reload failure, and verifies the served leaf. A host-bound future rate-limit retry time rejects without queuing (`429 rate_limited`) and survives disconnect/reapply. Full-stack success is `{ok:true,tls:{db:"issued",rs:"certificate_prepared"}}`; app-only/no-PostgreSQL-target success reports both as `certificate_prepared` and never implies TLS was applied. Redis TLS is not applied by this Partial. Other failure → generic `503`; GET activity carries only the safe failure class/retry time.
 
 **POST `/api/v1/domain/manual/confirm-access`** operator attests Access was configured manually (manual DNS mode only). Success `{ok:true, access:"allow"}`.
 
@@ -371,7 +376,7 @@ Manual mode: `"dns_provider":"manual"` with the same hostname map returns `{inst
 
 Emails are never returned. Empty/invalid email → `400` `validation_error`. No deployment → `404`. Policy already set → `409` `conflict`. Verify failure compensates by deleting the created policy.
 
-**DELETE `/api/v1/domain`** success `200` `{"ok":true,"request_id":"…"}`. No deployment → `404` `not_found`. Deletes Access policy (if any), Access app, DNS records, and tunnel.
+**DELETE `/api/v1/domain`** success `200` `{"ok":true,"request_id":"…"}`. No deployment → `404` `not_found`. A durable `disconnect_pending` record keeps partial failures retryable. The handler deletes Access policy/app, DNS records, and tunnel, queues root credential cleanup, waits for a fresh `cleanup.result` acknowledgement, then clears the deployment and app credentials. Disconnect removes the root DNS-token snapshot but preserves the Certbot lineage, renewal configuration, and unexpired host-bound cooldown for safe reconnect/reuse. Full uninstall owns destructive lineage removal.
 
 Missing/invalid token or tunnel-token file config → `400` `validation_error`. Cloudflare auth failure → `403` `forbidden` (`Cloudflare token is unauthorized`). Cloudflare not-found → `404` `not_found`. An existing **healthy** or connected tunnel already named `redgres-{console hostname}` → `409` `conflict` (`A Cloudflare tunnel with this hostname already exists`). Apply replaces leftover tunnels with that name when Cloudflare reports `inactive` or `down` and no connections, and replaces conflicting DNS records and Access apps for the same wizard hostnames. Other Cloudflare failures → `503` `dependency_unavailable`. No response contains the token, the tunnel token, or a raw Cloudflare error body. Cloudflare API status/code may be logged without the error body.
 
