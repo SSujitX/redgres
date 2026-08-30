@@ -205,6 +205,7 @@ func TestLoadToolGateLoopback(t *testing.T) {
 	isolateConfig(t)
 	t.Setenv("REDGRES_PGADMIN_EMAIL", "Admin@Redgres.com")
 	t.Setenv("REDGRES_PGADMIN_PASSWORD_FILE", "/var/lib/redgres/secrets/pgadmin.pass")
+	t.Setenv("REDGRES_PGADMIN_MASTER_PASSWORD_FILE", "/var/lib/redgres/secrets/pgadmin.master")
 	t.Setenv("REDGRES_TOOL_GATE_PGADMIN_LISTEN", "127.0.0.1:5050")
 	t.Setenv("REDGRES_TOOL_GATE_PGADMIN_UPSTREAM", "http://127.0.0.1:5052")
 	t.Setenv("REDGRES_TOOL_GATE_REDISINSIGHT_LISTEN", "127.0.0.1:5540")
@@ -219,6 +220,9 @@ func TestLoadToolGateLoopback(t *testing.T) {
 	}
 	if cfg.PgAdminPasswordFile != "/var/lib/redgres/secrets/pgadmin.pass" {
 		t.Fatalf("password file = %q", cfg.PgAdminPasswordFile)
+	}
+	if cfg.PgAdminMasterPasswordFile != "/var/lib/redgres/secrets/pgadmin.master" {
+		t.Fatalf("master password file = %q", cfg.PgAdminMasterPasswordFile)
 	}
 	if cfg.ToolGatePgAdminListen != "127.0.0.1:5050" || cfg.ToolGatePgAdminUpstream != "http://127.0.0.1:5052" {
 		t.Fatalf("pgadmin gate = %q %q", cfg.ToolGatePgAdminListen, cfg.ToolGatePgAdminUpstream)

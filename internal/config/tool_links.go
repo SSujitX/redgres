@@ -32,6 +32,10 @@ func (c *Config) loadToolGate() error {
 	if err := validateOptionalSecretFilePath(c.PgAdminPasswordFile, "REDGRES_PGADMIN_PASSWORD_FILE", c.Production()); err != nil {
 		return err
 	}
+	c.PgAdminMasterPasswordFile = strings.TrimSpace(os.Getenv("REDGRES_PGADMIN_MASTER_PASSWORD_FILE"))
+	if err := validateOptionalSecretFilePath(c.PgAdminMasterPasswordFile, "REDGRES_PGADMIN_MASTER_PASSWORD_FILE", c.Production()); err != nil {
+		return err
+	}
 	pgListen, err := validateLoopbackListen(os.Getenv("REDGRES_TOOL_GATE_PGADMIN_LISTEN"), "REDGRES_TOOL_GATE_PGADMIN_LISTEN")
 	if err != nil {
 		return err
