@@ -83,10 +83,10 @@ Full-stack live install also starts installer-owned expert-tool images (not §6,
 
 | Tool | Pin | Notes |
 |---|---|---|
-| pgAdmin | `dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d` | Loopback `127.0.0.1:5052`; gate on `5050`. Digest from `docker pull` 2026-08-30. |
-| Redis Insight | `redis/redisinsight:3.8.0@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84` | Loopback `127.0.0.1:5542`; gate on `5540`. Digest from `docker pull` 2026-08-30. |
+| pgAdmin | `dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d` | Loopback `127.0.0.1:5052`; gate on `5050`. Persistent data is a private bind mount owned by the image's `5050:5050` runtime identity. Digest from `docker pull` 2026-08-30. |
+| Redis Insight | `redis/redisinsight:3.8.0@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84` | Loopback `127.0.0.1:5542`; gate on `5540`. Persistent `/data` is a private bind mount owned by the image's `1000:1000` runtime identity. Digest from `docker pull` 2026-08-30. |
 
-Sources: [pgAdmin container deployment](https://www.pgadmin.org/docs/pgadmin4/latest/container_deployment.html); [Docker Hub `dpage/pgadmin4`](https://hub.docker.com/r/dpage/pgadmin4); [Docker Hub `redis/redisinsight`](https://hub.docker.com/r/redis/redisinsight). These pins are installer artifacts only.
+Sources: [pgAdmin container deployment](https://www.pgadmin.org/docs/pgadmin4/latest/container_deployment.html); [Docker Hub `dpage/pgadmin4`](https://hub.docker.com/r/dpage/pgadmin4); [Redis Insight Docker installation](https://redis.io/docs/latest/operate/redisinsight/install/install-on-docker/) (mounted `/data` requires UID 1000 access); [Docker Hub `redis/redisinsight`](https://hub.docker.com/r/redis/redisinsight). These pins are installer artifacts only.
 
 ## 6. Required CI and release matrix
 
