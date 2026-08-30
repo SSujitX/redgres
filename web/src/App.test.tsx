@@ -8600,7 +8600,7 @@ describe("App session and login", () => {
     localSet.mockRestore();
   });
 
-  it("does not GET /audit from System, Documentation, Permission presets, Databases, or ACL users after leaving Overview", async () => {
+  it("GETs compact audit on System Expert tools then does not GET /audit from Documentation, Permission presets, Databases, or ACL users", async () => {
     const fetch = stubFetch((url) => {
       if (url.includes("/api/v1/session")) {
         return jsonResponse(200, { owner: { username: "admin" }, csrf_token: "ov-audit-leave".padEnd(64, "0") });
@@ -8625,6 +8625,10 @@ describe("App session and login", () => {
     await waitFor(() => {
       expect(screen.queryByText("Loading component status.")).not.toBeInTheDocument();
     });
+    await waitFor(() => {
+      expect(fetch.mock.calls.filter((call) => isAuditUrl(String(call[0]))).length).toBe(countAfterOverview + 1);
+    });
+    const countAfterSystem = fetch.mock.calls.filter((call) => isAuditUrl(String(call[0]))).length;
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
     fireEvent.click(
       within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("button", { name: "Documentation" }),
@@ -8636,7 +8640,7 @@ describe("App session and login", () => {
     expect(await screen.findByRole("heading", { name: "Databases" })).toBeInTheDocument();
     goToAclUsers();
     expect(await screen.findByRole("heading", { name: "ACL users" })).toBeInTheDocument();
-    expect(fetch.mock.calls.filter((call) => isAuditUrl(String(call[0]))).length).toBe(countAfterOverview);
+    expect(fetch.mock.calls.filter((call) => isAuditUrl(String(call[0]))).length).toBe(countAfterSystem);
     expect(fetch.mock.calls.filter((call) => isAuditUrl(String(call[0]))).every((call) => isCompactAuditUrl(String(call[0])))).toBe(
       true,
     );
@@ -8688,11 +8692,9 @@ describe("App session and login", () => {
     });
     render(<App />);
     const card = await screen.findByLabelText("Tool links: Reachable");
-    const link = within(card).getByRole("link", { name: "pgAdmin" });
-    expect(link).toHaveAttribute("href", "https://pgadmin.example.com");
-    expect(link).toHaveAttribute("target", "_blank");
-    expect(link).toHaveAttribute("rel", "noopener noreferrer");
-    expect(within(card).queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Open pgAdmin" })).toBeInTheDocument();
+    expect(within(card).queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Open RedisInsight" })).not.toBeInTheDocument();
   });
 
   it("renders pgAdmin and RedisInsight anchors with opener isolation when both hrefs are configured", async () => {
@@ -8714,14 +8716,10 @@ describe("App session and login", () => {
     });
     render(<App />);
     const card = await screen.findByLabelText("Tool links: Reachable");
-    const pgAdmin = within(card).getByRole("link", { name: "pgAdmin" });
-    const redisInsight = within(card).getByRole("link", { name: "RedisInsight" });
-    expect(pgAdmin).toHaveAttribute("href", "https://pgadmin.example.com");
-    expect(pgAdmin).toHaveAttribute("target", "_blank");
-    expect(pgAdmin).toHaveAttribute("rel", "noopener noreferrer");
-    expect(redisInsight).toHaveAttribute("href", "https://redis-insight.example.com");
-    expect(redisInsight).toHaveAttribute("target", "_blank");
-    expect(redisInsight).toHaveAttribute("rel", "noopener noreferrer");
+    expect(within(card).getByRole("button", { name: "Open pgAdmin" })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Open RedisInsight" })).toBeInTheDocument();
+    expect(within(card).queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
   });
 
   it("does not persist tool link hrefs in localStorage or sessionStorage", async () => {
@@ -8746,11 +8744,13 @@ describe("App session and login", () => {
       return unknownApi(url);
     });
     render(<App />);
-    expect(await screen.findByRole("link", { name: "pgAdmin" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open pgAdmin" })).toBeInTheDocument();
     expect(localSet).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "admin" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open pgAdmin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open RedisInsight" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
     expect(localSet).not.toHaveBeenCalled();
@@ -8772,13 +8772,13 @@ describe("App session and login", () => {
       return unknownApi(url);
     });
     render(<App />);
-    expect(await screen.findByRole("link", { name: "pgAdmin" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open pgAdmin" })).toBeInTheDocument();
     const sessionCallsBefore = fetch.mock.calls.filter((call) => String(call[0]).includes("/api/v1/session")).length;
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => {
       expect(fetch.mock.calls.filter((call) => isStatusUrl(String(call[0]))).length).toBeGreaterThanOrEqual(2);
     });
-    expect(screen.getByRole("link", { name: "pgAdmin" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open pgAdmin" })).toBeInTheDocument();
     const sessionCallsAfter = fetch.mock.calls.filter((call) => String(call[0]).includes("/api/v1/session")).length;
     expect(sessionCallsAfter).toBe(sessionCallsBefore);
   });
@@ -8821,8 +8821,8 @@ describe("App session and login", () => {
     fireEvent.change(screen.getByLabelText("Username"), { target: { value: "admin" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "owner-secret-15" } });
     fireEvent.click(screen.getByRole("button", { name: "Log in" }));
-    expect(await screen.findByRole("link", { name: "pgAdmin" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "RedisInsight" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open pgAdmin" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open RedisInsight" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "admin" })).toBeInTheDocument();
     const urls = fetch.mock.calls.map((call) => String(call[0]));
     const loginIndex = urls.findIndex((url) => url.includes("/api/v1/auth/login"));
@@ -12901,11 +12901,15 @@ describe("System status page", () => {
     });
     render(<App />);
     await landOnOverview();
-    expect(await screen.findByRole("link", { name: "pgAdmin" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open pgAdmin" })).toBeInTheDocument();
     goToSystem();
     expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
     expect(screen.queryByText("This view is not available yet.")).not.toBeInTheDocument();
     expect(await screen.findByLabelText("Tool links: Reachable")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Expert tools" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open pgAdmin" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reveal pgAdmin login" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open RedisInsight" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
   });
@@ -12968,6 +12972,9 @@ describe("System status page", () => {
     expect(cards[4]).not.toHaveClass("status-card-redis");
     expect(screen.queryByRole("link", { name: "pgAdmin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "RedisInsight" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Expert tools" })).toBeInTheDocument();
+    expect(screen.getByText("pgAdmin and RedisInsight are not configured on this host.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open pgAdmin" })).not.toBeInTheDocument();
   });
 
   it("keeps all five System cards when one component is Unavailable", async () => {
