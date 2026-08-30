@@ -17,32 +17,22 @@ PGBOUNCER_INI="${REDGRES_PGBOUNCER_INI:-/etc/pgbouncer/pgbouncer.ini}"
 redgres_tls_prepare_dest() {
   local dir="$1"
   /usr/bin/mkdir -p "${dir}" || return 1
-  if /usr/bin/getent group ssl-cert >/dev/null 2>&1; then
-    /usr/bin/chown root:ssl-cert "${dir}" || return 1
-    /usr/bin/chmod 0750 "${dir}" || return 1
-  elif /usr/bin/getent group postgres >/dev/null 2>&1; then
-    /usr/bin/chown root:postgres "${dir}" || return 1
-    /usr/bin/chmod 0750 "${dir}" || return 1
-  else
-    /usr/bin/chmod 0755 "${dir}" || return 1
-  fi
+  /usr/bin/chmod 0755 "${dir}" || return 1
 }
 
-redgres_tls_chown_key() {
-  local dest_key="$1"
-  if /usr/bin/getent group ssl-cert >/dev/null 2>&1; then
-    /usr/bin/chown root:ssl-cert "${dest_key}" || return 1
-  elif /usr/bin/getent group postgres >/dev/null 2>&1; then
-    /usr/bin/chown root:postgres "${dest_key}" || return 1
-  fi
+# 0640 root:ssl-cert is not readable by postgres on this host even when id lists ssl-cert.
+# Reload re-reads certs as the service user, so copies must be owned by that user.
+redgres_tls_readable_as() {
+  local user="$1" dest_key="$2"
+  /usr/bin/getent passwd "${user}" >/dev/null 2>&1 || return 1
+  DEST_KEY="${dest_key}" su -s /bin/sh "${user}" -c '/usr/bin/test -r "$DEST_KEY"'
 }
 
-redgres_tls_assert_readable() {
-  local dest_key="$1"
-  [[ -r "${dest_key}" ]] || return 1
-  if /usr/bin/getent passwd postgres >/dev/null 2>&1 && command -v runuser >/dev/null 2>&1; then
-    /usr/bin/runuser -u postgres -- /usr/bin/test -r "${dest_key}" || return 1
-  fi
+redgres_tls_install_owned() {
+  local user="$1" dest_dir="$2" src_chain="$3" src_key="$4"
+  /usr/bin/install -o "${user}" -g "${user}" -m 0644 "${src_chain}" "${dest_dir}/redgres-fullchain.pem" || return 1
+  /usr/bin/install -o "${user}" -g "${user}" -m 0600 "${src_key}" "${dest_dir}/redgres-privkey.pem" || return 1
+  redgres_tls_readable_as "${user}" "${dest_dir}/redgres-privkey.pem"
 }
 
 redgres_tls_apply_pgbouncer() {
@@ -88,24 +78,41 @@ redgres_tls_copy_certs() {
   dest_key="${CERT_DIR}/privkey.pem"
   /usr/bin/install -m 0644 "${live}/fullchain.pem" "${dest_chain}"
   /usr/bin/install -m 0640 "${live}/privkey.pem" "${dest_key}"
-  redgres_tls_chown_key "${dest_key}" || return 1
-  redgres_tls_assert_readable "${dest_key}" || return 1
+  local pgb_chain="${dest_chain}" pgb_key="${dest_key}"
   if [[ "${REDGRES_TLS_APPLY_PGBOUNCER:-${REDGRES_TLS_APPLY_POSTGRES_SSL:-1}}" == "1" ]]; then
-    redgres_tls_apply_pgbouncer "${dest_chain}" "${dest_key}" || return 1
+    if [[ -d /etc/pgbouncer ]]; then
+      local pgb_user=pgbouncer
+      if ! /usr/bin/getent passwd pgbouncer >/dev/null 2>&1; then
+        pgb_user=postgres
+      fi
+      if /usr/bin/getent passwd "${pgb_user}" >/dev/null 2>&1; then
+        redgres_tls_install_owned "${pgb_user}" /etc/pgbouncer "${dest_chain}" "${dest_key}" || return 1
+        pgb_chain=/etc/pgbouncer/redgres-fullchain.pem
+        pgb_key=/etc/pgbouncer/redgres-privkey.pem
+      fi
+    fi
+    redgres_tls_apply_pgbouncer "${pgb_chain}" "${pgb_key}" || return 1
   fi
   if [[ "${REDGRES_TLS_APPLY_POSTGRES_SSL:-1}" != "1" ]]; then
     return 0
   fi
-  local confdir confdirs=()
+  local maindir mains=() pg_chain pg_key
   shopt -s nullglob
-  confdirs=(/etc/postgresql/*/main/conf.d)
+  mains=(/etc/postgresql/*/main)
   shopt -u nullglob
-  for confdir in "${confdirs[@]}"; do
-    [[ -d "${confdir}" ]] || continue
-    printf '%s\n' "ssl = on" "ssl_cert_file = '${dest_chain}'" "ssl_key_file = '${dest_key}'" >"${confdir}/redgres-ssl.conf"
-    /usr/bin/chmod 644 "${confdir}/redgres-ssl.conf"
+  for maindir in "${mains[@]}"; do
+    [[ -d "${maindir}/conf.d" ]] || continue
+    pg_chain="${CERT_DIR}/fullchain.pem"
+    pg_key="${CERT_DIR}/privkey.pem"
+    if /usr/bin/getent passwd postgres >/dev/null 2>&1; then
+      redgres_tls_install_owned postgres "${maindir}" "${dest_chain}" "${dest_key}" || return 1
+      pg_chain="${maindir}/redgres-fullchain.pem"
+      pg_key="${maindir}/redgres-privkey.pem"
+    fi
+    printf '%s\n' "ssl = on" "ssl_cert_file = '${pg_chain}'" "ssl_key_file = '${pg_key}'" >"${maindir}/conf.d/redgres-ssl.conf"
+    /usr/bin/chmod 644 "${maindir}/conf.d/redgres-ssl.conf"
     local ver
-    ver="$(printf '%s' "${confdir}" | /usr/bin/awk -F/ '{print $4}')"
+    ver="$(printf '%s' "${maindir}" | /usr/bin/awk -F/ '{print $4}')"
     if [[ -n "${ver}" ]] && command -v pg_ctlcluster >/dev/null 2>&1; then
       pg_ctlcluster "${ver}" main reload >/dev/null 2>&1 || return 1
     fi
