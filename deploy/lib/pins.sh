@@ -16,3 +16,13 @@ redgres_redis_image_pin() {
       ;;
   esac
 }
+
+# Installer-owned expert-tool images. Not COMPATIBILITY.md §6.
+# Digests from docker pull on 2026-08-30 (manifest, not a Hub index snapshot).
+redgres_pgadmin_image_pin() {
+  printf '%s\n' 'dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d'
+}
+
+redgres_redisinsight_image_pin() {
+  printf '%s\n' 'redis/redisinsight:3.8.0@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84'
+}
