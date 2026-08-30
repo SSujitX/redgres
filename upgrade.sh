@@ -54,7 +54,7 @@ REDGRES_CLOUDFLARE_OAUTH_CLIENT_FILE=/var/lib/redgres/secrets/cloudflare-oauth-c
 REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-oauth-token.json
 REDGRES_CERTBOT_DNS_TOKEN_FILE=/var/lib/redgres/secrets/certbot-dns.ini
 REDGRES_TLS_ISSUE_REQUEST_FILE=/var/lib/redgres/tls-issue.request
-REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result
+REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result
 EOF
 }
 
@@ -75,6 +75,22 @@ redgres_env_ensure_lines() {
   [[ "${added}" -eq 1 ]]
 }
 
+redgres_migrate_tls_result_path() {
+  local env_file="$1" tmp
+  grep -q '^REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result$' "${env_file}" || return 1
+  tmp="$(mktemp "${env_file}.XXXXXX")" || return 1
+  awk '{
+    if ($0 == "REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result") {
+      print "REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result"
+    } else {
+      print
+    }
+  }' "${env_file}" >"${tmp}"
+  chmod --reference="${env_file}" "${tmp}" 2>/dev/null || chmod 600 "${tmp}"
+  chown --reference="${env_file}" "${tmp}" 2>/dev/null || true
+  mv -fT "${tmp}" "${env_file}"
+}
+
 redgres_ensure_secrets_dir() {
   local dir="${REDGRES_SECRETS_DIR:-/var/lib/redgres/secrets}"
   mkdir -p "${dir}"
@@ -85,13 +101,12 @@ redgres_ensure_secrets_dir() {
 }
 
 redgres_ensure_domain_secret_env() {
-  local env_file="${1:-/etc/redgres/redgres.env}"
+  local env_file="${1:-/etc/redgres/redgres.env}" changed=0
   redgres_ensure_secrets_dir
   [[ -f "${env_file}" ]] || return 1
-  if redgres_domain_secret_env_defaults | redgres_env_ensure_lines "${env_file}"; then
-    return 0
-  fi
-  return 1
+  redgres_migrate_tls_result_path "${env_file}" && changed=1
+  redgres_domain_secret_env_defaults | redgres_env_ensure_lines "${env_file}" && changed=1
+  [[ "${changed}" -eq 1 ]]
 }
 
 redgres_public_ipv4() {
@@ -815,11 +830,6 @@ command -v curl >/dev/null || die "curl is required"
 command -v tar >/dev/null || die "tar is required"
 command -v sha256sum >/dev/null || die "sha256sum is required"
 
-PREVIOUS=""
-if [[ -L "${OPT_ROOT}/current" ]]; then
-  PREVIOUS="$(readlink -f "${OPT_ROOT}/current" || true)"
-fi
-
 log ""
 log "  ${CYAN}${BOLD}Redgres upgrade${NC}"
 log "  ${DIM}Preserves config and SQLite; installs latest GitHub release only${NC}"
@@ -836,8 +846,17 @@ SUMS_URL="$(printf '%s' "${JSON}" | tr ',' '\n' | sed -n 's/.*"browser_download_
 redgres_assert_github_download_url "${TARBALL_URL}" "${ASSET}" "${TAG}" || die "release URL is not the expected GitHub asset"
 redgres_assert_github_download_url "${SUMS_URL}" "SHA256SUMS" "${TAG}" || die "SHA256SUMS URL is not the expected GitHub asset"
 
-WORKDIR="$(mktemp -d /tmp/redgres-upgrade.XXXXXX)"
-trap 'rm -rf "${WORKDIR}"' EXIT
+RELEASE_JAIL='/var/lib/redgres-release'
+[[ ! -L "${RELEASE_JAIL}" ]] || die "release jail must not be a symlink"
+install -d -m 0700 -o root -g root "${RELEASE_JAIL}"
+WORKDIR="$(mktemp -d "${RELEASE_JAIL}/upgrade.XXXXXX")"
+cleanup_upgrade() {
+  case "${WORKDIR}" in
+    /var/lib/redgres-release/upgrade.*) rm -rf -- "${WORKDIR}" ;;
+    *) printf '%s\n' 'refusing unsafe upgrade cleanup target' >&2 ;;
+  esac
+}
+trap cleanup_upgrade EXIT
 cd "${WORKDIR}"
 curl -fsSL -o "${ASSET}" "${TARBALL_URL}"
 curl -fsSL -o SHA256SUMS "${SUMS_URL}"
@@ -849,58 +868,20 @@ mkdir -p extract
 tar -xzf "${ASSET}" -C extract
 BIN="$(find extract -type f -name redgres | head -n1)"
 VERF="$(find extract -type f -name VERSION | head -n1)"
+INSTALLER="$(find extract -type f -path '*/installer/install.sh' | head -n1)"
 [[ -n "${BIN}" && -x "${BIN}" ]] || die "archive missing redgres binary"
+[[ -n "${INSTALLER}" && -f "${INSTALLER}" ]] || die "release lacks its transactional installer"
 VERSION="$(tr -d '\r\n' <"${VERF}")"
 
-DEST="${OPT_ROOT}/releases/${VERSION}"
-if [[ -e "${DEST}" ]]; then
-  log "  ${YELLOW}Release ${VERSION} already present; switching current.${NC}"
-else
-  mkdir -p "${DEST}"
-  install -m 0755 "${BIN}" "${DEST}/redgres"
-  install -m 0644 "${VERF}" "${DEST}/VERSION"
-fi
-
-ln -sfn "${DEST}" "${OPT_ROOT}/current"
-
-redgres_ensure_app_identity
-redgres_write_app_unit "${OPT_ROOT}/current/redgres" "${UNIT_PATH}"
-redgres_install_bootstrap_firewall
-redgres_chown_app_state
-if [[ -f /etc/redgres/redgres.env ]]; then
-  declare -F redgres_ensure_domain_secret_env >/dev/null || die "domain secret env helper missing"
-  redgres_ensure_domain_secret_env /etc/redgres/redgres.env || true
-  chmod 0660 /etc/redgres/redgres.env
-  chown root:redgres /etc/redgres/redgres.env
-fi
-
-# Write master file/hook + env key and rewrite compose BEFORE restart so
-# EnvironmentFile includes REDGRES_PGADMIN_MASTER_PASSWORD_FILE on first boot.
-if command -v docker >/dev/null 2>&1 && [[ -f /etc/redgres/expert-tools-compose.yml ]]; then
-  redgres_upgrade_pgadmin_master || die "expert tools master password / compose rewrite failed"
-fi
-
-systemctl daemon-reload
-if ! systemctl restart redgres.service; then
-  if [[ -n "${PREVIOUS}" && -d "${PREVIOUS}" ]]; then
-    ln -sfn "${PREVIOUS}" "${OPT_ROOT}/current"
-    systemctl daemon-reload || true
-    systemctl restart redgres.service || true
-  fi
-  die "systemd restart failed; previous release restored when available"
-fi
-
-if command -v docker >/dev/null 2>&1 && [[ -f /etc/redgres/expert-tools-compose.yml ]]; then
-  docker compose -f /etc/redgres/expert-tools-compose.yml up -d >/dev/null 2>&1 || die "expert tools compose failed"
-fi
-
-if ! redgres_wait_for_healthz "${HEALTHZ}" 15; then
-  if [[ -n "${PREVIOUS}" && -d "${PREVIOUS}" ]]; then
-    ln -sfn "${PREVIOUS}" "${OPT_ROOT}/current"
-    systemctl daemon-reload || true
-    systemctl restart redgres.service || true
-  fi
-  die "API check failed after upgrade; previous release restored when available"
-fi
+# The installer subtree is covered by the release's adjacent SHA256SUMS. Run it
+# from a root-owned, non-writable extraction tree so its source validation and
+# the canonical binary/config/privileged-runtime rollback transaction apply.
+chown -R root:root extract
+chmod -R go-w extract
+REDGRES_DOMAIN_RUNTIME_IF_MANAGED=1 REDGRES_DOMAIN_PACKAGES_OPTIONAL=1 \
+  REDGRES_EXPERT_TOOLS_IF_MANAGED=1 REDGRES_EXPERT_TOOLS_OPTIONAL=1 \
+  /bin/bash -p "${INSTALLER}" update \
+  --non-interactive --release "${WORKDIR}/${ASSET}" || \
+  die "transactional upgrade failed; previous release and runtime were restored when available"
 
 redgres_print_install_summary "${VERSION}" upgrade

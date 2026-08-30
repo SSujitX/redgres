@@ -1358,6 +1358,31 @@ else
   fail 'live update missing current'
 fi
 
+packaged_upgrade_rc=0
+(
+  packaged_root="${tmpdir}/packaged-upgrade"
+  packaged_stage="${packaged_root}/stage"
+  packaged_opt="${tmpdir}/packaged-opt"
+  mkdir -p "${packaged_stage}/installer"
+  cp -a "${deploy_dir}/install.sh" "${deploy_dir}/lib" "${deploy_dir}/systemd" "${packaged_stage}/installer/"
+  printf '#!/bin/sh\necho packaged-stub\n' >"${packaged_stage}/redgres"
+  chmod 0755 "${packaged_stage}/redgres" "${packaged_stage}/installer/install.sh"
+  printf '1.0.2\n' >"${packaged_stage}/VERSION"
+  packaged_release="${packaged_root}/redgres_1.0.2_linux_amd64.tar.gz"
+  /usr/bin/tar -C "${packaged_stage}" -czf "${packaged_release}" redgres VERSION installer
+  packaged_digest="$(/usr/bin/sha256sum "${packaged_release}")"
+  packaged_digest="${packaged_digest%% *}"
+  printf '%s  %s\n' "${packaged_digest}" "${packaged_release##*/}" >"${packaged_root}/SHA256SUMS"
+  REDGRES_OPT_ROOT="${packaged_opt}" REDGRES_UNIT_PATH="${tmpdir}/packaged-redgres.service" REDGRES_SKIP_HEALTHZ=1 \
+    /bin/bash -p "${packaged_stage}/installer/install.sh" update --non-interactive --release "${packaged_release}" >/dev/null
+  grep -qx '1.0.2' "${packaged_opt}/current/VERSION"
+) || packaged_upgrade_rc=$?
+if [[ "${packaged_upgrade_rc}" -eq 0 ]]; then
+  pass 'checksummed release-packaged dispatcher executes the canonical update transaction'
+else
+  fail "packaged dispatcher transaction (rc=${packaged_upgrade_rc})"
+fi
+
 # Second version for rollback target
 live_stage2="${tmpdir}/live-release-stage-2"
 mkdir -p "${live_stage2}"
@@ -1399,6 +1424,81 @@ elif [[ -f "${live_opt}/current/VERSION" ]]; then
   fi
 else
   fail "live rollback current missing ('${cur}')"
+fi
+
+rollback_runtime_rc=0
+(
+  # shellcheck source=../lib/release.sh
+  source "${deploy_dir}/lib/release.sh"
+  runtime_root="${tmpdir}/rollback-runtime-root"
+  release_dir="${tmpdir}/rollback-runtime-release"
+  export REDGRES_RUNTIME_ROOT_PREFIX="${runtime_root}"
+  mkdir -p \
+    "${release_dir}" \
+    "${runtime_root}/etc/redgres" \
+    "${runtime_root}/usr/libexec/redgres" \
+    "${runtime_root}/etc/letsencrypt/renewal-hooks/deploy" \
+    "${runtime_root}/etc/systemd/system"
+  printf '%s\n' 'REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result' 'KEEP_ROTATED=old' >"${runtime_root}/etc/redgres/redgres.env"
+  printf 'v1-helper\n' >"${runtime_root}/usr/libexec/redgres/issue-tls.sh"
+  printf 'v1-hook\n' >"${runtime_root}/etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh"
+  printf 'v1-service\n' >"${runtime_root}/etc/systemd/system/redgres-tls-issue.service"
+  redgres_snapshot_rollback_runtime "${release_dir}"
+  printf '%s\n' 'REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result' 'KEEP_ROTATED=new' >"${runtime_root}/etc/redgres/redgres.env"
+  printf 'v2-helper\n' >"${runtime_root}/usr/libexec/redgres/issue-tls.sh"
+  printf 'v2-hook\n' >"${runtime_root}/etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh"
+  printf 'v2-service\n' >"${runtime_root}/etc/systemd/system/redgres-tls-issue.service"
+  printf 'v2-path\n' >"${runtime_root}/etc/systemd/system/redgres-tls-issue.path"
+  redgres_restore_rollback_runtime "${release_dir}"
+  grep -qx 'REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result' "${runtime_root}/etc/redgres/redgres.env"
+  grep -qx 'KEEP_ROTATED=new' "${runtime_root}/etc/redgres/redgres.env"
+  grep -qx 'v1-helper' "${runtime_root}/usr/libexec/redgres/issue-tls.sh"
+  grep -qx 'v1-hook' "${runtime_root}/etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh"
+  grep -qx 'v1-service' "${runtime_root}/etc/systemd/system/redgres-tls-issue.service"
+  [[ ! -e "${runtime_root}/etc/systemd/system/redgres-tls-issue.path" ]]
+  rm -f "${release_dir}/.rollback-runtime/issue-service"
+  printf '%s\n' 'REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result' 'KEEP_ROTATED=three' >"${runtime_root}/etc/redgres/redgres.env"
+  if redgres_restore_rollback_runtime "${release_dir}"; then
+    exit 1
+  fi
+  grep -qx 'KEEP_ROTATED=three' "${runtime_root}/etc/redgres/redgres.env"
+
+  printf 'v1-service\n' >"${release_dir}/.rollback-runtime/issue-service"
+  printf '%s\n' 'REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result' 'KEEP_ROTATED=four' >"${runtime_root}/etc/redgres/redgres.env"
+  printf 'v4-helper\n' >"${runtime_root}/usr/libexec/redgres/issue-tls.sh"
+  printf 'v4-hook\n' >"${runtime_root}/etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh"
+  printf 'v4-service\n' >"${runtime_root}/etc/systemd/system/redgres-tls-issue.service"
+  printf 'v4-path\n' >"${runtime_root}/etc/systemd/system/redgres-tls-issue.path"
+  export REDGRES_RUNTIME_RESTORE_FAIL_AFTER=2
+  if redgres_restore_rollback_runtime "${release_dir}"; then
+    exit 1
+  fi
+  grep -qx 'REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result' "${runtime_root}/etc/redgres/redgres.env"
+  grep -qx 'KEEP_ROTATED=four' "${runtime_root}/etc/redgres/redgres.env"
+  grep -qx 'v4-helper' "${runtime_root}/usr/libexec/redgres/issue-tls.sh"
+  grep -qx 'v4-hook' "${runtime_root}/etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh"
+  grep -qx 'v4-service' "${runtime_root}/etc/systemd/system/redgres-tls-issue.service"
+  grep -qx 'v4-path' "${runtime_root}/etc/systemd/system/redgres-tls-issue.path"
+) || rollback_runtime_rc=$?
+if [[ "${rollback_runtime_rc}" -eq 0 ]]; then
+  pass 'rollback runtime snapshot restores atomically and rejects incomplete snapshots before mutation'
+else
+  fail "rollback runtime snapshot transaction (rc=${rollback_runtime_rc})"
+fi
+
+update_order_rc=0
+(
+  release_lib="${deploy_dir}/lib/release.sh"
+  quiesce_line="$(grep -n 'systemctl stop redgres-tls-issue.path' "${release_lib}" | head -n1 | cut -d: -f1)"
+  runtime_line="$(grep -n 'redgres_install_domain_runtime || redgres_die' "${release_lib}" | head -n1 | cut -d: -f1)"
+  restart_line="$(grep -n 'systemctl restart redgres.service || {' "${release_lib}" | head -n1 | cut -d: -f1)"
+  [[ -n "${quiesce_line}" && -n "${runtime_line}" && -n "${restart_line}" ]]
+  [[ "${quiesce_line}" -lt "${runtime_line}" && "${runtime_line}" -lt "${restart_line}" ]]
+) || update_order_rc=$?
+if [[ "${update_order_rc}" -eq 0 ]]; then
+  pass 'update quiesces old app/helper before installing matched runtime and restarting'
+else
+  fail "update runtime ordering (rc=${update_order_rc})"
 fi
 
 # Restore checksum fixture for remaining dry-run negative tests that use release_file.
@@ -1521,6 +1621,32 @@ uninstall_checkout_err="$(
   printf '%s\n' '#!/bin/sh' >"${clone}/deploy/install.sh"
   printf '%s\n' '#!/bin/sh' >"${clone}/uninstall.sh"
   redgres_uninstall_is_git_checkout "${clone}"
+  redgres_uninstall_cloudflare_status_confirmed api_ok
+  redgres_uninstall_cloudflare_status_confirmed no_domain
+  redgres_uninstall_cloudflare_status_confirmed manual_dns
+  ! redgres_uninstall_cloudflare_status_confirmed no_state
+  ! redgres_uninstall_cloudflare_status_confirmed no_token
+  ! redgres_uninstall_cloudflare_status_confirmed api_partial
+  restore_log="${tmpdir}/uninstall-restore.log"
+  systemctl() { printf '%s\n' "$*" >>"${restore_log}"; }
+  REDGRES_UNINSTALL_QUIESCE_GUARD=1
+  REDGRES_UNINSTALL_APP_WAS_ACTIVE=1
+  REDGRES_UNINSTALL_TLS_PATH_WAS_ACTIVE=1
+  redgres_uninstall_restore_quiesced
+  grep -qx 'start redgres.service' "${restore_log}"
+  grep -qx 'start redgres-tls-issue.path' "${restore_log}"
+  [[ "${REDGRES_UNINSTALL_QUIESCE_GUARD}" == "0" ]]
+  lineage_fixture="${tmpdir}/tls-lineage-fixture"
+  printf '%s\n' '/etc/letsencrypt/live/db.example.com' >"${lineage_fixture}"
+  chmod 0600 "${lineage_fixture}"
+  export REDGRES_UNINSTALL_LINEAGE_EXPECTED_METADATA="$(/usr/bin/stat -c '%U:%G:%a' "${lineage_fixture}")"
+  ! redgres_uninstall_delete_trusted_lineage "${lineage_fixture}" "${tmpdir}/missing-certbot"
+  [[ -f "${lineage_fixture}" ]]
+  fake_certbot="${tmpdir}/fake-uninstall-certbot"
+  printf '%s\n' '#!/bin/sh' 'exit 0' >"${fake_certbot}"
+  chmod 0700 "${fake_certbot}"
+  redgres_uninstall_delete_trusted_lineage "${lineage_fixture}" "${fake_certbot}"
+  unset REDGRES_UNINSTALL_LINEAGE_EXPECTED_METADATA
 ) 2>&1" || uninstall_checkout_rc=$?
 if [[ "${uninstall_checkout_rc}" -eq 0 ]]; then
   pass 'uninstall git-checkout detector matches clone layout only'
@@ -1713,8 +1839,8 @@ progress_err="$(
   ! printf '%s\n' "${redis_sec}" | /usr/bin/grep -q redgres_ensure_expert_tools
   printf '%s\n' "${pg_sec}" | /usr/bin/grep -q redgres_ensure_pgadmin
   ! printf '%s\n' "${pg_sec}" | /usr/bin/grep -q redgres_ensure_redisinsight
-  grep -q 'REDGRES_DOMAIN_RUNTIME_OPTIONAL=1' "${deploy_dir}/lib/mutate.sh"
-  grep -q 'REDGRES_DOMAIN_RUNTIME_OPTIONAL' "${deploy_dir}/lib/release.sh"
+  grep -q 'REDGRES_DOMAIN_PACKAGES_OPTIONAL=1' "${deploy_dir}/lib/mutate.sh"
+  grep -q "redgres_install_domain_runtime || redgres_die 'domain runtime failed" "${deploy_dir}/lib/release.sh"
   grep -q 'NEEDRESTART_SUSPEND=1' "${deploy_dir}/lib/mutate.sh"
   ! grep -E 'DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update' "${deploy_dir}/lib/mutate.sh"
   grep -q 'psql -q -d postgres' "${deploy_dir}/lib/mutate.sh"
@@ -1769,21 +1895,18 @@ upgrade_master_rc=0
 upgrade_master_err="$(
   ! /usr/bin/grep -E 'sed[[:space:]]+-i.*MASTER_PASSWORD' "${deploy_dir%/*}/upgrade.sh"
   ! /usr/bin/grep -E "sed[[:space:]]+-i.*/var/lib/redgres/pgadmin" "${deploy_dir%/*}/upgrade.sh"
-  /usr/bin/grep -q 'redgres_restore_pgadmin_master_ownership' "${deploy_dir%/*}/upgrade.sh"
-  /usr/bin/grep -q 'PGADMIN_CONFIG_MASTER_PASSWORD_HOOK' "${deploy_dir%/*}/upgrade.sh"
-  /usr/bin/grep -q 'pgadmin.master:/run/redgres/pgadmin.master:ro' "${deploy_dir%/*}/upgrade.sh"
-  /usr/bin/grep -q 'pgadmin-master-hook:/pgadmin4/redgres-master-hook:ro' "${deploy_dir%/*}/upgrade.sh"
-  /usr/bin/awk '/^redgres_upgrade_pgadmin_master\(\)/,/^redgres_write_app_unit\(\)/' "${deploy_dir%/*}/upgrade.sh" | /usr/bin/grep -F 'cat >"${yml}"'
-  /usr/bin/grep -q 'expert tools master password / compose rewrite failed' "${deploy_dir%/*}/upgrade.sh"
-  /usr/bin/grep -q 'existing pgAdmin volume may still prompt' "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q '/bin/bash -p "${INSTALLER}" update' "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q 'release lacks its transactional installer' "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q "RELEASE_JAIL='/var/lib/redgres-release'" "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q 'REDGRES_DOMAIN_RUNTIME_IF_MANAGED=1 REDGRES_DOMAIN_PACKAGES_OPTIONAL=1' "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q 'REDGRES_EXPERT_TOOLS_IF_MANAGED=1 REDGRES_EXPERT_TOOLS_OPTIONAL=1' "${deploy_dir%/*}/upgrade.sh"
+  ! /usr/bin/grep -q 'REDGRES_DOMAIN_RUNTIME_OPTIONAL' "${deploy_dir%/*}/upgrade.sh"
+  ! /usr/bin/grep -q '^ln -sfn "${DEST}" "${OPT_ROOT}/current"' "${deploy_dir%/*}/upgrade.sh"
   /usr/bin/grep -q 'redgres_restore_pgadmin_master_ownership' "${deploy_dir%/*}/install.sh"
   /usr/bin/grep -q 'redgres_restore_pgadmin_master_ownership' "${deploy_dir%/*}/install-dev.sh"
-  call_line="$(/usr/bin/grep -n 'redgres_upgrade_pgadmin_master || die' "${deploy_dir%/*}/upgrade.sh" | /usr/bin/head -n1 | /usr/bin/cut -d: -f1)"
-  reload_line="$(/usr/bin/grep -n '^systemctl daemon-reload$' "${deploy_dir%/*}/upgrade.sh" | /usr/bin/tail -n1 | /usr/bin/cut -d: -f1)"
-  [[ -n "${call_line}" && -n "${reload_line}" && "${call_line}" -lt "${reload_line}" ]]
 )" 2>&1 || upgrade_master_rc=$?
 if [[ "${upgrade_master_rc}" -eq 0 ]]; then
-  pass 'upgrade rewrites expert compose without sed'
+  pass 'public upgrade delegates to checksummed transactional installer'
 else
   fail "upgrade pgadmin master rewrite (rc=${upgrade_master_rc})"
   printf '%s\n' "${upgrade_master_err}" >&2
@@ -2336,10 +2459,12 @@ domain_env_err="$(
   redgres_domain_secret_env_defaults | grep -q '^REDGRES_CLOUDFLARE_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-api-token$'
   redgres_domain_secret_env_defaults | grep -q '^REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token$'
   redgres_domain_secret_env_defaults | grep -q '^REDGRES_TLS_ISSUE_REQUEST_FILE=/var/lib/redgres/tls-issue.request$'
+  redgres_domain_secret_env_defaults | grep -q '^REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result$'
   redgres_ensure_domain_secret_env "${env_file}"
   grep -q '^REDGRES_CLOUDFLARE_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-api-token$' "${env_file}"
   grep -q '^REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token$' "${env_file}"
   grep -q '^REDGRES_TLS_ISSUE_REQUEST_FILE=/var/lib/redgres/tls-issue.request$' "${env_file}"
+  grep -q '^REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result$' "${env_file}"
   grep -q '^REDGRES_ENVIRONMENT=production$' "${env_file}"
   printf '%s\n' 'REDGRES_CLOUDFLARE_TOKEN_FILE=/custom/token' >"${env_file}.keep"
   printf '%s\n' 'REDGRES_ENVIRONMENT=production' >>"${env_file}.keep"
@@ -2349,6 +2474,10 @@ domain_env_err="$(
   ! grep -q '^REDGRES_CLOUDFLARE_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-api-token$' "${env_file}.keep"
   grep -q '^REDGRES_TUNNEL_TOKEN_FILE=/var/lib/redgres/secrets/cloudflared-tunnel-token$' "${env_file}.keep"
   ! redgres_ensure_domain_secret_env "${env_file}.keep"
+  printf '%s\n' 'REDGRES_ENVIRONMENT=production' 'REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result' >"${env_file}.legacy"
+  redgres_ensure_domain_secret_env "${env_file}.legacy"
+  grep -q '^REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result$' "${env_file}.legacy"
+  ! grep -q '^REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result$' "${env_file}.legacy"
   [[ -d "${secrets_dir}" ]]
 ) 2>&1" || domain_env_rc=$?
 if [[ "${domain_env_rc}" -eq 0 ]]; then
@@ -2397,8 +2526,19 @@ domain_runtime_err="$(
   REDGRES_SYSTEMD_UNIT_DIR="${sysd}"
   REDGRES_CERTBOT_DEPLOY_HOOK_DIR="${hook}"
   REDGRES_SKIP_DOMAIN_PACKAGES=1
+  ! redgres_domain_runtime_is_managed
+  REDGRES_DOMAIN_RUNTIME_IF_MANAGED=1 redgres_install_domain_runtime
+  [[ ! -e "${libexec}/issue-tls.sh" ]]
+  unset REDGRES_DOMAIN_RUNTIME_IF_MANAGED
   redgres_install_cloudflared_units
   redgres_install_tls_issue_helper
+  redgres_domain_runtime_is_managed
+  if REDGRES_DOMAIN_UNIT_SRC="${tmpdir}/missing-domain-units" \
+    REDGRES_DOMAIN_RUNTIME_IF_MANAGED=1 \
+    redgres_install_domain_runtime; then
+    exit 1
+  fi
+  REDGRES_DOMAIN_UNIT_SRC="${units_src}"
   [[ -x "${libexec}/cloudflared-run.sh" ]]
   [[ -f "${sysd}/cloudflared-redgres.path" ]]
   grep -q 'LoadCredential=TUNNEL_TOKEN:' "${sysd}/cloudflared-redgres.service"
@@ -2418,9 +2558,13 @@ domain_runtime_err="$(
   [[ -f "${sysd}/redgres-tls-issue.path" ]]
   grep -q 'PathExists=/var/lib/redgres/tls-issue.request' "${sysd}/redgres-tls-issue.path"
   grep -q 'PathChanged=/var/lib/redgres/tls-issue.request' "${sysd}/redgres-tls-issue.path"
+  ! grep -q '^EnvironmentFile=' "${sysd}/redgres-tls-issue.service"
+  grep -q '^StateDirectory=redgres-tls$' "${sysd}/redgres-tls-issue.service"
+  grep -q 'PathExists=/var/lib/redgres-tls/active.request' "${sysd}/redgres-tls-issue.path"
+  grep -q '^ExecStart=/usr/libexec/redgres/issue-tls.sh$' "${sysd}/redgres-tls-issue.service"
   [[ -x "${hook}/redgres-copy-certs.sh" ]]
   grep -q '/etc/ssl/redgres' "${hook}/redgres-copy-certs.sh"
-  ! grep -Eiq 'eyJ|BEGIN PRIVATE|dns_cloudflare_api_token =' "${libexec}/issue-tls.sh"
+  ! grep -Eiq 'eyJ|BEGIN PRIVATE|canary-must-not-appear' "${libexec}/issue-tls.sh"
 ) 2>&1" || domain_runtime_rc=$?
 if [[ "${domain_runtime_rc}" -eq 0 ]]; then
   pass 'domain runtime units install from deploy/systemd without embedding tokens'
@@ -2434,22 +2578,31 @@ tls_helper_rc=0
   req="${tmpdir}/tls-issue.request"
   result="${tmpdir}/tls-issue.result"
   creds="${tmpdir}/certbot-dns.ini"
+  targets="${tmpdir}/tls-targets"
+  lineage_state="${tmpdir}/tls-lineage"
   live="${tmpdir}/le-live/db.example.com"
   certdir="${tmpdir}/svc-tls"
   fake="${tmpdir}/fake-certbot"
+  fake_openssl="${tmpdir}/fake-openssl"
   mkdir -p "${live}"
   printf '%s\n' 'db.example.com' 'rs.example.com' >"${req}"
   printf '%s\n' 'dns_cloudflare_api_token = canary-must-not-appear' >"${creds}"
+  printf '%s\n' 'pgbouncer=1' 'pgbouncer_user=postgres' >"${targets}"
   printf '%s\n' '#!/bin/sh' "mkdir -p '${live}'" "printf 'chain' >'${live}/fullchain.pem'" "printf 'key' >'${live}/privkey.pem'" 'exit 0' >"${fake}"
   chmod +x "${fake}"
+  printf '%s\n' '#!/bin/sh' \
+    'case "$*" in *"subjectAltName"*) echo "X509v3 Subject Alternative Name: DNS:db.example.com, DNS:rs.example.com" ;; esac' \
+    'exit 0' >"${fake_openssl}"
+  chmod +x "${fake_openssl}"
   export REDGRES_TLS_ISSUE_REQUEST_FILE="${req}"
   export REDGRES_TLS_ISSUE_RESULT_FILE="${result}"
   export REDGRES_CERTBOT_DNS_TOKEN_FILE="${creds}"
   export REDGRES_CERT_LIVE_DIR="${tmpdir}/le-live"
   export REDGRES_TLS_CERT_DIR="${certdir}"
   export REDGRES_CERTBOT_BIN="${fake}"
-  export REDGRES_TLS_APPLY_POSTGRES_SSL=0
-  export REDGRES_TLS_APPLY_PGBOUNCER=1
+  export REDGRES_OPENSSL_BIN="${fake_openssl}"
+  export REDGRES_TLS_TARGETS_FILE="${targets}"
+  export REDGRES_TLS_LINEAGE_FILE="${lineage_state}"
   export REDGRES_PGBOUNCER_INI="${tmpdir}/pgbouncer.ini"
   printf '%s\n' 'client_tls_sslmode = require' 'client_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem' 'client_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key' >"${REDGRES_PGBOUNCER_INI}"
   bash "${deploy_dir}/systemd/issue-tls.sh"
@@ -2457,13 +2610,214 @@ tls_helper_rc=0
   grep -q "client_tls_cert_file = ${certdir}/fullchain.pem" "${REDGRES_PGBOUNCER_INI}"
   grep -q "client_tls_key_file = ${certdir}/privkey.pem" "${REDGRES_PGBOUNCER_INI}"
   grep -q '^issued$' "${result}"
+  grep -q '^db_status=certificate_prepared$' "${result}"
+  grep -q '^rs_status=certificate_prepared$' "${result}"
+  grep -q "${live}" "${lineage_state}" || exit 1
   [[ ! -f "${req}" ]]
   ! grep -q 'canary-must-not-appear' "${result}"
+
+  # Without the root-owned target manifest, service configuration is preserved.
+  cp "${REDGRES_PGBOUNCER_INI}" "${tmpdir}/pgbouncer.before"
+  printf '%s\n' 'db.example.com' 'rs.example.com' >"${req}"
+  export REDGRES_TLS_TARGETS_FILE="${tmpdir}/missing-targets"
+  bash "${deploy_dir}/systemd/issue-tls.sh"
+  cmp "${tmpdir}/pgbouncer.before" "${REDGRES_PGBOUNCER_INI}" || exit 1
+  export REDGRES_TLS_TARGETS_FILE="${targets}"
+
+  # A valid matching suffixed lineage must be copied without another public ACME order.
+  mv "${tmpdir}/le-live/db.example.com" "${tmpdir}/le-live/db.example.com-0001"
+  printf '%s\n' 'db.example.com' 'rs.example.com' >"${req}"
+  fake_certbot_guard="${tmpdir}/fake-certbot-guard"
+  printf '%s\n' '#!/bin/sh' 'echo certbot-must-not-run >&2' 'exit 91' >"${fake_certbot_guard}"
+  chmod +x "${fake_certbot_guard}"
+  export REDGRES_OPENSSL_BIN="${fake_openssl}"
+  export REDGRES_CERTBOT_BIN="${fake_certbot_guard}"
+  bash "${deploy_dir}/systemd/issue-tls.sh"
+  grep -q '^issued$' "${result}"
+  [[ ! -f "${req}" ]]
+  grep -q 'db.example.com-0001' "${lineage_state}" || exit 1
+
+  # A matching suffixed lineage below the validity threshold is renewed by its
+  # own Certbot name; canonical may belong to a different SAN set.
+  expiry_marker="${tmpdir}/renewed-expiring-lineage"
+  certbot_args="${tmpdir}/certbot-args"
+  fake_expiring_openssl="${tmpdir}/fake-expiring-openssl"
+  printf '%s\n' '#!/bin/sh' \
+    "case \"\$*\" in *subjectAltName*) echo 'X509v3 Subject Alternative Name: DNS:db.example.com, DNS:rs.example.com'; exit 0 ;; *-checkend*) test -f '${expiry_marker}' ;; *) exit 0 ;; esac" >"${fake_expiring_openssl}"
+  chmod +x "${fake_expiring_openssl}"
+  fake_renew="${tmpdir}/fake-certbot-renew"
+  printf '%s\n' '#!/bin/sh' "printf '%s\n' \"\$@\" >'${certbot_args}'" "touch '${expiry_marker}'" 'exit 0' >"${fake_renew}"
+  chmod +x "${fake_renew}"
+  printf '%s\n' 'db.example.com' 'rs.example.com' >"${req}"
+  export REDGRES_OPENSSL_BIN="${fake_expiring_openssl}"
+  export REDGRES_CERTBOT_BIN="${fake_renew}"
+  bash "${deploy_dir}/systemd/issue-tls.sh"
+  grep -A1 -x -- '--cert-name' "${certbot_args}" | grep -qx 'db.example.com-0001'
+  export REDGRES_OPENSSL_BIN="${fake_openssl}"
+  export REDGRES_CERTBOT_BIN="${fake_certbot_guard}"
+
+  # The global renewal hook ignores unrelated Certbot lineages.
+  unrelated="${tmpdir}/le-live/unrelated.example.com"
+  mkdir -p "${unrelated}"
+  printf '%s\n' 'unrelated-chain' >"${unrelated}/fullchain.pem"
+  printf '%s\n' 'unrelated-key' >"${unrelated}/privkey.pem"
+  printf '%s\n' 'expected-chain' >"${certdir}/fullchain.pem"
+  RENEWED_LINEAGE="${unrelated}" bash "${deploy_dir}/systemd/redgres-copy-certs.sh"
+  grep -q '^expected-chain$' "${certdir}/fullchain.pem" || exit 1
+
+  # A matching lineage updates only the explicitly selected PostgreSQL target.
+  pgroot="${tmpdir}/postgresql"
+  mkdir -p "${pgroot}/18/main/conf.d"
+  printf '%s\n' "ssl = on" "ssl_cert_file = '/old/cert'" "ssl_key_file = '/old/key'" >"${pgroot}/18/main/conf.d/redgres-ssl.conf"
+  printf '%s\n' 'postgres_cluster=18/main' 'pgbouncer=0' 'pgbouncer_user=postgres' >"${targets}"
+  export REDGRES_POSTGRES_CONFIG_ROOT="${pgroot}"
+  RENEWED_LINEAGE="${tmpdir}/le-live/db.example.com-0001" bash "${deploy_dir}/systemd/redgres-copy-certs.sh"
+  grep -q "ssl_cert_file = '${certdir}/fullchain.pem'" "${pgroot}/18/main/conf.d/redgres-ssl.conf" || exit 1
+
+  # A backup failure after earlier certificate writes restores every prior
+  # destination. This exercises both the issue helper and the renewal hook.
+  printf '%s\n' 'old-chain' >"${certdir}/fullchain.pem"
+  printf '%s\n' 'old-key' >"${certdir}/privkey.pem"
+  printf '%s\n' 'db.example.com' 'rs.example.com' >"${req}"
+  export REDGRES_TLS_TXN_BACKUP_FAIL_AFTER=2
+  if bash "${deploy_dir}/systemd/issue-tls.sh" >/dev/null 2>&1; then
+    exit 1
+  fi
+  grep -qx 'old-chain' "${certdir}/fullchain.pem" || exit 1
+  grep -qx 'old-key' "${certdir}/privkey.pem" || exit 1
+  if RENEWED_LINEAGE="${tmpdir}/le-live/db.example.com-0001" bash "${deploy_dir}/systemd/redgres-copy-certs.sh" >/dev/null 2>&1; then
+    exit 1
+  fi
+  grep -qx 'old-chain' "${certdir}/fullchain.pem" || exit 1
+  grep -qx 'old-key' "${certdir}/privkey.pem" || exit 1
+  unset REDGRES_TLS_TXN_BACKUP_FAIL_AFTER
+
+  # Real OpenSSL proves a mismatched key is not reused, while a matching SAN
+  # pair is accepted without opening a public ACME order.
+  if command -v openssl >/dev/null 2>&1; then
+    real_live="${tmpdir}/real-le-live/db.example.com"
+    mkdir -p "${real_live}"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
+      -subj '/CN=db.example.com' \
+      -addext 'subjectAltName=DNS:db.example.com,DNS:rs.example.com' \
+      -keyout "${tmpdir}/matching.key" -out "${real_live}/fullchain.pem" >/dev/null 2>&1
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${real_live}/privkey.pem" >/dev/null 2>&1
+    real_guard_marker="${tmpdir}/real-certbot-called"
+    real_guard="${tmpdir}/real-certbot-guard"
+    printf '%s\n' '#!/bin/sh' "printf called >'${real_guard_marker}'" 'exit 91' >"${real_guard}"
+    chmod +x "${real_guard}"
+    export REDGRES_CERT_LIVE_DIR="${tmpdir}/real-le-live"
+    export REDGRES_OPENSSL_BIN="$(command -v openssl)"
+    export REDGRES_CERTBOT_BIN="${real_guard}"
+    export REDGRES_TLS_TARGETS_FILE="${tmpdir}/missing-targets"
+    printf '%s\n' 'db.example.com' 'rs.example.com' >"${req}"
+    if bash "${deploy_dir}/systemd/issue-tls.sh" >/dev/null 2>&1; then
+      exit 1
+    fi
+    [[ -f "${real_guard_marker}" ]]
+    cp "${tmpdir}/matching.key" "${real_live}/privkey.pem"
+    rm -f "${real_guard_marker}"
+    printf '%s\n' 'db.example.com' 'rs.example.com' >"${req}"
+    bash "${deploy_dir}/systemd/issue-tls.sh" >/dev/null
+    [[ ! -f "${real_guard_marker}" ]]
+    grep -q '^issued$' "${result}"
+
+    super_live="${tmpdir}/super-le-live/db.example.com"
+    mkdir -p "${super_live}"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
+      -subj '/CN=db.example.com' \
+      -addext 'subjectAltName=DNS:db.example.com,DNS:rs.example.com,DNS:unrelated.example.com' \
+      -keyout "${super_live}/privkey.pem" -out "${super_live}/fullchain.pem" >/dev/null 2>&1
+    export REDGRES_CERT_LIVE_DIR="${tmpdir}/super-le-live"
+    for min_valid in 1 999999999; do
+      export REDGRES_TLS_MIN_VALID_SECONDS="${min_valid}"
+      rm -f "${real_guard_marker}"
+      printf '%s\n' 'db.example.com' 'rs.example.com' >"${req}"
+      if bash "${deploy_dir}/systemd/issue-tls.sh" >/dev/null 2>&1; then
+        exit 1
+      fi
+      [[ -f "${real_guard_marker}" ]]
+    done
+    mixed_live="${tmpdir}/mixed-le-live/db.example.com"
+    mkdir -p "${mixed_live}"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
+      -subj '/CN=db.example.com' \
+      -addext 'subjectAltName=DNS:db.example.com,DNS:rs.example.com,IP:127.0.0.1' \
+      -keyout "${mixed_live}/privkey.pem" -out "${mixed_live}/fullchain.pem" >/dev/null 2>&1
+    export REDGRES_CERT_LIVE_DIR="${tmpdir}/mixed-le-live"
+    export REDGRES_TLS_MIN_VALID_SECONDS=1
+    rm -f "${real_guard_marker}"
+    printf '%s\n' 'db.example.com' 'rs.example.com' >"${req}"
+    if bash "${deploy_dir}/systemd/issue-tls.sh" >/dev/null 2>&1; then
+      exit 1
+    fi
+    [[ -f "${real_guard_marker}" ]]
+    unset REDGRES_TLS_MIN_VALID_SECONDS
+    export REDGRES_CERT_LIVE_DIR="${tmpdir}/le-live"
+    export REDGRES_OPENSSL_BIN="${fake_openssl}"
+    export REDGRES_CERTBOT_BIN="${fake_certbot_guard}"
+    export REDGRES_TLS_TARGETS_FILE="${targets}"
+  fi
+
+  # Malformed root state fails closed on the matching renewal path.
+  printf '%s\n' 'pgbouncer=maybe' >"${targets}"
+  if RENEWED_LINEAGE="${tmpdir}/le-live/db.example.com-0001" bash "${deploy_dir}/systemd/redgres-copy-certs.sh" 2>/dev/null; then
+    exit 1
+  fi
+  printf '%s\n' 'pgbouncer=1' 'pgbouncer_user=postgres' >"${targets}"
+
+  # Atomic result publication replaces a hostile symlink instead of following it.
+  canary="${tmpdir}/result-canary"
+  printf '%s\n' 'must-stay' >"${canary}"
+  rm -f "${result}"
+  ln -s "${canary}" "${result}"
+
+  # Failures expose only a stable class and a normalized retry time.
+  rm -rf "${tmpdir}/le-live"
+  printf '%s\n' 'db.example.com' 'rs.example.com' >"${req}"
+  printf '%s\n' '#!/bin/sh' 'exit 1' >"${fake_openssl}"
+  fake_rate_limited="${tmpdir}/fake-certbot-rate-limited"
+  printf '%s\n' '#!/bin/sh' \
+    'echo "too many certificates already issued; retry after 2026-08-31 10:43:35 UTC; raw-canary-must-not-appear" >&2' \
+    'exit 1' >"${fake_rate_limited}"
+  chmod +x "${fake_rate_limited}"
+  export REDGRES_CERTBOT_BIN="${fake_rate_limited}"
+  if bash "${deploy_dir}/systemd/issue-tls.sh" 2>/dev/null; then
+    exit 1
+  fi
+  grep -q '^failed$' "${result}"
+  grep -q '^reason=rate_limited$' "${result}"
+  grep -q '^retry_after=2026-08-31T10:43:35Z$' "${result}"
+  ! grep -q 'raw-canary' "${result}"
+  [[ ! -L "${result}" ]]
+  grep -q '^must-stay$' "${canary}"
+  grep -q 'redgres_tls_publish_result' "${deploy_dir}/systemd/issue-tls.sh"
 ) || tls_helper_rc=$?
 if [[ "${tls_helper_rc}" -eq 0 ]]; then
   pass 'issue-tls helper copies certs and never prints the API token'
 else
   fail "issue-tls helper (rc=${tls_helper_rc})"
+fi
+
+uninstall_tls_rc=0
+(
+  ! grep -q '/etc/letsencrypt/live/db.redgres.com' "${deploy_dir%/*}/uninstall.sh"
+  grep -q '\[\[ "${KEEP_REMOTE}" -eq 1 \]\] && return 0' "${deploy_dir%/*}/uninstall.sh"
+  ! grep -q 'REDGRES_CERTBOT_BIN' "${deploy_dir%/*}/uninstall.sh"
+  grep -q '/usr/bin/certbot delete' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'purge_tls_certs || exit 1' "${deploy_dir%/*}/uninstall.sh"
+  ! grep -q 'certbot delete.*|| true' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'trusted lineage evidence was preserved for retry' "${deploy_dir%/*}/uninstall.sh"
+  ! grep -q 'source "${snap}"' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'json.dump' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'redgres_quiesce_domain_tls || exit 1' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'remote_cloudflare_disconnect || exit 1' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'Cloudflare cleanup was not confirmed; local state and credentials were preserved for retry' "${deploy_dir%/*}/uninstall.sh"
+) || uninstall_tls_rc=$?
+if [[ "${uninstall_tls_rc}" -eq 0 ]]; then
+  pass 'uninstall preserves Certbot lineage in keep-remote mode without hard-coded domains'
+else
+  fail "uninstall Certbot lineage preservation (rc=${uninstall_tls_rc})"
 fi
 
 summary_load_rc=0

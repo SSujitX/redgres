@@ -5,5 +5,6 @@ Documentation=https://github.com/SSujitX/redgres
 [Service]
 Type=oneshot
 User=root
-EnvironmentFile=-/etc/redgres/redgres.env
+StateDirectory=redgres-tls
+StateDirectoryMode=0755
 ExecStart=/usr/libexec/redgres/issue-tls.sh

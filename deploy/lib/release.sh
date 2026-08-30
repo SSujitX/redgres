@@ -249,7 +249,185 @@ redgres_probe_healthz() {
     fi
     /usr/bin/sleep 1
   done
-  redgres_die 'health_gate: GET /api/v1/healthz failed'
+  redgres_log 'health_gate: GET /api/v1/healthz failed'
+  return 1
+}
+
+redgres_snapshot_rollback_runtime() {
+  local release_dir="$1" snapshot tmp name path
+  [[ -n "${release_dir}" && -d "${release_dir}" ]] || return 0
+  snapshot="${release_dir}/.rollback-runtime"
+  [[ ! -e "${snapshot}" ]] || return 0
+  tmp="$(/usr/bin/mktemp -d "${release_dir}/.rollback-runtime.XXXXXX")" || return 1
+  while IFS='|' read -r name path; do
+    path="${REDGRES_RUNTIME_ROOT_PREFIX:-}${path}"
+    if [[ "${name}" == "env" && -f "${path}" && ! -L "${path}" ]]; then
+      if [[ "$(grep -c '^REDGRES_TLS_ISSUE_RESULT_FILE=' "${path}" || true)" -gt 1 ]]; then
+        rm -rf -- "${tmp}"
+        return 1
+      fi
+      if grep '^REDGRES_TLS_ISSUE_RESULT_FILE=' "${path}" >"${tmp}/${name}"; then
+        /usr/bin/chmod 0600 "${tmp}/${name}"
+      else
+        : >"${tmp}/${name}.absent"
+      fi
+    elif [[ -f "${path}" && ! -L "${path}" ]]; then
+      /usr/bin/cp --preserve=mode,ownership,timestamps -- "${path}" "${tmp}/${name}" || return 1
+    else
+      : >"${tmp}/${name}.absent"
+    fi
+  done <<'EOF'
+env|/etc/redgres/redgres.env
+issue-helper|/usr/libexec/redgres/issue-tls.sh
+renew-hook|/etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh
+issue-service|/etc/systemd/system/redgres-tls-issue.service
+issue-path|/etc/systemd/system/redgres-tls-issue.path
+EOF
+  /usr/bin/chown -R root:root "${tmp}" 2>/dev/null || true
+  /usr/bin/mv -T -- "${tmp}" "${snapshot}"
+}
+
+redgres_restore_rollback_runtime() {
+  local release_dir="$1" snapshot name path source tmp txn index commit_count=0 fail_after
+  local -a restore_paths=() restore_staged=() current_backups=() current_present=()
+  snapshot="${release_dir}/.rollback-runtime"
+  [[ -d "${snapshot}" && ! -L "${snapshot}" ]] || return 2
+  # Validate the complete snapshot before changing any live file. A truncated
+  # snapshot must never produce a half-restored root runtime.
+  while IFS='|' read -r name path; do
+    source="${snapshot}/${name}"
+    if [[ -f "${source}" && ! -L "${source}" ]]; then
+      [[ ! -e "${snapshot}/${name}.absent" ]] || return 1
+    elif [[ -f "${snapshot}/${name}.absent" && ! -L "${snapshot}/${name}.absent" ]]; then
+      :
+    else
+      return 1
+    fi
+  done <<'EOF'
+env|/etc/redgres/redgres.env
+issue-helper|/usr/libexec/redgres/issue-tls.sh
+renew-hook|/etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh
+issue-service|/etc/systemd/system/redgres-tls-issue.service
+issue-path|/etc/systemd/system/redgres-tls-issue.path
+EOF
+  txn="$(/usr/bin/mktemp -d "${snapshot}/.restore.XXXXXX")" || return 1
+  index=0
+  while IFS='|' read -r name path; do
+    path="${REDGRES_RUNTIME_ROOT_PREFIX:-}${path}"
+    source="${snapshot}/${name}"
+    [[ ! -L "${path}" && ( ! -e "${path}" || -f "${path}" ) ]] || { rm -rf -- "${txn}"; return 1; }
+    restore_paths+=("${path}")
+    if [[ -f "${path}" ]]; then
+      if ! /usr/bin/cp --preserve=mode,ownership,timestamps -- "${path}" "${txn}/current-${index}"; then
+        rm -rf -- "${txn}"
+        return 1
+      fi
+      current_backups+=("${txn}/current-${index}")
+      current_present+=("1")
+    else
+      current_backups+=("")
+      current_present+=("0")
+    fi
+    if [[ "${name}" == "env" ]]; then
+      if [[ -f "${path}" ]]; then
+        /usr/bin/mkdir -p "${path%/*}"
+        tmp="$(/usr/bin/mktemp "${path}.rollback-stage.XXXXXX")" || { rm -rf -- "${txn}"; return 1; }
+        if ! /usr/bin/awk -v replacement="$([[ -f "${source}" ]] && /usr/bin/head -n1 "${source}" || true)" '
+          BEGIN { written = 0 }
+          /^REDGRES_TLS_ISSUE_RESULT_FILE=/ {
+            if (!written && replacement != "") print replacement
+            written = 1
+            next
+          }
+          { print }
+          END { if (!written && replacement != "") print replacement }
+        ' "${path}" >"${tmp}" ||
+          ! /usr/bin/chmod --reference="${path}" "${tmp}" ||
+          ! /usr/bin/chown --reference="${path}" "${tmp}"; then
+          rm -f -- "${tmp}"
+          rm -rf -- "${txn}"
+          return 1
+        fi
+        restore_staged+=("${tmp}")
+      elif [[ -f "${source}" ]]; then
+        rm -rf -- "${txn}"
+        return 1
+      else
+        restore_staged+=("")
+      fi
+    elif [[ -f "${source}" && ! -L "${source}" ]]; then
+      /usr/bin/mkdir -p "${path%/*}"
+      tmp="$(/usr/bin/mktemp "${path}.rollback-stage.XXXXXX")" || { rm -rf -- "${txn}"; return 1; }
+      if ! /usr/bin/cp --preserve=mode,ownership,timestamps -- "${source}" "${tmp}"; then
+        rm -f -- "${tmp}"
+        rm -rf -- "${txn}"
+        return 1
+      fi
+      restore_staged+=("${tmp}")
+    else
+      restore_staged+=("")
+    fi
+    index=$((index + 1))
+  done <<'EOF'
+env|/etc/redgres/redgres.env
+issue-helper|/usr/libexec/redgres/issue-tls.sh
+renew-hook|/etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh
+issue-service|/etc/systemd/system/redgres-tls-issue.service
+issue-path|/etc/systemd/system/redgres-tls-issue.path
+EOF
+  fail_after="${REDGRES_RUNTIME_RESTORE_FAIL_AFTER:-0}"
+  [[ "${fail_after}" =~ ^[0-9]+$ ]] || fail_after=0
+  [[ -z "${REDGRES_RUNTIME_ROOT_PREFIX:-}" ]] && fail_after=0
+  for index in "${!restore_paths[@]}"; do
+    path="${restore_paths[$index]}"
+    if [[ "${fail_after}" -gt 0 && "${commit_count}" -eq "${fail_after}" ]]; then
+      break
+    fi
+    if [[ -n "${restore_staged[$index]}" ]]; then
+      /usr/bin/mv -fT -- "${restore_staged[$index]}" "${path}" || break
+      restore_staged[$index]=""
+    else
+      rm -f -- "${path}" || break
+    fi
+    commit_count=$((commit_count + 1))
+  done
+  if [[ "${commit_count}" -ne "${#restore_paths[@]}" ]]; then
+    for index in "${!restore_paths[@]}"; do
+      path="${restore_paths[$index]}"
+      if [[ "${current_present[$index]}" == "1" ]]; then
+        tmp="$(/usr/bin/mktemp "${path}.rollback-current.XXXXXX")" || continue
+        if /usr/bin/cp --preserve=mode,ownership,timestamps -- "${current_backups[$index]}" "${tmp}"; then
+          /usr/bin/mv -fT -- "${tmp}" "${path}" || rm -f -- "${tmp}"
+        else
+          rm -f -- "${tmp}"
+        fi
+      else
+        rm -f -- "${path}"
+      fi
+    done
+    for tmp in "${restore_staged[@]}"; do
+      [[ -z "${tmp}" ]] || rm -f -- "${tmp}"
+    done
+    rm -rf -- "${txn}"
+    return 1
+  fi
+  rm -rf -- "${txn}"
+}
+
+redgres_restore_previous_release() {
+  local previous="$1" current_link="$2"
+  [[ -n "${previous}" && -d "${previous}" ]] || return 1
+  redgres_restore_rollback_runtime "${previous}" || return 1
+  /usr/bin/ln -sfn "${previous}" "${current_link}"
+  redgres_write_unit_file "${current_link}/redgres"
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    systemctl restart redgres.service || return 1
+    if systemctl cat redgres-tls-issue.path >/dev/null 2>&1; then
+      systemctl enable --now redgres-tls-issue.path >/dev/null 2>&1 || return 1
+      systemctl is-active --quiet redgres-tls-issue.path || return 1
+    fi
+  fi
 }
 
 redgres_systemctl_try() {
@@ -275,8 +453,11 @@ redgres_update_apply() {
   fi
 
   staging="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/redgres-update.XXXXXX")"
-  # shellcheck disable=SC2064
-  trap "rm -rf '${staging}'" EXIT
+  REDGRES_UPDATE_GUARD=0
+  REDGRES_UPDATE_PREVIOUS=""
+  REDGRES_UPDATE_CURRENT_LINK=""
+  REDGRES_UPDATE_STAGING="${staging}"
+  trap 'rc=$?; if [[ "${REDGRES_UPDATE_GUARD:-0}" == "1" ]]; then redgres_restore_previous_release "${REDGRES_UPDATE_PREVIOUS}" "${REDGRES_UPDATE_CURRENT_LINK}" || true; fi; rm -rf -- "${REDGRES_UPDATE_STAGING}"; exit "${rc}"' EXIT
 
   redgres_extract_release_staging "${release_path}" "${staging}"
   binary_src="$(redgres_locate_extracted_binary "${staging}")"
@@ -294,6 +475,28 @@ redgres_update_apply() {
     /usr/bin/install -m 0644 "${staging}/SHA256SUMS" "${dest}/SHA256SUMS" || true
   fi
 
+  if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" && -n "${previous}" ]]; then
+    redgres_snapshot_rollback_runtime "${previous}" || redgres_die 'could not snapshot version-matched rollback runtime'
+  fi
+
+  if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && command -v systemctl >/dev/null 2>&1; then
+    systemctl stop redgres-tls-issue.path >/dev/null 2>&1 || true
+    systemctl stop redgres-tls-issue.service >/dev/null 2>&1 || true
+    if ! systemctl stop redgres.service >/dev/null 2>&1 || systemctl is-active --quiet redgres.service; then
+      systemctl start redgres.service >/dev/null 2>&1 || true
+      systemctl cat redgres-tls-issue.path >/dev/null 2>&1 && systemctl start redgres-tls-issue.path >/dev/null 2>&1 || true
+      redgres_die 'could not quiesce application and TLS helper before update'
+    fi
+    if systemctl is-active --quiet redgres-tls-issue.path || systemctl is-active --quiet redgres-tls-issue.service; then
+      systemctl start redgres.service >/dev/null 2>&1 || true
+      systemctl cat redgres-tls-issue.path >/dev/null 2>&1 && systemctl start redgres-tls-issue.path >/dev/null 2>&1 || true
+      redgres_die 'could not quiesce application and TLS helper before update'
+    fi
+    REDGRES_UPDATE_GUARD=1
+    REDGRES_UPDATE_PREVIOUS="${previous}"
+    REDGRES_UPDATE_CURRENT_LINK="${current_link}"
+  fi
+
   /usr/bin/ln -sfn "${dest}" "${current_link}"
   redgres_write_unit_file "${current_link}/redgres"
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && declare -F redgres_ensure_domain_secret_env >/dev/null 2>&1; then
@@ -303,7 +506,9 @@ redgres_update_apply() {
   fi
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && declare -F redgres_ensure_expert_tools >/dev/null 2>&1; then
     if command -v docker >/dev/null 2>&1; then
-      if [[ "${REDGRES_DOMAIN_RUNTIME_OPTIONAL:-}" == "1" ]]; then
+      if [[ "${REDGRES_EXPERT_TOOLS_IF_MANAGED:-}" == "1" && ! -f /etc/redgres/expert-tools-compose.yml ]]; then
+        redgres_log 'expert tools: not managed on this host; skipped'
+      elif [[ "${REDGRES_EXPERT_TOOLS_OPTIONAL:-}" == "1" ]]; then
         redgres_ensure_expert_tools || redgres_log 'expert tools: compose not fully applied'
       else
         redgres_ensure_expert_tools || redgres_die 'expert tools compose failed'
@@ -311,28 +516,20 @@ redgres_update_apply() {
     fi
   fi
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && declare -F redgres_install_domain_runtime >/dev/null 2>&1; then
-    if [[ "${REDGRES_DOMAIN_RUNTIME_OPTIONAL:-}" == "1" ]]; then
-      redgres_install_domain_runtime || redgres_log 'domain runtime: units/packages not fully applied'
-    else
-      redgres_install_domain_runtime || redgres_die 'domain runtime units or packages failed'
-    fi
+    redgres_install_domain_runtime || redgres_die 'domain runtime failed; previous binary, config, and TLS helper restored if available'
   fi
-
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
     systemctl enable redgres.service >/dev/null 2>&1 || true
     systemctl restart redgres.service || {
-      if [[ -n "${previous}" && -d "${previous}" ]]; then
-        /usr/bin/ln -sfn "${previous}" "${current_link}"
-        redgres_write_unit_file "${current_link}/redgres"
-        systemctl daemon-reload || true
-        systemctl restart redgres.service || true
-      fi
       redgres_die 'systemd restart failed; previous current restored if available'
     }
   fi
 
-  redgres_probe_healthz
+  if ! redgres_probe_healthz; then
+    redgres_die 'health gate failed; previous binary, config, and TLS helper restored if available'
+  fi
+  REDGRES_UPDATE_GUARD=0
   rm -rf "${staging}"
   trap - EXIT
   cat <<EOF
@@ -351,19 +548,47 @@ EOF
 
 redgres_rollback_apply() {
   local version="$1"
-  local dest current_link
+  local dest current_link current_previous=''
 
   redgres_rollback_version_ok "${version}" || redgres_die '--to must be a path-safe version token'
   dest="$(redgres_opt_releases_dir)/${version}"
   [[ -d "${dest}" && -x "${dest}/redgres" ]] || redgres_die 'rollback target release is missing'
   current_link="$(redgres_opt_current_link)"
+  if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]]; then
+    current_previous="$(/usr/bin/readlink -f "${current_link}" 2>/dev/null || true)"
+    if [[ -n "${current_previous}" && -d "${current_previous}" ]]; then
+      redgres_snapshot_rollback_runtime "${current_previous}" || redgres_die 'could not snapshot current runtime before rollback'
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl stop redgres-tls-issue.path >/dev/null 2>&1 || true
+      systemctl stop redgres-tls-issue.service >/dev/null 2>&1 || true
+      if ! systemctl stop redgres.service >/dev/null 2>&1 || systemctl is-active --quiet redgres.service ||
+        systemctl is-active --quiet redgres-tls-issue.path || systemctl is-active --quiet redgres-tls-issue.service; then
+        systemctl start redgres.service >/dev/null 2>&1 || true
+        systemctl cat redgres-tls-issue.path >/dev/null 2>&1 && systemctl start redgres-tls-issue.path >/dev/null 2>&1 || true
+        redgres_die 'could not quiesce application and TLS helper before rollback'
+      fi
+    fi
+    REDGRES_ROLLBACK_GUARD=1
+    REDGRES_ROLLBACK_PREVIOUS="${current_previous}"
+    REDGRES_ROLLBACK_CURRENT_LINK="${current_link}"
+    trap 'rc=$?; if [[ "${REDGRES_ROLLBACK_GUARD:-0}" == "1" ]]; then redgres_restore_previous_release "${REDGRES_ROLLBACK_PREVIOUS}" "${REDGRES_ROLLBACK_CURRENT_LINK}" || true; fi; exit "${rc}"' EXIT
+    if ! redgres_restore_rollback_runtime "${dest}"; then
+      redgres_die 'rollback target lacks a version-matched config and TLS-helper snapshot'
+    fi
+  fi
   /usr/bin/ln -sfn "${dest}" "${current_link}"
   redgres_write_unit_file "${current_link}/redgres"
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
     systemctl restart redgres.service || redgres_die 'systemd restart failed after rollback'
+    if systemctl cat redgres-tls-issue.path >/dev/null 2>&1; then
+      systemctl enable --now redgres-tls-issue.path >/dev/null 2>&1 || redgres_die 'TLS request path failed after rollback'
+    fi
   fi
-  redgres_probe_healthz
+  redgres_probe_healthz || redgres_die 'health gate failed after rollback'
+  REDGRES_ROLLBACK_GUARD=0
+  trap - EXIT
   cat <<'EOF'
 Rollback applied:
 symlink: switched

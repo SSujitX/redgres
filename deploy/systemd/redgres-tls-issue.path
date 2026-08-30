@@ -4,6 +4,8 @@ Description=Issue Redgres TLS when a hostname request is written
 [Path]
 PathChanged=/var/lib/redgres/tls-issue.request
 PathExists=/var/lib/redgres/tls-issue.request
+PathChanged=/var/lib/redgres-tls/active.request
+PathExists=/var/lib/redgres-tls/active.request
 Unit=redgres-tls-issue.service
 
 [Install]

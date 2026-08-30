@@ -62,7 +62,7 @@ REDGRES_CLOUDFLARE_OAUTH_CLIENT_FILE=/var/lib/redgres/secrets/cloudflare-oauth-c
 REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-oauth-token.json
 REDGRES_CERTBOT_DNS_TOKEN_FILE=/var/lib/redgres/secrets/certbot-dns.ini
 REDGRES_TLS_ISSUE_REQUEST_FILE=/var/lib/redgres/tls-issue.request
-REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result
+REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result
 EOF
 }
 
@@ -83,6 +83,22 @@ redgres_env_ensure_lines() {
   [[ "${added}" -eq 1 ]]
 }
 
+redgres_migrate_tls_result_path() {
+  local env_file="$1" tmp
+  grep -q '^REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result$' "${env_file}" || return 1
+  tmp="$(mktemp "${env_file}.XXXXXX")" || return 1
+  awk '{
+    if ($0 == "REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result") {
+      print "REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result"
+    } else {
+      print
+    }
+  }' "${env_file}" >"${tmp}"
+  chmod --reference="${env_file}" "${tmp}" 2>/dev/null || chmod 600 "${tmp}"
+  chown --reference="${env_file}" "${tmp}" 2>/dev/null || true
+  mv -fT "${tmp}" "${env_file}"
+}
+
 redgres_ensure_secrets_dir() {
   local dir="${REDGRES_SECRETS_DIR:-/var/lib/redgres/secrets}"
   mkdir -p "${dir}"
@@ -93,13 +109,12 @@ redgres_ensure_secrets_dir() {
 }
 
 redgres_ensure_domain_secret_env() {
-  local env_file="${1:-/etc/redgres/redgres.env}"
+  local env_file="${1:-/etc/redgres/redgres.env}" changed=0
   redgres_ensure_secrets_dir
   [[ -f "${env_file}" ]] || return 1
-  if redgres_domain_secret_env_defaults | redgres_env_ensure_lines "${env_file}"; then
-    return 0
-  fi
-  return 1
+  redgres_migrate_tls_result_path "${env_file}" && changed=1
+  redgres_domain_secret_env_defaults | redgres_env_ensure_lines "${env_file}" && changed=1
+  [[ "${changed}" -eq 1 ]]
 }
 
 redgres_public_ipv4() {
@@ -521,6 +536,84 @@ ReadWritePaths=/var/lib/redgres /etc/redgres
 [Install]
 WantedBy=multi-user.target
 EOF
+}
+
+redgres_upgrade_pgadmin_master() {
+  local secrets='/var/lib/redgres/secrets'
+  local master="${secrets}/pgadmin.master"
+  local hook="${secrets}/pgadmin-master-hook"
+  local yml='/etc/redgres/expert-tools-compose.yml'
+  local pg_image ri_image need_rewrite=0
+  mkdir -p "${secrets}"
+  if [[ ! -f "${master}" || -L "${master}" ]]; then
+    umask 077
+    dd if=/dev/urandom bs=24 count=1 status=none | base64 | tr -d '\n' >"${master}"
+    printf '\n' >>"${master}"
+  fi
+  cat >"${hook}" <<'EOF'
+#!/bin/sh
+set -eu
+f=/run/redgres/pgadmin.master
+[ -f "$f" ] || exit 1
+[ ! -L "$f" ] || exit 1
+IFS= read -r key <"$f" || true
+[ -n "$key" ] || exit 1
+printf '%s' "$key"
+EOF
+  redgres_restore_pgadmin_master_ownership
+  if [[ -f /etc/redgres/redgres.env ]] && ! grep -qE '^REDGRES_PGADMIN_MASTER_PASSWORD_FILE=' /etc/redgres/redgres.env; then
+    printf '%s\n' 'REDGRES_PGADMIN_MASTER_PASSWORD_FILE=/var/lib/redgres/secrets/pgadmin.master' >>/etc/redgres/redgres.env
+  fi
+  [[ -f "${yml}" ]] || return 0
+  if grep -q 'MASTER_PASSWORD_REQUIRED' "${yml}"; then
+    need_rewrite=1
+  fi
+  if ! grep -q 'pgadmin.master:/run/redgres/pgadmin.master:ro' "${yml}"; then
+    need_rewrite=1
+  fi
+  if ! grep -q 'pgadmin-master-hook:/pgadmin4/redgres-master-hook:ro' "${yml}"; then
+    need_rewrite=1
+  fi
+  if ! grep -q 'MASTER_PASSWORD_HOOK' "${yml}"; then
+    need_rewrite=1
+  fi
+  if [[ -d /var/lib/redgres/pgadmin ]]; then
+    log "${YELLOW}Note: existing pgAdmin volume may still prompt for a master password until recreated (${BOLD}/var/lib/redgres/pgadmin${NC}${YELLOW}).${NC}"
+  fi
+  [[ "${need_rewrite}" -eq 1 ]] || return 0
+  pg_image="$(awk '/^[[:space:]]*image:[[:space:]]*dpage\/pgadmin4:/ { print $2; exit }' "${yml}")"
+  ri_image="$(awk '/^[[:space:]]*image:[[:space:]]*redis\/redisinsight:/ { print $2; exit }' "${yml}")"
+  [[ -n "${pg_image}" ]] || pg_image='dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d'
+  [[ -n "${ri_image}" ]] || ri_image='redis/redisinsight:3.8.0@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84'
+  cat >"${yml}" <<EOF
+services:
+  pgadmin:
+    image: ${pg_image}
+    container_name: redgres-pgadmin
+    restart: unless-stopped
+    env_file:
+      - /var/lib/redgres/secrets/pgadmin-compose.env
+    environment:
+      PGADMIN_CONFIG_AUTHENTICATION_SOURCES: "['webserver']"
+      PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER: "True"
+      PGADMIN_CONFIG_WEBSERVER_REMOTE_USER: "'X-Forwarded-User'"
+      PGADMIN_CONFIG_MASTER_PASSWORD_HOOK: "'/pgadmin4/redgres-master-hook'"
+    ports:
+      - "127.0.0.1:5052:80"
+    volumes:
+      - /var/lib/redgres/pgadmin:/var/lib/pgadmin
+      - /var/lib/redgres/secrets/pgadmin.master:/run/redgres/pgadmin.master:ro
+      - /var/lib/redgres/secrets/pgadmin-master-hook:/pgadmin4/redgres-master-hook:ro
+  redisinsight:
+    image: ${ri_image}
+    container_name: redgres-redisinsight
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5542:5540"
+    volumes:
+      - /var/lib/redgres/redisinsight:/data
+EOF
+  chmod 644 "${yml}"
 }
 
 redgres_write_app_unit() {

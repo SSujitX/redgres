@@ -726,6 +726,16 @@ redgres_enable_postgres_loopback_ssl() {
   redgres_log 'postgres loopback TLS enabled (snakeoil; sslmode=require)'
 }
 
+redgres_write_tls_targets() {
+  local targets='/etc/redgres/tls-targets' tmp pgbouncer=0
+  [[ "${pgbouncer_mode}" == "fresh" ]] && pgbouncer=1
+  tmp="$(/usr/bin/mktemp /etc/redgres/tls-targets.XXXXXX)" || redgres_die 'TLS target manifest could not be created'
+  printf '%s\n' "postgres_cluster=${postgres_version}/main" "pgbouncer=${pgbouncer}" 'pgbouncer_user=postgres' >"${tmp}"
+  /usr/bin/chown root:root "${tmp}"
+  /usr/bin/chmod 600 "${tmp}"
+  /usr/bin/mv -fT "${tmp}" "${targets}"
+}
+
 redgres_create_postgres_admin() {
   local passfile='/etc/redgres/postgres.pass' pass
   if [[ ! -f "${passfile}" ]]; then
@@ -845,6 +855,7 @@ redgres_live_install() {
   fi
   redgres_write_redis_admin_url
   redgres_write_default_env
+  redgres_write_tls_targets
 
   redgres_section 6 8 'Firewall'
   redgres_install_bootstrap_firewall
@@ -854,7 +865,8 @@ redgres_live_install() {
 
   redgres_section 8 8 'Application'
   release_path="$(redgres_download_latest_release)"
-  REDGRES_DOMAIN_RUNTIME_OPTIONAL=1
+  REDGRES_DOMAIN_PACKAGES_OPTIONAL=1
+  REDGRES_EXPERT_TOOLS_OPTIONAL=1
   redgres_update_apply "${release_path}"
   /usr/bin/rm -rf "$(/usr/bin/dirname "${release_path}")"
   redgres_owner_bootstrap "$(redgres_opt_current_link)/redgres"

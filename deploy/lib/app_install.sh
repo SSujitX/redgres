@@ -14,7 +14,7 @@ REDGRES_CLOUDFLARE_OAUTH_CLIENT_FILE=/var/lib/redgres/secrets/cloudflare-oauth-c
 REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE=/var/lib/redgres/secrets/cloudflare-oauth-token.json
 REDGRES_CERTBOT_DNS_TOKEN_FILE=/var/lib/redgres/secrets/certbot-dns.ini
 REDGRES_TLS_ISSUE_REQUEST_FILE=/var/lib/redgres/tls-issue.request
-REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result
+REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result
 EOF
 }
 
@@ -36,6 +36,22 @@ redgres_env_ensure_lines() {
   [[ "${added}" -eq 1 ]]
 }
 
+redgres_migrate_tls_result_path() {
+  local env_file="$1" tmp
+  grep -q '^REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result$' "${env_file}" || return 1
+  tmp="$(/usr/bin/mktemp "${env_file}.XXXXXX")" || return 1
+  /usr/bin/awk '{
+    if ($0 == "REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres/tls-issue.result") {
+      print "REDGRES_TLS_ISSUE_RESULT_FILE=/var/lib/redgres-tls/issue.result"
+    } else {
+      print
+    }
+  }' "${env_file}" >"${tmp}"
+  /usr/bin/chmod --reference="${env_file}" "${tmp}" 2>/dev/null || /usr/bin/chmod 600 "${tmp}"
+  /usr/bin/chown --reference="${env_file}" "${tmp}" 2>/dev/null || true
+  /usr/bin/mv -fT "${tmp}" "${env_file}"
+}
+
 redgres_ensure_secrets_dir() {
   local dir="${REDGRES_SECRETS_DIR:-/var/lib/redgres/secrets}"
   /usr/bin/mkdir -p "${dir}"
@@ -46,13 +62,12 @@ redgres_ensure_secrets_dir() {
 }
 
 redgres_ensure_domain_secret_env() {
-  local env_file="${1:-/etc/redgres/redgres.env}"
+  local env_file="${1:-/etc/redgres/redgres.env}" changed=0
   redgres_ensure_secrets_dir
   [[ -f "${env_file}" ]] || return 1
-  if redgres_domain_secret_env_defaults | redgres_env_ensure_lines "${env_file}"; then
-    return 0
-  fi
-  return 1
+  redgres_migrate_tls_result_path "${env_file}" && changed=1
+  redgres_domain_secret_env_defaults | redgres_env_ensure_lines "${env_file}" && changed=1
+  [[ "${changed}" -eq 1 ]]
 }
 
 redgres_pgbouncer_env_lines() {
@@ -485,6 +500,18 @@ redgres_systemd_unit_dir() {
   printf '%s' "${REDGRES_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
 }
 
+redgres_domain_runtime_is_managed() {
+  local libexec units hook
+  libexec="$(redgres_libexec_dir)"
+  units="$(redgres_systemd_unit_dir)"
+  hook="${REDGRES_CERTBOT_DEPLOY_HOOK_DIR:-/etc/letsencrypt/renewal-hooks/deploy}"
+  [[ -e "${libexec}/issue-tls.sh" ||
+    -e "${units}/redgres-tls-issue.service" ||
+    -e "${units}/redgres-tls-issue.path" ||
+    -e "${units}/cloudflared-redgres.service" ||
+    -e "${hook}/redgres-copy-certs.sh" ]]
+}
+
 redgres_install_file() {
   local src="$1" dest="$2" mode="$3"
   [[ -f "${src}" ]] || return 1
@@ -544,11 +571,21 @@ redgres_install_domain_packages() {
 }
 
 redgres_install_domain_runtime() {
+  if [[ "${REDGRES_DOMAIN_RUNTIME_IF_MANAGED:-}" == "1" ]] && ! redgres_domain_runtime_is_managed; then
+    redgres_log 'domain runtime: not managed on this host; skipped'
+    return 0
+  fi
   redgres_install_cloudflared_units || return 1
   redgres_install_tls_issue_helper || return 1
   if [[ "${EUID}" -eq 0 && "${REDGRES_OPT_ROOT:-/opt/redgres}" == "/opt/redgres" && -x /usr/bin/apt-get && "${REDGRES_SKIP_DOMAIN_PACKAGES:-}" != "1" ]]; then
     if declare -F redgres_apt_install >/dev/null 2>&1; then
-      redgres_install_domain_packages || return 1
+      if ! redgres_install_domain_packages; then
+        if [[ "${REDGRES_DOMAIN_PACKAGES_OPTIONAL:-}" == "1" ]]; then
+          redgres_log 'domain runtime: package refresh not applied; installed helper files remain version-matched'
+        else
+          return 1
+        fi
+      fi
     fi
   fi
   if command -v systemctl >/dev/null 2>&1; then

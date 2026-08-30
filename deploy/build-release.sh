@@ -42,7 +42,16 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "${LDFLAGS}" -
 printf '%s\n' "${VERSION_FILE}" >"${STAGE}/VERSION"
 chmod 0755 "${STAGE}/redgres"
 
-tar -C "${STAGE}" -czf "${OUT_DIR}/${ASSET}" redgres VERSION
+# Ship the transaction that installs this binary in the same checksummed
+# archive. upgrade.sh must not maintain a second, weaker update/rollback path.
+mkdir -p "${STAGE}/installer"
+cp -a deploy/install.sh deploy/lib deploy/systemd "${STAGE}/installer/"
+chmod 0755 "${STAGE}/installer/install.sh"
+find "${STAGE}/installer/lib" -type f -name '*.sh' -exec chmod 0644 {} +
+find "${STAGE}/installer/systemd" -type f -exec chmod 0644 {} +
+find "${STAGE}/installer/systemd" -type f -name '*.sh' -exec chmod 0755 {} +
+
+tar -C "${STAGE}" -czf "${OUT_DIR}/${ASSET}" redgres VERSION installer
 (
   cd "${OUT_DIR}"
   sha256sum "${ASSET}" | awk '{print tolower($1) "  " $2}' >SHA256SUMS

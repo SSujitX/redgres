@@ -10,6 +10,7 @@
 # App binary only (preserve PostgreSQL, Redis, config, and data):
 #   curl ... | sudo bash -s -- -y --app-only [--purge-config] [--purge-state]
 set -uo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 # Git clone detection (sourced by tests with REDGRES_UNINSTALL_FUNCTIONS_ONLY=1).
 redgres_uninstall_is_git_checkout() {
@@ -207,6 +208,45 @@ redgres_uninstall_apt_get() {
   return 0
 }
 
+redgres_uninstall_cloudflare_status_confirmed() {
+  case "${1:-}" in
+    api_ok|no_domain|manual_dns) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+redgres_uninstall_restore_quiesced() {
+  [[ "${REDGRES_UNINSTALL_QUIESCE_GUARD:-0}" == "1" ]] || return 0
+  REDGRES_UNINSTALL_QUIESCE_GUARD=0
+  command -v systemctl >/dev/null 2>&1 || return 0
+  if [[ "${REDGRES_UNINSTALL_APP_WAS_ACTIVE:-0}" == "1" ]]; then
+    systemctl start redgres.service >/dev/null 2>&1 || true
+  fi
+  if [[ "${REDGRES_UNINSTALL_TLS_PATH_WAS_ACTIVE:-0}" == "1" ]]; then
+    systemctl start redgres-tls-issue.path >/dev/null 2>&1 || true
+  fi
+}
+
+redgres_uninstall_delete_trusted_lineage() {
+  local lineage_file="$1" certbot_bin="$2" metadata lineage cert_name expected='root:root:600'
+  [[ -e "${lineage_file}" ]] || return 2
+  [[ -f "${lineage_file}" && ! -L "${lineage_file}" ]] || return 1
+  if [[ "${lineage_file}" != "/etc/redgres/tls-lineage" ]]; then
+    expected="${REDGRES_UNINSTALL_LINEAGE_EXPECTED_METADATA:-${expected}}"
+  fi
+  metadata="$(/usr/bin/stat -c '%U:%G:%a' "${lineage_file}" 2>/dev/null || true)"
+  [[ "${metadata}" == "${expected}" ]] || return 1
+  lineage="$(/usr/bin/head -n1 "${lineage_file}")"
+  case "${lineage}" in
+    /etc/letsencrypt/live/*) ;;
+    *) return 1 ;;
+  esac
+  cert_name="${lineage##*/}"
+  [[ "${cert_name}" =~ ^[a-z0-9.-]+(-[0-9]+)?$ ]] || return 1
+  [[ -x "${certbot_bin}" ]] || return 1
+  "${certbot_bin}" delete --non-interactive --cert-name "${cert_name}" 2>/dev/null
+}
+
 if [[ "${REDGRES_UNINSTALL_FUNCTIONS_ONLY:-}" == "1" ]]; then
   return 0 2>/dev/null || exit 0
 fi
@@ -358,49 +398,29 @@ fi
 redgres_uninstall_enter_safe_cwd || true
 redgres_uninstall_export_apt_env
 
-env_value_from_file() {
-  local key="$1" file="${2:-${ETC_ROOT}/redgres.env}" line
-  [[ -f "${file}" ]] || return 0
-  line="$(grep -E "^${key}=" "${file}" 2>/dev/null | tail -n1 || true)"
-  printf '%s' "${line#*=}"
-}
-
 DOMAIN_SNAPSHOT="$(mktemp /tmp/redgres-uninstall-domain.XXXXXX)"
 CF_API_STATUS="unknown"
-trap 'rm -f "${DOMAIN_SNAPSHOT}" /tmp/redgres-uninstall-apt.*' EXIT
-trap 'rm -f "${DOMAIN_SNAPSHOT}" /tmp/redgres-uninstall-apt.*; exit 130' INT
-trap 'rm -f "${DOMAIN_SNAPSHOT}" /tmp/redgres-uninstall-apt.*; exit 143' TERM
+REDGRES_UNINSTALL_QUIESCE_GUARD=0
+REDGRES_UNINSTALL_APP_WAS_ACTIVE=0
+REDGRES_UNINSTALL_TLS_PATH_WAS_ACTIVE=0
+redgres_uninstall_exit_cleanup() {
+  redgres_uninstall_restore_quiesced
+  rm -f "${DOMAIN_SNAPSHOT}" /tmp/redgres-uninstall-apt.*
+}
+trap 'rc=$?; redgres_uninstall_exit_cleanup; exit "${rc}"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 write_domain_snapshot() {
-  local sqlite env_file
+  local sqlite
   : >"${DOMAIN_SNAPSHOT}"
-  env_file="${ETC_ROOT}/redgres.env"
-  sqlite="$(env_value_from_file REDGRES_SQLITE_PATH "${env_file}")"
-  [[ -n "${sqlite}" ]] || sqlite="${VAR_ROOT}/redgres.db"
+  sqlite="${VAR_ROOT}/redgres.db"
   [[ -f "${sqlite}" ]] || return 0
   command -v python3 >/dev/null 2>&1 || return 0
-  python3 - "${env_file}" "${sqlite}" "${DOMAIN_SNAPSHOT}" <<'PY' || true
+  python3 - "${sqlite}" "${DOMAIN_SNAPSHOT}" <<'PY' || true
 import json, os, sqlite3, sys
 
-def q(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')
-
-env_path, db_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
-
-def load_env(path):
-    env = {}
-    if os.path.isfile(path):
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                env[key.strip()] = value.strip()
-    return env
-
-env = load_env(env_path)
-sqlite = env.get("REDGRES_SQLITE_PATH", db_path)
+sqlite, out_path = sys.argv[1], sys.argv[2]
 if not os.path.isfile(sqlite):
     raise SystemExit(0)
 try:
@@ -432,34 +452,53 @@ tunnel_id = (dep.get("tunnel_id") or "").strip()
 tunnel_name = (dep.get("tunnel_name") or "").strip()
 dns_provider = (dep.get("dns_provider") or "").strip().lower()
 
-lines = [
-    f'ZONE="{q(zone)}"',
-    f'CONSOLE="{q(console)}"',
-    f'DB="{q(db_host)}"',
-    f'RS="{q(rs)}"',
-    f'PGADMIN="{q(pgadmin)}"',
-    f'INSIGHT="{q(insight)}"',
-    f'TUNNEL_ID="{q(tunnel_id)}"',
-    f'TUNNEL_NAME="{q(tunnel_name)}"',
-    f'DNS_PROVIDER="{q(dns_provider)}"',
-    "CONFIGURED=1",
-]
 with open(out_path, "w", encoding="utf-8") as fh:
-    fh.write("\n".join(lines) + "\n")
+    json.dump({
+        "configured": True,
+        "zone": zone,
+        "console": console,
+        "db": db_host,
+        "rs": rs,
+        "pgadmin": pgadmin,
+        "insight": insight,
+        "tunnel_id": tunnel_id,
+        "tunnel_name": tunnel_name,
+        "dns_provider": dns_provider,
+    }, fh)
 PY
 }
 
 write_domain_snapshot
 
 print_cloudflare_followup() {
-  local snap="${DOMAIN_SNAPSHOT}" need_manual=1
+  local snap="${DOMAIN_SNAPSHOT}" need_manual=1 ZONE CONSOLE DB RS PGADMIN INSIGHT TUNNEL_ID TUNNEL_NAME
   [[ "${APP_ONLY}" -eq 1 ]] && return 0
   [[ "${KEEP_REMOTE}" -eq 1 ]] && need_manual=1
   [[ "${CF_API_STATUS}" == "api_ok" ]] && need_manual=0
 
-  if [[ -f "${snap}" ]] && grep -q '^CONFIGURED=1' "${snap}" 2>/dev/null; then
-    # shellcheck disable=SC1090
-    source "${snap}"
+  if [[ -f "${snap}" ]] && python3 - "${snap}" >/dev/null 2>&1 <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+raise SystemExit(0 if data.get("configured") is True else 1)
+PY
+  then
+    snapshot_value() {
+      python3 - "${snap}" "$1" <<'PY'
+import json, re, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+value = data.get(sys.argv[2], "")
+if isinstance(value, str) and len(value) <= 253 and re.fullmatch(r"[A-Za-z0-9._:-]*", value):
+    print(value, end="")
+PY
+    }
+    ZONE="$(snapshot_value zone)"
+    CONSOLE="$(snapshot_value console)"
+    DB="$(snapshot_value db)"
+    RS="$(snapshot_value rs)"
+    PGADMIN="$(snapshot_value pgadmin)"
+    INSIGHT="$(snapshot_value insight)"
+    TUNNEL_ID="$(snapshot_value tunnel_id)"
+    TUNNEL_NAME="$(snapshot_value tunnel_name)"
     printf '%b\n' ""
     if [[ "${need_manual}" -eq 0 ]]; then
       printf '%b\n' "  ${BOLD}Cloudflare${NC}  ${GREEN}API cleanup attempted${NC} ${DIM}(zone ${ZONE:-unknown})${NC}"
@@ -507,54 +546,66 @@ print_cloudflare_followup() {
 }
 
 remote_cloudflare_disconnect() {
-  local sqlite env_file cf_out
+  local sqlite cf_out
   [[ "${KEEP_REMOTE}" -eq 1 ]] && {
     CF_API_STATUS="skipped_keep_remote"
     return 0
   }
-  env_file="${ETC_ROOT}/redgres.env"
-  sqlite="$(env_value_from_file REDGRES_SQLITE_PATH "${env_file}")"
-  [[ -n "${sqlite}" ]] || sqlite="${VAR_ROOT}/redgres.db"
+  sqlite="${VAR_ROOT}/redgres.db"
   [[ -f "${sqlite}" ]] || {
     CF_API_STATUS="no_state"
-    printf '%b\n' "         ${YELLOW}no sqlite state — use Cloudflare dashboard${NC}"
-    return 0
+    printf '%b\n' "${RED}Error: no SQLite domain state; local evidence was preserved. Use --keep-remote only after accepting manual Cloudflare cleanup.${NC}" >&2
+    return 1
   }
   command -v python3 >/dev/null 2>&1 || {
-    printf '%b\n' "         ${YELLOW}skipped — python3 required for Cloudflare API${NC}"
+    printf '%b\n' "${RED}Error: python3 is required for confirmed Cloudflare cleanup; local evidence was preserved.${NC}" >&2
     CF_API_STATUS="no_python"
-    return 0
+    return 1
   }
-  cf_out="$(python3 - "${env_file}" "${sqlite}" <<'PY' 2>&1 || true
-import json, os, sqlite3, sys, urllib.error, urllib.request
+  cf_out="$(python3 - "${sqlite}" "${VAR_ROOT}" <<'PY' 2>&1 || true
+import json, os, stat, sqlite3, sys, urllib.error, urllib.request
 
-def load_env(path):
-    env = {}
-    if not os.path.isfile(path):
-        return env
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            env[key.strip()] = value.strip()
-    return env
+var_root = sys.argv[2]
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+directory = getattr(os, "O_DIRECTORY", 0)
 
-def read_token(env):
-    token_path = env.get("REDGRES_CLOUDFLARE_TOKEN_FILE", "/var/lib/redgres/secrets/cloudflare-api-token")
-    if token_path and os.path.isfile(token_path):
-        token = open(token_path, encoding="utf-8").read().strip()
+def safe_secret(name):
+    try:
+        root_fd = os.open(var_root, os.O_RDONLY | directory | nofollow)
+    except OSError:
+        return b""
+    try:
+        secrets_fd = os.open("secrets", os.O_RDONLY | directory | nofollow, dir_fd=root_fd)
+        try:
+            fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=secrets_fd)
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+                    return b""
+                return os.read(fd, 65537)
+            finally:
+                os.close(fd)
+        finally:
+            os.close(secrets_fd)
+    except OSError:
+        return b""
+    finally:
+        os.close(root_fd)
+
+def read_token():
+    raw = safe_secret("cloudflare-api-token")
+    if raw:
+        token = raw.decode("utf-8").strip()
         if token:
             return token
-    oauth_path = env.get("REDGRES_CLOUDFLARE_OAUTH_TOKEN_FILE", "")
-    if oauth_path and os.path.isfile(oauth_path):
+    raw = safe_secret("cloudflare-oauth-token.json")
+    if raw:
         try:
-            payload = json.load(open(oauth_path, encoding="utf-8"))
+            payload = json.loads(raw.decode("utf-8"))
             token = (payload.get("access_token") or "").strip()
             if token:
                 return token
-        except (OSError, json.JSONDecodeError):
+        except (UnicodeDecodeError, json.JSONDecodeError):
             pass
     return ""
 
@@ -574,9 +625,7 @@ def cf_delete(path, token):
         print(f"         warn: Cloudflare DELETE failed ({err.code})", file=sys.stderr)
         return False
 
-env_path, db_path = sys.argv[1], sys.argv[2]
-env = load_env(env_path)
-sqlite = env.get("REDGRES_SQLITE_PATH", db_path)
+sqlite = sys.argv[1]
 if not os.path.isfile(sqlite):
     print("         no domain state (sqlite missing)")
     print("STATUS:no_state")
@@ -592,7 +641,7 @@ if (dep.get("dns_provider") or "").strip().lower() == "manual":
     print("         manual DNS — Cloudflare API skipped")
     print("STATUS:manual_dns")
     raise SystemExit(0)
-token = read_token(env)
+token = read_token()
 if not token:
     print("         warn: no Cloudflare token — remove DNS/tunnel/Access in dashboard", file=sys.stderr)
     print("STATUS:no_token")
@@ -630,53 +679,55 @@ PY
   printf '%s\n' "${cf_out}" | grep -v '^STATUS:' || true
   CF_API_STATUS="$(printf '%s\n' "${cf_out}" | grep '^STATUS:' | tail -n1 | cut -d: -f2-)"
   [[ -n "${CF_API_STATUS}" ]] || CF_API_STATUS="unknown"
+  if ! redgres_uninstall_cloudflare_status_confirmed "${CF_API_STATUS}"; then
+    printf '%b\n' "${RED}Error: Cloudflare cleanup was not confirmed; local state and credentials were preserved for retry. Use --keep-remote only to accept manual remote cleanup.${NC}" >&2
+    return 1
+  fi
 }
 
 purge_tls_certs() {
-  local sqlite certbot_bin primary
+  local lineage_file='/etc/redgres/tls-lineage' lineage cert_name rc=0
   [[ "${KEEP_REMOTE}" -eq 1 ]] && return 0
-  sqlite="$(env_value_from_file REDGRES_SQLITE_PATH)"
-  [[ -n "${sqlite}" ]] || sqlite="${VAR_ROOT}/redgres.db"
-  [[ -f "${sqlite}" ]] || return 0
-  certbot_bin="$(env_value_from_file REDGRES_CERTBOT_BIN)"
-  [[ -n "${certbot_bin}" ]] || certbot_bin="certbot"
-  command -v "${certbot_bin}" >/dev/null 2>&1 || return 0
-  primary="$(python3 - "${sqlite}" <<'PY' || true
-import json, sqlite3, sys
-db = sys.argv[1]
-try:
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    row = con.execute("SELECT payload FROM domain_deployment WHERE id = 1").fetchone()
-    if not row:
-        raise SystemExit(0)
-    dep = json.loads(row[0])
-except Exception:
-    raise SystemExit(0)
-db_host = (dep.get("db_hostname") or "").strip()
-if not db_host:
-    zone = (dep.get("zone_name") or "").strip()
-    if zone:
-        db_host = f"db.{zone}"
-if db_host:
-    print(db_host)
-PY
-)"
-  [[ -n "${primary}" ]] || return 0
-  "${certbot_bin}" delete --non-interactive --cert-name "${primary}" 2>/dev/null || true
-  printf '%b\n' "         certbot delete attempted for ${primary}"
+  if [[ ! -e "${lineage_file}" ]]; then
+    printf '%b\n' "         ${YELLOW}no trusted Redgres lineage; legacy Certbot certificates require manual review${NC}"
+    return 0
+  fi
+  redgres_uninstall_delete_trusted_lineage "${lineage_file}" /usr/bin/certbot || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    printf '%b\n' "${RED}Error: Certbot lineage cleanup could not be verified; trusted evidence was preserved for retry.${NC}" >&2
+    return 1
+  fi
+  lineage="$(/usr/bin/head -n1 "${lineage_file}")"
+  cert_name="${lineage##*/}"
+  printf '%b\n' "         certbot lineage deleted for ${cert_name}"
 }
 
 purge_tls_local_copies() {
+  local targets='/etc/redgres/tls-targets' metadata key value cluster='' pgbouncer=0 version name
+  if [[ -f "${targets}" && ! -L "${targets}" ]]; then
+    metadata="$(/usr/bin/stat -c '%U:%G:%a' "${targets}" 2>/dev/null || true)"
+    if [[ "${metadata}" == "root:root:600" ]]; then
+      while IFS='=' read -r key value; do
+        case "${key}" in
+          postgres_cluster) [[ "${value}" =~ ^[0-9]+/[a-z0-9_-]+$ ]] && cluster="${value}" ;;
+          pgbouncer) [[ "${value}" == "0" || "${value}" == "1" ]] && pgbouncer="${value}" ;;
+        esac
+      done <"${targets}"
+    fi
+  fi
   rm -rf /etc/ssl/redgres /etc/redgres/tls 2>/dev/null || true
   rm -f /etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh 2>/dev/null || true
-  rm -f /etc/postgresql/*/main/conf.d/redgres-ssl.conf \
-    /etc/postgresql/*/main/redgres-fullchain.pem \
-    /etc/postgresql/*/main/redgres-privkey.pem \
-    /etc/pgbouncer/redgres-fullchain.pem \
-    /etc/pgbouncer/redgres-privkey.pem 2>/dev/null || true
-  # Leftover lineage makes the next issue-tls exit 0 with "not yet due" and skip a real copy path.
-  rm -rf /etc/letsencrypt/live/db.redgres.com /etc/letsencrypt/archive/db.redgres.com \
-    /etc/letsencrypt/renewal/db.redgres.com.conf 2>/dev/null || true
+  if [[ -n "${cluster}" ]]; then
+    version="${cluster%%/*}"
+    name="${cluster#*/}"
+    rm -f "/etc/postgresql/${version}/${name}/conf.d/redgres-ssl.conf" \
+      "/etc/postgresql/${version}/${name}/redgres-fullchain.pem" \
+      "/etc/postgresql/${version}/${name}/redgres-privkey.pem" 2>/dev/null || true
+  fi
+  if [[ "${pgbouncer}" == "1" ]]; then
+    rm -f /etc/pgbouncer/redgres-fullchain.pem /etc/pgbouncer/redgres-privkey.pem 2>/dev/null || true
+  fi
+  rm -f /etc/redgres/tls-targets /etc/redgres/tls-lineage 2>/dev/null || true
 }
 
 purge_cloudflared_package() {
@@ -776,17 +827,41 @@ purge_pgbouncer() {
   fi
 }
 
+redgres_quiesce_domain_tls() {
+  local unit
+  command -v systemctl >/dev/null 2>&1 || return 0
+  REDGRES_UNINSTALL_APP_WAS_ACTIVE=0
+  REDGRES_UNINSTALL_TLS_PATH_WAS_ACTIVE=0
+  systemctl is-active --quiet redgres.service && REDGRES_UNINSTALL_APP_WAS_ACTIVE=1
+  systemctl is-active --quiet redgres-tls-issue.path && REDGRES_UNINSTALL_TLS_PATH_WAS_ACTIVE=1
+  REDGRES_UNINSTALL_QUIESCE_GUARD=1
+  systemctl stop redgres-tls-issue.path >/dev/null 2>&1 || true
+  systemctl stop redgres.service >/dev/null 2>&1 || true
+  systemctl stop redgres-tls-issue.service >/dev/null 2>&1 || true
+  for unit in redgres-tls-issue.path redgres.service redgres-tls-issue.service; do
+    if systemctl is-active --quiet "${unit}"; then
+      printf '%b\n' "${RED}Error: domain/TLS services could not be quiesced; cleanup aborted.${NC}" >&2
+      return 1
+    fi
+  done
+}
+
 # ── 0. Cloudflare + TLS (before local state is deleted) ─────────────────────
+if [[ "${APP_ONLY}" -eq 0 ]]; then
+  redgres_quiesce_domain_tls || exit 1
+fi
 if [[ "${APP_ONLY}" -eq 0 && "${KEEP_REMOTE}" -eq 0 ]]; then
   step "  ${CYAN}[0/8]${NC} Cloudflare + TLS cleanup... "
-  remote_cloudflare_disconnect
-  purge_tls_certs
+  remote_cloudflare_disconnect || exit 1
+  purge_tls_certs || exit 1
   purge_tls_local_copies
   step_done
 elif [[ "${APP_ONLY}" -eq 0 && "${KEEP_REMOTE}" -eq 1 ]]; then
-  step "  ${CYAN}[0/8]${NC} Cloudflare + TLS "
-  step_skip
+  step "  ${CYAN}[0/8]${NC} Preserving remote Cloudflare + Certbot lineage; removing local TLS copies... "
+  purge_tls_local_copies
+  step_done
 fi
+REDGRES_UNINSTALL_QUIESCE_GUARD=0
 
 # ── 1. Stop Redgres + tunnel units ───────────────────────────────────────────
 if command -v systemctl >/dev/null 2>&1; then
@@ -902,10 +977,9 @@ if [[ "${APP_ONLY}" -eq 0 || "${PURGE_CONFIG}" -eq 1 ]]; then
   rm -rf "${ETC_ROOT}" 2>/dev/null || true
 fi
 if [[ "${APP_ONLY}" -eq 0 || "${PURGE_STATE}" -eq 1 ]]; then
-  rm -rf "${VAR_ROOT}" /var/lib/redgres-release 2>/dev/null || true
+  rm -rf "${VAR_ROOT}" /var/lib/redgres-tls /var/lib/redgres-release 2>/dev/null || true
 fi
 if [[ "${APP_ONLY}" -eq 0 ]]; then
-  purge_tls_local_copies
   rm -rf "${BACKUP_ROOT}" /var/log/redgres 2>/dev/null || true
   while IFS= read -r checkout || [[ -n "${checkout}" ]]; do
     [[ -n "${checkout}" ]] || continue
