@@ -201,6 +201,45 @@ func TestLoadRejectsToolLinkFragment(t *testing.T) {
 	}
 }
 
+func TestLoadToolGateLoopback(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_PGADMIN_EMAIL", "Admin@Redgres.com")
+	t.Setenv("REDGRES_PGADMIN_PASSWORD_FILE", "/var/lib/redgres/secrets/pgadmin.pass")
+	t.Setenv("REDGRES_TOOL_GATE_PGADMIN_LISTEN", "127.0.0.1:5050")
+	t.Setenv("REDGRES_TOOL_GATE_PGADMIN_UPSTREAM", "http://127.0.0.1:5052")
+	t.Setenv("REDGRES_TOOL_GATE_REDISINSIGHT_LISTEN", "127.0.0.1:5540")
+	t.Setenv("REDGRES_TOOL_GATE_REDISINSIGHT_UPSTREAM", "127.0.0.1:5542")
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PgAdminEmail != "admin@redgres.com" {
+		t.Fatalf("email = %q", cfg.PgAdminEmail)
+	}
+	if cfg.PgAdminPasswordFile != "/var/lib/redgres/secrets/pgadmin.pass" {
+		t.Fatalf("password file = %q", cfg.PgAdminPasswordFile)
+	}
+	if cfg.ToolGatePgAdminListen != "127.0.0.1:5050" || cfg.ToolGatePgAdminUpstream != "http://127.0.0.1:5052" {
+		t.Fatalf("pgadmin gate = %q %q", cfg.ToolGatePgAdminListen, cfg.ToolGatePgAdminUpstream)
+	}
+	if cfg.ToolGateRedisListen != "127.0.0.1:5540" || cfg.ToolGateRedisUpstream != "http://127.0.0.1:5542" {
+		t.Fatalf("redis gate = %q %q", cfg.ToolGateRedisListen, cfg.ToolGateRedisUpstream)
+	}
+}
+
+func TestLoadRejectsToolGateNonLoopback(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("REDGRES_TOOL_GATE_PGADMIN_LISTEN", "0.0.0.0:5050")
+	_, err := Load(nil)
+	if err == nil {
+		t.Fatal("expected non-loopback listen rejection")
+	}
+	if !strings.Contains(err.Error(), "REDGRES_TOOL_GATE_PGADMIN_LISTEN") {
+		t.Fatalf("error = %q", err)
+	}
+}
+
 func setProductionCore(t *testing.T) {
 	t.Helper()
 	t.Setenv("REDGRES_ENVIRONMENT", "production")
