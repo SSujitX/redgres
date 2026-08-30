@@ -456,6 +456,8 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
+	s.activateToolPublicURLs(hosts)
+	s.refreshConsoleOrigin(r.Context())
 
 	sess := sessionFrom(r)
 	if err := s.audit.Record(sess.Username, "domain.apply", hosts.Console, "success", requestID(r), requestClientIP(r), map[string]any{"zone": zone, "hostname_count": len(dep.hostnamesMap())}); err != nil {
@@ -616,6 +618,7 @@ func (s *Server) handleDomainConfirmReachable(w http.ResponseWriter, r *http.Req
 			s.cfg.CookieSecure = true
 			s.cfg.BootstrapAddress = ""
 		}
+		s.refreshConsoleOrigin(r.Context())
 	}
 	sess := sessionFrom(r)
 	if err := s.audit.Record(sess.Username, "domain.confirm_reachable", dep.consoleHostname(), "success", requestID(r), requestClientIP(r), map[string]any{"bootstrap_closed": willClose}); err != nil {

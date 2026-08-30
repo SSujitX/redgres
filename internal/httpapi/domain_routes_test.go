@@ -292,6 +292,12 @@ func TestDomainApplyCreatesPersistsAndDoesNotAutoClose(t *testing.T) {
 	if fake.lastIngressHost != "console.example.com" || fake.lastIngressOrigin != "http://127.0.0.1:8790" {
 		t.Fatalf("ingress host=%q origin=%q", fake.lastIngressHost, fake.lastIngressOrigin)
 	}
+	if srv.cfg.PgAdminURL != "https://pgadmin.example.com" || srv.cfg.RedisInsightURL != "https://redis.example.com" {
+		t.Fatalf("tool urls = %q %q", srv.cfg.PgAdminURL, srv.cfg.RedisInsightURL)
+	}
+	if srv.ConsoleOrigin().Get() != "https://console.example.com" {
+		t.Fatalf("console origin = %q", srv.ConsoleOrigin().Get())
+	}
 
 	rec = serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
 	if rec.Code != http.StatusOK {
