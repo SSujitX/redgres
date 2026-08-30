@@ -1735,6 +1735,24 @@ compose_yaml_err="$(
   printf '%s\n' "${yaml}" | /usr/bin/grep -q 'redis.conf:/usr/local/etc/redis/redis.conf:ro'
   printf '%s\n' "${yaml}" | /usr/bin/grep -q 'redis:8.8.2@sha256:c514823c0ec1a40764df434efc2dc4ab5ec669c71c1cb00e4f7b1a694cee9fc3'
 )" 2>&1 || compose_yaml_rc=$?
+
+expert_pin_rc=0
+expert_pin_err="$(
+  s2_lib_src
+  printf '%s\n' "$(redgres_pgadmin_image_pin)" | /usr/bin/grep -q 'dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d'
+  printf '%s\n' "$(redgres_redisinsight_image_pin)" | /usr/bin/grep -q 'redis/redisinsight:3.8.0@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84'
+  yaml="$(redgres_expert_tools_compose_yaml)"
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q '127.0.0.1:5052:80'
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q '127.0.0.1:5542:5540'
+  printf '%s\n' "${yaml}" | /usr/bin/grep -q "PGADMIN_CONFIG_AUTHENTICATION_SOURCES"
+  ! printf '%s\n' "${yaml}" | /usr/bin/grep -qi 'password'
+)" 2>&1 || expert_pin_rc=$?
+if [[ "${expert_pin_rc}" -eq 0 ]]; then
+  pass 'expert-tool image pins and compose have no password'
+else
+  fail "expert-tool pins/compose (rc=${expert_pin_rc})"
+  printf '%s\n' "${expert_pin_err}" >&2
+fi
 encode_rc=0
 encode_got="$(
   s2_lib_src
@@ -2267,6 +2285,31 @@ if [[ "${domain_env_rc}" -eq 0 ]]; then
 else
   fail "domain secret env ensure (rc=${domain_env_rc})"
   printf '%s\n' "${domain_env_err}" >&2
+fi
+
+expert_env_rc=0
+expert_env_err="$(
+  s2_lib_src
+  env_file="${tmpdir}/redgres-expert.env"
+  secrets_dir="${tmpdir}/redgres-expert-secrets"
+  printf '%s\n' 'REDGRES_ENVIRONMENT=production' >"${env_file}"
+  REDGRES_SECRETS_DIR="${secrets_dir}"
+  redgres_ensure_expert_tool_env "${env_file}"
+  grep -q '^REDGRES_PGADMIN_EMAIL=admin@redgres.com$' "${env_file}"
+  grep -q '^REDGRES_TOOL_GATE_PGADMIN_LISTEN=127.0.0.1:5050$' "${env_file}"
+  grep -q '^REDGRES_TOOL_GATE_REDISINSIGHT_UPSTREAM=http://127.0.0.1:5542$' "${env_file}"
+  printf '%s\n' 'REDGRES_PGADMIN_EMAIL=custom@example.com' >"${env_file}.keep"
+  REDGRES_SECRETS_DIR="${secrets_dir}"
+  redgres_ensure_expert_tool_env "${env_file}.keep"
+  grep -q '^REDGRES_PGADMIN_EMAIL=custom@example.com$' "${env_file}.keep"
+  ! grep -q '^REDGRES_PGADMIN_EMAIL=admin@redgres.com$' "${env_file}.keep"
+  grep -q '^REDGRES_TOOL_GATE_PGADMIN_LISTEN=127.0.0.1:5050$' "${env_file}.keep"
+)" 2>&1 || expert_env_rc=$?
+if [[ "${expert_env_rc}" -eq 0 ]]; then
+  pass 'expert-tool env keys append and never overwrite an existing key'
+else
+  fail "expert-tool env ensure (rc=${expert_env_rc})"
+  printf '%s\n' "${expert_env_err}" >&2
 fi
 
 domain_runtime_rc=0
