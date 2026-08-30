@@ -457,6 +457,19 @@ redgres_ensure_app_identity() {
   chmod 750 /etc/redgres
 }
 
+redgres_restore_pgadmin_master_ownership() {
+  local master='/var/lib/redgres/secrets/pgadmin.master'
+  local hook='/var/lib/redgres/secrets/pgadmin-master-hook'
+  if [[ -f "${master}" && ! -L "${master}" ]]; then
+    chown 5050:redgres "${master}"
+    chmod 640 "${master}"
+  fi
+  if [[ -f "${hook}" && ! -L "${hook}" ]]; then
+    chown 5050:redgres "${hook}"
+    chmod 750 "${hook}"
+  fi
+}
+
 redgres_chown_app_state() {
   local db='/var/lib/redgres/redgres.db'
   chown redgres:redgres /var/lib/redgres 2>/dev/null || true
@@ -467,6 +480,7 @@ redgres_chown_app_state() {
   if [[ -d /var/lib/redgres/secrets ]]; then
     chown -R redgres:redgres /var/lib/redgres/secrets
   fi
+  redgres_restore_pgadmin_master_ownership
   if [[ -f /etc/redgres/redgres.env ]]; then
     chown root:redgres /etc/redgres/redgres.env
     chmod 660 /etc/redgres/redgres.env
@@ -499,6 +513,84 @@ ReadWritePaths=/var/lib/redgres /etc/redgres
 [Install]
 WantedBy=multi-user.target
 EOF
+}
+
+redgres_upgrade_pgadmin_master() {
+  local secrets='/var/lib/redgres/secrets'
+  local master="${secrets}/pgadmin.master"
+  local hook="${secrets}/pgadmin-master-hook"
+  local yml='/etc/redgres/expert-tools-compose.yml'
+  local pg_image ri_image need_rewrite=0
+  mkdir -p "${secrets}"
+  if [[ ! -f "${master}" || -L "${master}" ]]; then
+    umask 077
+    dd if=/dev/urandom bs=24 count=1 status=none | base64 | tr -d '\n' >"${master}"
+    printf '\n' >>"${master}"
+  fi
+  cat >"${hook}" <<'EOF'
+#!/bin/sh
+set -eu
+f=/run/redgres/pgadmin.master
+[ -f "$f" ] || exit 1
+[ ! -L "$f" ] || exit 1
+IFS= read -r key <"$f" || true
+[ -n "$key" ] || exit 1
+printf '%s' "$key"
+EOF
+  redgres_restore_pgadmin_master_ownership
+  if [[ -f /etc/redgres/redgres.env ]] && ! grep -qE '^REDGRES_PGADMIN_MASTER_PASSWORD_FILE=' /etc/redgres/redgres.env; then
+    printf '%s\n' 'REDGRES_PGADMIN_MASTER_PASSWORD_FILE=/var/lib/redgres/secrets/pgadmin.master' >>/etc/redgres/redgres.env
+  fi
+  [[ -f "${yml}" ]] || return 0
+  if grep -q 'MASTER_PASSWORD_REQUIRED' "${yml}"; then
+    need_rewrite=1
+  fi
+  if ! grep -q 'pgadmin.master:/run/redgres/pgadmin.master:ro' "${yml}"; then
+    need_rewrite=1
+  fi
+  if ! grep -q 'pgadmin-master-hook:/pgadmin4/redgres-master-hook:ro' "${yml}"; then
+    need_rewrite=1
+  fi
+  if ! grep -q 'MASTER_PASSWORD_HOOK' "${yml}"; then
+    need_rewrite=1
+  fi
+  if [[ -d /var/lib/redgres/pgadmin ]]; then
+    log "${YELLOW}Note: existing pgAdmin volume may still prompt for a master password until recreated (${BOLD}/var/lib/redgres/pgadmin${NC}${YELLOW}).${NC}"
+  fi
+  [[ "${need_rewrite}" -eq 1 ]] || return 0
+  pg_image="$(awk '/^[[:space:]]*image:[[:space:]]*dpage\/pgadmin4:/ { print $2; exit }' "${yml}")"
+  ri_image="$(awk '/^[[:space:]]*image:[[:space:]]*redis\/redisinsight:/ { print $2; exit }' "${yml}")"
+  [[ -n "${pg_image}" ]] || pg_image='dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d'
+  [[ -n "${ri_image}" ]] || ri_image='redis/redisinsight:3.8.0@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84'
+  cat >"${yml}" <<EOF
+services:
+  pgadmin:
+    image: ${pg_image}
+    container_name: redgres-pgadmin
+    restart: unless-stopped
+    env_file:
+      - /var/lib/redgres/secrets/pgadmin-compose.env
+    environment:
+      PGADMIN_CONFIG_AUTHENTICATION_SOURCES: "['webserver']"
+      PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER: "True"
+      PGADMIN_CONFIG_WEBSERVER_REMOTE_USER: "'X-Forwarded-User'"
+      PGADMIN_CONFIG_MASTER_PASSWORD_HOOK: "'/pgadmin4/redgres-master-hook'"
+    ports:
+      - "127.0.0.1:5052:80"
+    volumes:
+      - /var/lib/redgres/pgadmin:/var/lib/pgadmin
+      - /var/lib/redgres/secrets/pgadmin.master:/run/redgres/pgadmin.master:ro
+      - /var/lib/redgres/secrets/pgadmin-master-hook:/pgadmin4/redgres-master-hook:ro
+  redisinsight:
+    image: ${ri_image}
+    container_name: redgres-redisinsight
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5542:5540"
+    volumes:
+      - /var/lib/redgres/redisinsight:/data
+EOF
+  chmod 644 "${yml}"
 }
 
 redgres_write_app_unit() {
@@ -782,6 +874,12 @@ if [[ -f /etc/redgres/redgres.env ]]; then
   chown root:redgres /etc/redgres/redgres.env
 fi
 
+# Write master file/hook + env key and rewrite compose BEFORE restart so
+# EnvironmentFile includes REDGRES_PGADMIN_MASTER_PASSWORD_FILE on first boot.
+if command -v docker >/dev/null 2>&1 && [[ -f /etc/redgres/expert-tools-compose.yml ]]; then
+  redgres_upgrade_pgadmin_master || die "expert tools master password / compose rewrite failed"
+fi
+
 systemctl daemon-reload
 if ! systemctl restart redgres.service; then
   if [[ -n "${PREVIOUS}" && -d "${PREVIOUS}" ]]; then
@@ -793,7 +891,7 @@ if ! systemctl restart redgres.service; then
 fi
 
 if command -v docker >/dev/null 2>&1 && [[ -f /etc/redgres/expert-tools-compose.yml ]]; then
-  docker compose -f /etc/redgres/expert-tools-compose.yml up -d >/dev/null 2>&1 || true
+  docker compose -f /etc/redgres/expert-tools-compose.yml up -d >/dev/null 2>&1 || die "expert tools compose failed"
 fi
 
 if ! redgres_wait_for_healthz "${HEALTHZ}" 15; then
