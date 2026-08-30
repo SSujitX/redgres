@@ -1,17 +1,26 @@
 import { useEffect, useState } from "react";
-import { errorMessage, fetchSession, logout, parseToolLinks, type ToolLinks } from "./api/auth";
+import {
+  errorMessage,
+  fetchSession,
+  logout,
+  parseExpertTools,
+  parseToolLinks,
+  type ExpertToolsStatus,
+  type ToolLinks,
+} from "./api/auth";
 import AppShell from "./components/shell/AppShell";
 import LoginPage from "./features/auth/LoginPage";
 
 type View =
   | { kind: "loading" }
   | { kind: "login" }
-  | { kind: "shell"; username: string; csrf: string; toolLinks: ToolLinks; version?: string };
+  | { kind: "shell"; username: string; csrf: string; toolLinks: ToolLinks; expertTools: ExpertToolsStatus; version?: string };
 
 function shellFromSession(body: {
   owner?: { username?: string };
   csrf_token?: string;
   tool_links?: unknown;
+  expert_tools?: unknown;
   version?: unknown;
 }): View | null {
   if (!body.owner?.username || !body.csrf_token) {
@@ -22,6 +31,7 @@ function shellFromSession(body: {
     username: body.owner.username,
     csrf: body.csrf_token,
     toolLinks: parseToolLinks(body.tool_links),
+    expertTools: parseExpertTools(body.expert_tools),
     version: typeof body.version === "string" && body.version !== "" ? body.version : undefined,
   };
 }
@@ -121,6 +131,7 @@ export default function App() {
         username={view.username}
         csrf={view.csrf}
         toolLinks={view.toolLinks}
+        expertTools={view.expertTools}
         version={view.version}
         onLogout={() => void handleLogout()}
         onPasswordChanged={() => setView({ kind: "login" })}
