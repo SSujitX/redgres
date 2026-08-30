@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchAuditEvents, type AuditEvent } from "../../api/audit";
 import { errorMessage } from "../../api/client";
-import type { ToolLinks } from "../../api/auth";
+import type { ExpertToolsStatus, ToolLinks } from "../../api/auth";
 import {
   isLaunchURL,
   launchExpertTool,
@@ -23,6 +23,7 @@ const toolActions = new Set(["tools.launch", "tools.pgadmin.reveal"]);
 type ExpertToolsSectionProps = {
   csrf: string;
   toolLinks: ToolLinks;
+  expertTools?: ExpertToolsStatus;
   variant: "full" | "compact";
   refreshNonce?: number;
 };
@@ -65,6 +66,7 @@ function toolEvents(events: AuditEvent[]): AuditEvent[] {
 export default function ExpertToolsSection({
   csrf,
   toolLinks,
+  expertTools = {},
   variant,
   refreshNonce = 0,
 }: ExpertToolsSectionProps) {
@@ -82,6 +84,7 @@ export default function ExpertToolsSection({
 
   const hasPgAdmin = Boolean(toolLinks.pgadmin);
   const hasRedisInsight = Boolean(toolLinks.redisinsight);
+  const canReveal = expertTools.pgadmin_login === true;
   const configured = hasPgAdmin || hasRedisInsight;
 
   async function loadActivity(controller: AbortController) {
@@ -288,59 +291,69 @@ export default function ExpertToolsSection({
     <section className="expert-tools panel" aria-labelledby="expert-tools-heading">
       <h2 id="expert-tools-heading">Expert tools</h2>
       <p className="muted-copy">
-        Open pgAdmin and RedisInsight from this signed-in console. Cloudflare Access still asks for email on those
-        hostnames. Direct tool URLs without this launch do not get a Redgres session.
+        Open from this signed-in console. After Open, pgAdmin signs you in automatically. RedisInsight has no separate
+        login. Cloudflare Access still asks for email on those hostnames. Domain & Network never shows these passwords.
       </p>
-      {!configured ? (
-        <p className="muted-copy">pgAdmin and RedisInsight are not configured on this host.</p>
-      ) : (
-        <div className="expert-tools-grid">
-          {hasPgAdmin ? (
-            <article className="expert-tool-card panel-sub">
-              <h3>pgAdmin</h3>
-              <p>PostgreSQL browser. Reveal the saved login, then Open. The password stays on the server until you dismiss the ticket.</p>
-              <div className="expert-tool-actions">
-                <button
-                  type="button"
-                  className="primary-button"
-                  disabled={busy !== "" || ticket !== null}
-                  onClick={() => void openTool("pgadmin")}
-                >
-                  {busy === "pgadmin" ? "Opening pgAdmin" : "Open pgAdmin"}
-                </button>
-                <button
-                  ref={revealRef}
-                  type="button"
-                  className="text-button"
-                  disabled={busy !== "" || ticket !== null}
-                  onClick={() => void revealLogin()}
-                >
-                  {busy === "reveal" ? "Revealing login" : "Reveal pgAdmin login"}
-                </button>
-              </div>
-            </article>
+      <div className="expert-tools-grid">
+        <article className="expert-tool-card panel-sub">
+          <div className="expert-tool-card-head">
+            <h3>pgAdmin</h3>
+            <p className={hasPgAdmin ? "status-ok" : "not-connected"}>{hasPgAdmin ? "Ready" : "Waiting for Domain"}</p>
+          </div>
+          <p>
+            PostgreSQL browser. Open launches it already signed in. Reveal shows the saved email and password if you
+            need them elsewhere. The password stays on the server until you dismiss the ticket.
+          </p>
+          <div className="expert-tool-actions">
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!hasPgAdmin || busy !== "" || ticket !== null}
+              onClick={() => void openTool("pgadmin")}
+            >
+              {busy === "pgadmin" ? "Opening pgAdmin" : "Open pgAdmin"}
+            </button>
+            <button
+              ref={revealRef}
+              type="button"
+              className="text-button"
+              disabled={!canReveal || busy !== "" || ticket !== null}
+              onClick={() => void revealLogin()}
+            >
+              {busy === "reveal" ? "Revealing login" : "Reveal pgAdmin login"}
+            </button>
+          </div>
+          {!hasPgAdmin ? (
+            <p className="muted-copy">Finish Domain & Network Apply so Open can use the public hostname.</p>
           ) : null}
-          {hasRedisInsight ? (
-            <article className="expert-tool-card panel-sub">
-              <h3>RedisInsight</h3>
-              <p>
-                Redis data explorer. Open it from here, then add the Redis host in RedisInsight. Redgres does not store
-                a RedisInsight password.
-              </p>
-              <div className="expert-tool-actions">
-                <button
-                  type="button"
-                  className="primary-button"
-                  disabled={busy !== "" || ticket !== null}
-                  onClick={() => void openTool("redisinsight")}
-                >
-                  {busy === "redisinsight" ? "Opening RedisInsight" : "Open RedisInsight"}
-                </button>
-              </div>
-            </article>
+          {hasPgAdmin && !canReveal ? (
+            <p className="muted-copy">pgAdmin login file is not configured on this host yet.</p>
           ) : null}
-        </div>
-      )}
+        </article>
+        <article className="expert-tool-card panel-sub">
+          <div className="expert-tool-card-head">
+            <h3>RedisInsight</h3>
+            <p className={hasRedisInsight ? "status-ok" : "not-connected"}>{hasRedisInsight ? "Ready" : "Waiting for Domain"}</p>
+          </div>
+          <p>
+            Redis data explorer. Open it from here after Domain apply. RedisInsight does not have a Redgres-stored
+            password.
+          </p>
+          <div className="expert-tool-actions">
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!hasRedisInsight || busy !== "" || ticket !== null}
+              onClick={() => void openTool("redisinsight")}
+            >
+              {busy === "redisinsight" ? "Opening RedisInsight" : "Open RedisInsight"}
+            </button>
+          </div>
+          {!hasRedisInsight ? (
+            <p className="muted-copy">Finish Domain & Network Apply so Open can use the public hostname.</p>
+          ) : null}
+        </article>
+      </div>
       {error ? (
         <p className="form-warning" role="alert">
           {error}

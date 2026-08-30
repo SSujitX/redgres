@@ -100,6 +100,7 @@ describe("ExpertToolsSection", () => {
       <ExpertToolsSection
         csrf={csrf}
         toolLinks={{ pgadmin: "https://pgadmin.example.com" }}
+        expertTools={{ pgadmin_login: true }}
         variant="full"
       />,
     );
@@ -133,6 +134,7 @@ describe("ExpertToolsSection", () => {
       <ExpertToolsSection
         csrf={csrf}
         toolLinks={{ pgadmin: "https://pgadmin.example.com" }}
+        expertTools={{ pgadmin_login: true }}
         variant="full"
       />,
     );
@@ -222,6 +224,18 @@ describe("ExpertToolsSection", () => {
     );
     expect(await screen.findByText("No tool events in the latest audit page.")).toBeInTheDocument();
     expect(screen.queryByText("No tool launches or reveals yet.")).not.toBeInTheDocument();
+  });
+
+  it("always shows both expert tool cards and disables Open until Domain URLs exist", () => {
+    const fetch = vi.fn(async () => auditOk());
+    vi.stubGlobal("fetch", fetch);
+    render(<ExpertToolsSection csrf={csrf} toolLinks={{}} expertTools={{ pgadmin_login: true }} variant="full" />);
+    expect(screen.getByRole("heading", { name: "pgAdmin" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "RedisInsight" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open pgAdmin" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open RedisInsight" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reveal pgAdmin login" })).toBeEnabled();
+    expect(screen.getAllByText("Waiting for Domain").length).toBe(2);
   });
 
   it("does not poll tool activity while the tab is hidden", async () => {
