@@ -17,7 +17,7 @@ This runbook defines operator intent. Exact commands must be generated/validated
 - First-run console may listen on `:8989` until the operator completes Domain & Network steps ([ADR-012](decisions/ADR-012-ui-bootstrap.md)).
 - **Confirm reachable** is operator attestation only; Redgres does not HTTP-probe the console hostname.
 - On confirm, Redgres closes bootstrap gracefully and optionally runs `REDGRES_BOOTSTRAP_UFW_REMOVE_CMD` (absolute path, no shell). If the helper fails, check UFW manually — the API returns `bootstrap_ufw_removed: false`.
-- db/redis TLS: issue via wizard (`POST /api/v1/domain/tls/issue`) or certbot DNS-01 using `REDGRES_CERTBOT_DNS_TOKEN_FILE`; copy certs to service paths and reload per host policy (not automated in Partial).
+- db/redis TLS: apply with an API token writes `REDGRES_CERTBOT_DNS_TOKEN_FILE` from that token and queues `REDGRES_TLS_ISSUE_REQUEST_FILE`. The installer enables `redgres-tls-issue.path` and a certbot renew deploy hook that copies certs to `/etc/redgres/tls` and reloads PostgreSQL. `POST /api/v1/domain/tls/issue` retries if the helper has not issued yet. Redis public TLS enablement is not part of this Partial (loopback `6380` stays plaintext).
 
 ## Weekly operator checks
 
