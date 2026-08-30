@@ -151,6 +151,9 @@ func TestLoginSetsCookieFlags(t *testing.T) {
 	if _, ok := body["tool_links"]; ok {
 		t.Fatal("login included tool_links")
 	}
+	if _, ok := body["expert_tools"]; ok {
+		t.Fatal("login included expert_tools")
+	}
 	found := false
 	for _, c := range rec.Result().Cookies() {
 		if c.Name != sessionCookieName {
@@ -538,6 +541,10 @@ func TestSessionToolLinksDefaultEmptyObject(t *testing.T) {
 	if len(links) != 0 {
 		t.Fatalf("tool_links = %#v", links)
 	}
+	tools, ok := sess["expert_tools"].(map[string]any)
+	if !ok || len(tools) != 0 {
+		t.Fatalf("expert_tools = %#v", sess["expert_tools"])
+	}
 
 	var after int
 	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM audit_events`).Scan(&after); err != nil {
@@ -630,6 +637,34 @@ func TestSessionToolLinksRedisInsightAlone(t *testing.T) {
 	}
 	if _, ok := links["pgadmin"]; ok {
 		t.Fatalf("empty pgadmin present: %#v", links)
+	}
+}
+
+func TestSessionExpertToolsPgAdminLoginFlag(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	srv.cfg.PgAdminEmail = "admin@redgres.com"
+	srv.cfg.PgAdminPasswordFile = "/var/lib/redgres/secrets/pgadmin.pass"
+	seedOwner(t, srv)
+	h := srv.Handler()
+	cookie, _ := login(t, h)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie})
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session %d %s", rec.Code, rec.Body.String())
+	}
+	var sess map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
+		t.Fatal(err)
+	}
+	tools, ok := sess["expert_tools"].(map[string]any)
+	if !ok || tools["pgadmin_login"] != true {
+		t.Fatalf("expert_tools = %#v", sess["expert_tools"])
+	}
+	if _, has := tools["password"]; has {
+		t.Fatal("expert_tools leaked a password key")
 	}
 }
 

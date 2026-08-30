@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/SSujitX/redgres/internal/auth"
@@ -230,9 +231,10 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		"owner":        map[string]any{"username": sess.Username},
 		"csrf_token":   raw,
 		"capabilities": defaultCapabilities,
-		"tool_links":   s.sessionToolLinks(),
-		"version":      version.Version,
-		"request_id":   requestID(r),
+		"tool_links":    s.sessionToolLinks(),
+		"expert_tools":  s.sessionExpertTools(),
+		"version":       version.Version,
+		"request_id":    requestID(r),
 	})
 }
 
@@ -293,6 +295,14 @@ func (s *Server) sessionToolLinks() map[string]string {
 		links["redisinsight"] = s.cfg.RedisInsightURL
 	}
 	return links
+}
+
+func (s *Server) sessionExpertTools() map[string]any {
+	out := map[string]any{}
+	if strings.TrimSpace(s.cfg.PgAdminEmail) != "" && strings.TrimSpace(s.cfg.PgAdminPasswordFile) != "" {
+		out["pgadmin_login"] = true
+	}
+	return out
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, raw string, expires time.Time) {
