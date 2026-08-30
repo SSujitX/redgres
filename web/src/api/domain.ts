@@ -8,6 +8,18 @@ export type DomainHostnames = {
   redis?: string;
 };
 
+export type DomainActivityStep = {
+  id?: string;
+  label?: string;
+  state?: "pending" | "running" | "done" | "failed" | string;
+};
+
+export type DomainActivity = {
+  operation?: string;
+  in_progress?: boolean;
+  steps?: DomainActivityStep[];
+};
+
 export type DomainStatusPayload = {
   configured?: boolean;
   zone?: string;
@@ -21,6 +33,7 @@ export type DomainStatusPayload = {
   dns_provider?: string;
   bootstrap_still_open?: boolean;
   tunnel_id?: string;
+  activity?: DomainActivity;
   request_id?: string;
 };
 
