@@ -15,7 +15,8 @@ type Gate struct {
 	Upstream   *url.URL
 	Store      *Memory
 	Secure     bool
-	ConsoleURL string
+	Origin     *Origin
+	RemoteUser string
 }
 
 func NewGate(tool, upstream string, store *Memory, secure bool, consoleURL string) (*Gate, error) {
@@ -29,7 +30,19 @@ func NewGate(tool, upstream string, store *Memory, secure bool, consoleURL strin
 	if parsed.Scheme == "" {
 		parsed.Scheme = "http"
 	}
-	return &Gate{Tool: tool, Upstream: parsed, Store: store, Secure: secure, ConsoleURL: strings.TrimRight(consoleURL, "/")}, nil
+	return &Gate{
+		Tool:     tool,
+		Upstream: parsed,
+		Store:    store,
+		Secure:   secure,
+		Origin:   NewOrigin(PreferredConsoleURL(consoleURL, "")),
+	}, nil
+}
+
+func (g *Gate) UseOrigin(origin *Origin) {
+	if origin != nil {
+		g.Origin = origin
+	}
 }
 
 func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +56,16 @@ func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(g.Upstream)
+	director := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		director(req)
+		req.Header.Del("X-Forwarded-User")
+		req.Header.Del("Remote-User")
+		if g.RemoteUser != "" {
+			req.Header.Set("X-Forwarded-User", g.RemoteUser)
+			req.Header.Set("Remote-User", g.RemoteUser)
+		}
+	}
 	proxy.ServeHTTP(w, r)
 }
 
@@ -71,8 +94,13 @@ func (g *Gate) consumeLaunch(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gate) deny(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if g.ConsoleURL != "" {
-		http.Redirect(w, r, g.ConsoleURL+"/system", http.StatusSeeOther)
+	console := ""
+	if g.Origin != nil {
+		console = g.Origin.Get()
+	}
+	console = PreferredConsoleURL(console, "")
+	if console != "" {
+		http.Redirect(w, r, console+"/system", http.StatusSeeOther)
 		return
 	}
 	http.Error(w, "Open this tool from the Redgres console.", http.StatusForbidden)
