@@ -1,4 +1,4 @@
-import type { ToolLinks } from "../../api/auth";
+import type { ExpertToolsStatus, ToolLinks } from "../../api/auth";
 import type { SectionId } from "../../nav";
 import AuditPage from "../audit/AuditPage";
 import DocsPage from "../docs/DocsPage";
@@ -14,6 +14,7 @@ type PageProps = {
   section: SectionId;
   csrf?: string;
   toolLinks?: ToolLinks;
+  expertTools?: ExpertToolsStatus;
   focusDatabase?: string | null;
   focusUsername?: string | null;
   focusArticle?: string | null;
@@ -26,6 +27,7 @@ export function SectionPage({
   section,
   csrf = "",
   toolLinks = {},
+  expertTools = {},
   focusDatabase = null,
   focusUsername = null,
   focusArticle = null,
@@ -65,7 +67,7 @@ export function SectionPage({
   }
 
   if (section === "system") {
-    return <SystemPage csrf={csrf} toolLinks={toolLinks} />;
+    return <SystemPage csrf={csrf} toolLinks={toolLinks} expertTools={expertTools} />;
   }
 
   if (section === "domain") {
