@@ -74,6 +74,7 @@ redgres_expert_tool_env_defaults() {
   cat <<'EOF'
 REDGRES_PGADMIN_EMAIL=admin@redgres.com
 REDGRES_PGADMIN_PASSWORD_FILE=/var/lib/redgres/secrets/pgadmin.pass
+REDGRES_PGADMIN_MASTER_PASSWORD_FILE=/var/lib/redgres/secrets/pgadmin.master
 REDGRES_TOOL_GATE_PGADMIN_LISTEN=127.0.0.1:5050
 REDGRES_TOOL_GATE_PGADMIN_UPSTREAM=http://127.0.0.1:5052
 REDGRES_TOOL_GATE_REDISINSIGHT_LISTEN=127.0.0.1:5540
@@ -382,6 +383,9 @@ redgres_chown_app_state() {
   redgres_ensure_secrets_dir
   if [[ -d /var/lib/redgres/secrets ]]; then
     /usr/bin/chown -R redgres:redgres /var/lib/redgres/secrets
+  fi
+  if declare -F redgres_restore_pgadmin_master_ownership >/dev/null 2>&1; then
+    redgres_restore_pgadmin_master_ownership
   fi
   if [[ -f /etc/redgres/redgres.env ]]; then
     /usr/bin/chown root:redgres /etc/redgres/redgres.env
@@ -753,9 +757,52 @@ redgres_ufw_bootstrap_note() {
 
 redgres_finish_show_owner_password() {
   [[ -n "${REDGRES_FINISH_OWNER_PASSWORD}" ]] || return 1
+  redgres_finish_show_secret
+}
+
+redgres_finish_show_secret() {
   if [[ -t 1 || "${REDGRES_FINISH_SHOW_PASSWORD:-}" == "1" ]]; then
     return 0
   fi
+  return 1
+}
+
+redgres_read_oneline_secret() {
+  local passfile="$1" value
+  [[ -f "${passfile}" && ! -L "${passfile}" ]] || return 1
+  value="$(/usr/bin/tr -d '\n\r' <"${passfile}")"
+  [[ -n "${value}" ]] || return 1
+  printf '%s' "${value}"
+}
+
+redgres_pgadmin_login_file() {
+  printf '%s' "${REDGRES_PGADMIN_PASSWORD_FILE:-/var/lib/redgres/secrets/pgadmin.pass}"
+}
+
+redgres_pgadmin_master_file() {
+  printf '%s' "${REDGRES_PGADMIN_MASTER_PASSWORD_FILE:-/var/lib/redgres/secrets/pgadmin.master}"
+}
+
+redgres_finish_pgadmin_email() {
+  printf '%s' "${REDGRES_PGADMIN_EMAIL:-admin@redgres.com}"
+}
+
+redgres_finish_write_tty_secret() {
+  local line="$1"
+  if [[ -n "${REDGRES_FINISH_TTY:-}" ]]; then
+    printf '%s\n' "${line}" >>"${REDGRES_FINISH_TTY}"
+    return 0
+  fi
+  if redgres_have_owner_tty; then
+    printf '%s\n' "${line}" >/dev/tty
+    return 0
+  fi
+  return 1
+}
+
+redgres_finish_can_write_tty_secret() {
+  [[ -n "${REDGRES_FINISH_TTY:-}" ]] && return 0
+  redgres_have_owner_tty && return 0
   return 1
 }
 
@@ -779,7 +826,7 @@ redgres_print_finish_box() {
 }
 
 redgres_finish_box_rows() {
-  local origin="$1" login_line="$2"
+  local origin="$1" login_line="$2" pg_login_line="$3" pg_master_line="$4"
   local app_ver pg_ver docker_ver pgb_ver pgb_line ufw_line ufw_boot os_line
   app_ver="$(redgres_installed_app_version)"
   pg_ver="$(redgres_pkg_version "postgresql-${postgres_version:-unknown}")"
@@ -806,6 +853,9 @@ redgres_finish_box_rows() {
     "API origin     127.0.0.1:8790  (loopback, not public)" \
     "PostgreSQL     ${postgres_version:-?}  ${pg_ver}  127.0.0.1:5432" \
     "Redis          ${redis_version:-?}  127.0.0.1:6380  (loopback)" \
+    "pgAdmin        127.0.0.1:5052  (loopback)" \
+    "pgAdmin login  ${pg_login_line}" \
+    "pgAdmin master ${pg_master_line}" \
     "PgBouncer      ${pgb_line}" \
     "Docker         ${docker_ver}" \
     "Redgres        ${app_ver}" \
@@ -816,25 +866,58 @@ redgres_finish_box_rows() {
 }
 
 redgres_finish_report() {
-  local origin login_line
+  local origin login_line pg_login_line pg_master_line pg_login_secret pg_master_secret email
   origin="$(redgres_bootstrap_base_url)"
   origin="${origin%$'\n'}"
   if redgres_finish_show_owner_password; then
     login_line="admin / ${REDGRES_FINISH_OWNER_PASSWORD}"
   elif [[ -n "${REDGRES_FINISH_OWNER_PASSWORD}" ]]; then
-    login_line='admin / (shown on this terminal only)'
+    if redgres_finish_can_write_tty_secret; then
+      login_line='admin / (shown on this terminal only)'
+    else
+      login_line='admin / not shown (no TTY)'
+    fi
   else
     login_line='run create-owner --username admin (no TTY here)'
   fi
-  printf '\n'
-  redgres_finish_box_rows "${origin}" "${login_line}"
-  if ! redgres_finish_show_owner_password && [[ -n "${REDGRES_FINISH_OWNER_PASSWORD}" ]]; then
-    if [[ -n "${REDGRES_FINISH_TTY:-}" ]]; then
-      printf 'Owner login    admin / %s\n' "${REDGRES_FINISH_OWNER_PASSWORD}" >>"${REDGRES_FINISH_TTY}"
-    elif redgres_have_owner_tty; then
-      printf 'Owner login    admin / %s\n' "${REDGRES_FINISH_OWNER_PASSWORD}" >/dev/tty
+  email="$(redgres_finish_pgadmin_email)"
+  if pg_login_secret="$(redgres_read_oneline_secret "$(redgres_pgadmin_login_file)")"; then
+    if redgres_finish_show_secret; then
+      pg_login_line="${email} / ${pg_login_secret}"
+    elif redgres_finish_can_write_tty_secret; then
+      pg_login_line="${email} / (shown on this terminal only)"
+    else
+      pg_login_line="${email} / Reveal in Expert tools"
     fi
+  else
+    pg_login_line='not configured'
+    pg_login_secret=''
+  fi
+  if pg_master_secret="$(redgres_read_oneline_secret "$(redgres_pgadmin_master_file)")"; then
+    if redgres_finish_show_secret; then
+      pg_master_line="${pg_master_secret}"
+    elif redgres_finish_can_write_tty_secret; then
+      pg_master_line='(shown on this terminal only)'
+    else
+      pg_master_line='Reveal in Expert tools'
+    fi
+  else
+    pg_master_line='not configured'
+    pg_master_secret=''
+  fi
+  printf '\n'
+  redgres_finish_box_rows "${origin}" "${login_line}" "${pg_login_line}" "${pg_master_line}"
+  if ! redgres_finish_show_owner_password && [[ -n "${REDGRES_FINISH_OWNER_PASSWORD}" ]]; then
+    redgres_finish_write_tty_secret "Owner login    admin / ${REDGRES_FINISH_OWNER_PASSWORD}" || true
+  fi
+  if ! redgres_finish_show_secret && [[ -n "${pg_login_secret}" ]]; then
+    redgres_finish_write_tty_secret "pgAdmin login  ${email} / ${pg_login_secret}" || true
+  fi
+  if ! redgres_finish_show_secret && [[ -n "${pg_master_secret}" ]]; then
+    redgres_finish_write_tty_secret "pgAdmin master ${pg_master_secret}" || true
   fi
   printf '\n'
   REDGRES_FINISH_OWNER_PASSWORD=''
+  pg_login_secret=''
+  pg_master_secret=''
 }
