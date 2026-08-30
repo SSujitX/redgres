@@ -309,6 +309,33 @@ func TestDomainApplyCreatesPersistsAndDoesNotAutoClose(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"tunnel_id":"tun-1"`) {
 		t.Fatalf("expected tunnel_id on GET: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `"operation":"apply"`) || !strings.Contains(rec.Body.String(), `"Looking up the zone"`) {
+		t.Fatalf("expected secret-safe apply activity: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "fake-tunnel-token") || strings.Contains(rec.Body.String(), "test-token") {
+		t.Fatal("activity leaked a token")
+	}
+}
+
+func TestDomainGetReportsInProgressActivityWithoutSecrets(t *testing.T) {
+	srv, handler, cookie, csrf, _ := newDomainServer(t)
+	srv.domainActivity.Start("apply", []string{"discover_zone", "create_tunnel"})
+	srv.domainActivity.Advance("create_tunnel")
+
+	rec := serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("domain get = %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"configured":false`) {
+		t.Fatalf("expected unconfigured: %s", body)
+	}
+	if !strings.Contains(body, `"in_progress":true`) || !strings.Contains(body, `"Creating the tunnel"`) {
+		t.Fatalf("expected running activity: %s", body)
+	}
+	if strings.Contains(body, "token") || strings.Contains(body, "@") || strings.Contains(body, `"error"`) {
+		t.Fatalf("activity leaked a secret or error: %s", body)
+	}
 }
 
 func TestDomainApplyLogsWithoutSecrets(t *testing.T) {

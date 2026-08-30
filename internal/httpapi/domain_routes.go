@@ -137,11 +137,13 @@ func (s *Server) handleDomainGet(w http.ResponseWriter, r *http.Request) {
 	dep, err := (domainStore{s.db}).Get(r.Context())
 	if err != nil {
 		if errors.Is(err, errNoDeployment) {
-			s.writeJSON(w, r, http.StatusOK, map[string]any{
+			resp := map[string]any{
 				"configured":           false,
 				"bootstrap_still_open": s.bootstrapOpen(),
 				"request_id":           requestID(r),
-			})
+			}
+			s.attachDomainActivity(resp)
+			s.writeJSON(w, r, http.StatusOK, resp)
 			return
 		}
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
@@ -172,6 +174,7 @@ func (s *Server) handleDomainGet(w http.ResponseWriter, r *http.Request) {
 			resp["instructions"] = instructions
 		}
 	}
+	s.attachDomainActivity(resp)
 	s.writeJSON(w, r, http.StatusOK, resp)
 }
 
@@ -257,6 +260,11 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
+	ok := false
+	finish := s.beginDomainActivity("apply",
+		"discover_zone", "create_tunnel", "write_dns", "create_access", "store_connector", "queue_tls", "save_config")
+	defer finish(&ok)
+
 	z, err := client.DiscoverZone(ctx, zone)
 	if err != nil {
 		s.writeCFError(w, r, err)
@@ -296,6 +304,7 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusInternalServerError, CodeInternal, "Internal server error")
 		return
 	}
+	s.domainActivity.Advance("create_tunnel")
 	tunnel, err := client.CreateTunnel(ctx, z.AccountID, "redgres-"+hosts.Console)
 	if err != nil {
 		s.writeCFError(w, r, err)
@@ -330,6 +339,7 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.domainActivity.Advance("write_dns")
 	rec, err := client.CreateRecord(ctx, z.ID, hosts.Console, tunnel.ID+".cfargotunnel.com", true)
 	if err != nil {
 		compensate()
@@ -369,6 +379,7 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		dep.Records = append(dep.Records, record{ID: trec.ID, Name: trec.Name, Type: "CNAME", Proxied: true})
 	}
 
+	s.domainActivity.Advance("create_access")
 	for _, tunnelHost := range dep.tunnelHostnames() {
 		app, err := client.CreateAccessApp(ctx, z.AccountID, tunnelHost)
 		if err != nil {
@@ -423,11 +434,13 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 
 	// Persist the one-time tunnel connector credential server-side; it is never
 	// returned to the browser. cloudflared loads it later from this file.
+	s.domainActivity.Advance("store_connector")
 	if err := writeTokenFile(s.cfg.TunnelTokenFile, tunnel.Token); err != nil {
 		compensate()
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "Tunnel token could not be stored")
 		return
 	}
+	s.domainActivity.Advance("queue_tls")
 	if s.cfg.CertbotDNSCredentialsFile != "" {
 		if err := s.syncCertbotDNSCredentialsFromAPIToken(); err != nil {
 			_ = os.Remove(s.cfg.TunnelTokenFile)
@@ -447,6 +460,7 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.domainActivity.Advance("save_config")
 	if err := (domainStore{s.db}).Save(ctx, dep); err != nil {
 		_ = os.Remove(s.cfg.TunnelTokenFile)
 		if s.cfg.TLSIssueRequestFile != "" {
@@ -472,6 +486,7 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		slog.String("access", "deny_by_default"),
 		slog.Bool("bootstrap_still_open", s.bootstrapOpen()),
 	)
+	ok = true
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
 		"zone":                 z.Name,
 		"hostname":             hosts.Console,
@@ -528,6 +543,9 @@ func (s *Server) handleDomainAccessPolicy(w http.ResponseWriter, r *http.Request
 	client := s.cloudflareClient(token)
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+	ok := false
+	finish := s.beginDomainActivity("access_policy", "access_policy")
+	defer finish(&ok)
 	policy, err := client.CreateAccessPolicy(ctx, dep.AccountID, dep.AccessAppID, emails)
 	if err != nil {
 		s.writeCFError(w, r, err)
@@ -576,6 +594,7 @@ func (s *Server) handleDomainAccessPolicy(w http.ResponseWriter, r *http.Request
 		slog.String("hostname", dep.consoleHostname()),
 		slog.Int("email_count", len(emails)),
 	)
+	ok = true
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
 		"ok":                   true,
 		"access":               "allow",
@@ -599,6 +618,9 @@ func (s *Server) handleDomainConfirmReachable(w http.ResponseWriter, r *http.Req
 		s.writeError(w, r, http.StatusConflict, CodeConflict, "Configure Access before closing bootstrap")
 		return
 	}
+	ok := false
+	finish := s.beginDomainActivity("confirm", "close_bootstrap")
+	defer finish(&ok)
 	willClose := s.bootstrapCloser != nil && s.bootstrapCloser.Open()
 	ufwCmd := strings.TrimSpace(s.cfg.BootstrapUFWRemoveCmd)
 	envFile := s.cfg.EnvFile
@@ -644,6 +666,7 @@ func (s *Server) handleDomainConfirmReachable(w http.ResponseWriter, r *http.Req
 			_ = s.bootstrapCloser.Shutdown(ctx)
 		}()
 	}
+	ok = true
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
 		"ok":                      true,
 		"bootstrap_still_open":    !willClose && s.bootstrapOpen(),
@@ -697,6 +720,9 @@ func (s *Server) handleDomainDisconnect(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+	ok := false
+	finish := s.beginDomainActivity("disconnect", "disconnect")
+	defer finish(&ok)
 
 	if dep.DNSProvider != "manual" {
 		token, err := s.resolveCloudflareBearer(ctx)
@@ -741,6 +767,8 @@ func (s *Server) handleDomainDisconnect(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
+	ok = true
+	s.domainActivity.Clear()
 	s.writeJSON(w, r, http.StatusOK, map[string]any{"ok": true, "request_id": requestID(r)})
 }
 
