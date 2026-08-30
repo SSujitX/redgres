@@ -465,6 +465,19 @@ redgres_ensure_app_identity() {
   chmod 750 /etc/redgres
 }
 
+redgres_restore_pgadmin_master_ownership() {
+  local master='/var/lib/redgres/secrets/pgadmin.master'
+  local hook='/var/lib/redgres/secrets/pgadmin-master-hook'
+  if [[ -f "${master}" && ! -L "${master}" ]]; then
+    chown 5050:redgres "${master}"
+    chmod 640 "${master}"
+  fi
+  if [[ -f "${hook}" && ! -L "${hook}" ]]; then
+    chown 5050:redgres "${hook}"
+    chmod 750 "${hook}"
+  fi
+}
+
 redgres_chown_app_state() {
   local db='/var/lib/redgres/redgres.db'
   chown redgres:redgres /var/lib/redgres 2>/dev/null || true
@@ -475,6 +488,7 @@ redgres_chown_app_state() {
   if [[ -d /var/lib/redgres/secrets ]]; then
     chown -R redgres:redgres /var/lib/redgres/secrets
   fi
+  redgres_restore_pgadmin_master_ownership
   if [[ -f /etc/redgres/redgres.env ]]; then
     chown root:redgres /etc/redgres/redgres.env
     chmod 660 /etc/redgres/redgres.env
