@@ -263,11 +263,11 @@ Search requires a normalized minimum query length, a strict maximum length/limit
 
 UI: System → **Domain & Network** drives these endpoints (token paste, full hostname apply, Access allow emails, OAuth connect, TLS issue, confirm-reachable bootstrap close, status, disconnect). Live Cloudflare e2e and Playwright full wizard flow remain deferred.
 
-All require a session cookie and the `platform.network` capability; mutations also require `X-CSRF-Token` (origin + CSRF). OAuth callback requires session cookie only. The per-zone Cloudflare API token is pasted once for bootstrap apply; steady-state mutations prefer OAuth when connected. Neither token nor OAuth secrets are ever returned by the API. Responses are `Cache-Control: no-store`.
+All require a session cookie and the `platform.network` capability; mutations also require `X-CSRF-Token` (origin + CSRF). OAuth callback requires session cookie only. The per-zone Cloudflare API token is pasted once for bootstrap apply and reused for Access and certbot DNS-01; OAuth is optional after the live console hostname. Neither token nor OAuth secrets are ever returned by the API. Responses are `Cache-Control: no-store`.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/v1/domain` | Status: `hostnames`, `origin_ip`, `access`, `tls`, `credential`, `dns_provider`, `instructions` (manual), `bootstrap_still_open` |
+| GET | `/api/v1/domain` | Status: `hostnames`, `origin_ip`, `access`, `tls`, `credential`, `dns_provider`, `instructions` (manual), `bootstrap_still_open`, `tunnel_id` (Cloudflare resource id, not the connector token) |
 | POST | `/api/v1/domain/token` | Paste Cloudflare API token → server-side 0600 file |
 | POST | `/api/v1/domain/apply` | `{zone, origin_ip, hostnames:{console,db,redis}}` or `dns_provider:manual` → tunnel + proxied CNAME + grey-cloud db/redis A or AAAA + Access app (Cloudflare) or manual instructions |
 | POST | `/api/v1/domain/access-policy` | `{emails:[…]}` (max 8) → Access allow policy |
@@ -294,13 +294,13 @@ All require a session cookie and the `platform.network` capability; mutations al
 }
 ```
 
-Defaults: `console.<zone>`, `db.<zone>`, `redis.<zone>`. Creates proxied CNAME for console, DNS-only **A or AAAA** (one record type per origin IP) for db/redis, deny-by-default Access app. Success includes `hostnames`, `origin_ip`, `tls`, `access: deny_by_default`, `bootstrap_still_open: true`.
+Defaults: `console.<zone>`, `db.<zone>`, `redis.<zone>`. Creates proxied CNAME for console, DNS-only **A or AAAA** (one record type per origin IP) for db/redis, deny-by-default Access app. When `REDGRES_CERTBOT_DNS_TOKEN_FILE` is set, apply writes certbot-dns-cloudflare credentials from the stored API token (`0600`, never returned) and, when `REDGRES_TLS_ISSUE_REQUEST_FILE` is set, queues hostnames-only TLS issue. Success includes `hostnames`, `origin_ip`, `tls`, `access: deny_by_default`, `bootstrap_still_open: true`.
 
 Manual mode: `"dns_provider":"manual"` with the same hostname map returns `{instructions:[…]}` without Cloudflare mutations.
 
 **POST `/api/v1/domain/oauth/start`** returns `{authorize_url, redirect_uri, scopes}`. Callback redirect URI: `https://{console_hostname}/api/v1/domain/oauth/callback`. On success the API token file is removed and `credential` becomes `oauth`.
 
-**POST `/api/v1/domain/tls/issue`** runs certbot DNS-01 for persisted db/redis hostnames; success `{ok:true, tls:{db:"issued",redis:"issued"}}`. Failure → `503` without success audit.
+**POST `/api/v1/domain/tls/issue`** writes certbot DNS credentials from the stored API token if the ini is missing, then runs certbot DNS-01 for persisted db/redis hostnames; success `{ok:true, tls:{db:"issued",redis:"issued"}}`. Failure → `503` without success audit.
 
 **POST `/api/v1/domain/manual/confirm-access`** operator attests Access was configured manually (manual DNS mode only). Success `{ok:true, access:"allow"}`.
 
