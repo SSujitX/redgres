@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -54,6 +55,8 @@ type deployment struct {
 	TLSRedisStatus        string             `json:"tls_redis_status,omitempty"`
 	DNSProvider           string             `json:"dns_provider,omitempty"`
 	AccessManualConfirmed bool               `json:"access_manual_confirmed,omitempty"`
+	DisconnectPending     bool               `json:"disconnect_pending,omitempty"`
+	DisconnectRemoteDone  bool               `json:"disconnect_remote_done,omitempty"`
 }
 
 func (d deployment) hasAccessAllowPolicy() bool {
@@ -164,6 +167,7 @@ func (s *Server) handleDomainGet(w http.ResponseWriter, r *http.Request) {
 		"credential":           s.domainCredentialKind(),
 		"dns_provider":         dep.DNSProvider,
 		"bootstrap_still_open": s.bootstrapOpen(),
+		"disconnect_pending":   dep.DisconnectPending,
 		"request_id":           requestID(r),
 	}
 	if dep.TunnelID != "" {
@@ -262,8 +266,18 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 
 	ok := false
 	finish := s.beginDomainActivity("apply",
-		"discover_zone", "create_tunnel", "write_dns", "create_access", "store_connector", "queue_tls", "save_config")
+		"discover_zone", "create_tunnel", "write_dns", "create_access", "store_connector", "save_config", "queue_tls")
 	defer finish(&ok)
+	sess := sessionFrom(r)
+	if err := s.audit.Record(sess.Username, "domain.apply", hosts.Console, "started", requestID(r), requestClientIP(r), map[string]any{"zone": zone}); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	defer func() {
+		if !ok {
+			_ = s.audit.Record(sess.Username, "domain.apply", hosts.Console, "failure", requestID(r), requestClientIP(r), map[string]any{"zone": zone})
+		}
+	}()
 
 	z, err := client.DiscoverZone(ctx, zone)
 	if err != nil {
@@ -440,7 +454,6 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "Tunnel token could not be stored")
 		return
 	}
-	s.domainActivity.Advance("queue_tls")
 	if s.cfg.CertbotDNSCredentialsFile != "" {
 		if err := s.syncCertbotDNSCredentialsFromAPIToken(); err != nil {
 			_ = os.Remove(s.cfg.TunnelTokenFile)
@@ -449,31 +462,26 @@ func (s *Server) handleDomainApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if s.cfg.TLSIssueResultFile != "" {
-		_ = os.Remove(s.cfg.TLSIssueResultFile)
-	}
-	if s.cfg.TLSIssueRequestFile != "" {
-		if err := tlsops.WriteTLSIssueRequest(s.cfg.TLSIssueRequestFile, []string{hosts.DB, hosts.RS}); err != nil {
-			_ = os.Remove(s.cfg.TunnelTokenFile)
-			compensate()
-			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS issue could not be queued")
-			return
-		}
-	}
 	s.domainActivity.Advance("save_config")
 	if err := (domainStore{s.db}).Save(ctx, dep); err != nil {
 		_ = os.Remove(s.cfg.TunnelTokenFile)
-		if s.cfg.TLSIssueRequestFile != "" {
-			_ = os.Remove(s.cfg.TLSIssueRequestFile)
-		}
 		compensate()
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
+	// Dispatch only after the deployment is durable. If the queue is unavailable,
+	// the configured deployment and credentials remain so the owner can retry TLS
+	// or disconnect without orphaning root-side work.
+	s.domainActivity.Advance("queue_tls")
+	if s.cfg.TLSIssueRequestFile != "" {
+		if err := tlsops.WriteTLSIssueRequest(s.cfg.TLSIssueRequestFile, []string{hosts.DB, hosts.RS}); err != nil {
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS issue could not be queued")
+			return
+		}
+	}
 	s.activateToolPublicURLs(hosts)
 	s.refreshConsoleOrigin(r.Context())
 
-	sess := sessionFrom(r)
 	if err := s.audit.Record(sess.Username, "domain.apply", hosts.Console, "success", requestID(r), requestClientIP(r), map[string]any{"zone": zone, "hostname_count": len(dep.hostnamesMap())}); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
@@ -723,18 +731,36 @@ func (s *Server) handleDomainDisconnect(w http.ResponseWriter, r *http.Request) 
 	ok := false
 	finish := s.beginDomainActivity("disconnect", "disconnect")
 	defer finish(&ok)
+	sess := sessionFrom(r)
+	if err := s.audit.Record(sess.Username, "domain.disconnect", dep.consoleHostname(), "started", requestID(r), requestClientIP(r), map[string]any{"zone": dep.ZoneName}); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
+	defer func() {
+		if !ok {
+			_ = s.audit.Record(sess.Username, "domain.disconnect", dep.consoleHostname(), "failure", requestID(r), requestClientIP(r), map[string]any{"zone": dep.ZoneName})
+		}
+	}()
+	dep.DisconnectPending = true
+	if err := store.Save(ctx, dep); err != nil {
+		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+		return
+	}
 
-	if dep.DNSProvider != "manual" {
+	if dep.DNSProvider != "manual" && !dep.DisconnectRemoteDone {
 		token, err := s.resolveCloudflareBearer(ctx)
 		if err != nil || token == "" {
 			s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Cloudflare credentials are not configured")
 			return
 		}
 		client := s.cloudflareClient(token)
+		remoteFailed := false
 		deletedApps := map[string]struct{}{}
 		for _, binding := range dep.accessAppsForDisconnect() {
 			if binding.PolicyID != "" {
-				_ = client.DeleteAccessPolicy(ctx, dep.AccountID, binding.AppID, binding.PolicyID)
+				if err := client.DeleteAccessPolicy(ctx, dep.AccountID, binding.AppID, binding.PolicyID); err != nil && !errors.Is(err, cloudflare.ErrNotFound) {
+					remoteFailed = true
+				}
 			}
 			if binding.AppID == "" {
 				continue
@@ -742,18 +768,49 @@ func (s *Server) handleDomainDisconnect(w http.ResponseWriter, r *http.Request) 
 			if _, ok := deletedApps[binding.AppID]; ok {
 				continue
 			}
-			_ = client.DeleteAccessApp(ctx, dep.AccountID, binding.AppID)
+			if err := client.DeleteAccessApp(ctx, dep.AccountID, binding.AppID); err != nil && !errors.Is(err, cloudflare.ErrNotFound) {
+				remoteFailed = true
+			}
 			deletedApps[binding.AppID] = struct{}{}
 		}
 		for _, rec := range dep.Records {
-			_ = client.DeleteRecord(ctx, dep.ZoneID, rec.ID)
+			if err := client.DeleteRecord(ctx, dep.ZoneID, rec.ID); err != nil && !errors.Is(err, cloudflare.ErrNotFound) {
+				remoteFailed = true
+			}
 		}
 		if dep.TunnelID != "" {
-			_ = client.DeleteTunnel(ctx, dep.AccountID, dep.TunnelID)
+			if err := client.DeleteTunnel(ctx, dep.AccountID, dep.TunnelID); err != nil && !errors.Is(err, cloudflare.ErrNotFound) {
+				remoteFailed = true
+			}
+		}
+		if remoteFailed {
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "Cloudflare resources could not be fully removed")
+			return
+		}
+	}
+	if !dep.DisconnectRemoteDone {
+		dep.DisconnectRemoteDone = true
+		if err := store.Save(ctx, dep); err != nil {
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
+			return
 		}
 	}
 
 	s.revokeOAuthIfPresent(ctx)
+	if s.cfg.TLSIssueRequestFile != "" {
+		queuedAfter := time.Now()
+		if err := tlsops.WriteTLSCredentialCleanupRequest(s.cfg.TLSIssueRequestFile); err != nil {
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS credentials could not be queued for cleanup")
+			return
+		}
+		if s.cfg.TLSIssueResultFile != "" {
+			cleanupResult := filepath.Join(filepath.Dir(s.cfg.TLSIssueResultFile), "cleanup.result")
+			if err := waitTLSCleanupResult(ctx, cleanupResult, queuedAfter); err != nil {
+				s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS credential cleanup did not complete")
+				return
+			}
+		}
+	}
 	if err := store.Clear(ctx); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
@@ -762,7 +819,6 @@ func (s *Server) handleDomainDisconnect(w http.ResponseWriter, r *http.Request) 
 		_ = os.Remove(s.cfg.TunnelTokenFile)
 	}
 	s.removeCloudflareCredentialFiles()
-	sess := sessionFrom(r)
 	if err := s.audit.Record(sess.Username, "domain.disconnect", dep.consoleHostname(), "success", requestID(r), requestClientIP(r), map[string]any{"zone": dep.ZoneName}); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
@@ -877,9 +933,20 @@ func validHostname(s string) bool {
 
 func (s *Server) domainTLSMap(dep deployment) map[string]string {
 	tls := dep.tlsMap()
-	if tlsops.IssueResultCovers(s.cfg.TLSIssueResultFile, []string{dep.DBHostname, dep.rsHostname()}) {
-		tls["db"] = "issued"
-		tls["rs"] = "issued"
+	hosts := []string{dep.DBHostname, dep.rsHostname()}
+	if tlsops.IssueResultCovers(s.cfg.TLSIssueResultFile, hosts) {
+		statuses := tlsops.ReadIssueEndpointStatuses(s.cfg.TLSIssueResultFile)
+		tls["db"] = statuses["db"]
+		tls["rs"] = statuses["rs"]
+		if tls["db"] == "" {
+			tls["db"] = "certificate_prepared"
+		}
+		if tls["rs"] == "" {
+			tls["rs"] = "certificate_prepared"
+		}
+	} else if tlsops.ReadIssueResult(s.cfg.TLSIssueResultFile) == "failed" && tlsops.ReadIssueFailure(s.cfg.TLSIssueResultFile).Covers(hosts) {
+		tls["db"] = "failed"
+		tls["rs"] = "failed"
 	}
 	return tls
 }

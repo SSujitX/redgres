@@ -76,6 +76,13 @@ func TestLoadDevelopmentDefaults(t *testing.T) {
 	}
 }
 
+func TestProductionTLSHelperPathsAreFixed(t *testing.T) {
+	err := validateProductionTLSHelperPath("/var/lib/redgres/custom.request", "REDGRES_TLS_ISSUE_REQUEST_FILE", ProductionTLSRequestFile)
+	if err == nil || !strings.Contains(err.Error(), "REDGRES_TLS_ISSUE_REQUEST_FILE") {
+		t.Fatalf("validate() error = %v", err)
+	}
+}
+
 func TestLoadFlagBeatsEnvironment(t *testing.T) {
 	isolateConfig(t)
 	t.Setenv("REDGRES_ADDRESS", "127.0.0.1:9000")

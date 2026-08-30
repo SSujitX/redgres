@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -33,6 +34,7 @@ type fakeCF struct {
 	deletedP          []string
 	verifyErr         error
 	createTunnelErr   error
+	deleteErr         error
 	lastIngressHost   string
 	lastIngressOrigin string
 	lastIngressRoutes []cloudflare.IngressRoute
@@ -114,24 +116,36 @@ func (f *fakeCF) CreateAccessPolicy(_ context.Context, accountID, appID string, 
 }
 
 func (f *fakeCF) DeleteTunnel(_ context.Context, accountID, id string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	f.deletedT = append(f.deletedT, id)
 	delete(f.tunnels, id)
 	return nil
 }
 
 func (f *fakeCF) DeleteRecord(_ context.Context, zoneID, id string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	f.deletedR = append(f.deletedR, id)
 	delete(f.records, id)
 	return nil
 }
 
 func (f *fakeCF) DeleteAccessApp(_ context.Context, accountID, id string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	f.deletedA = append(f.deletedA, id)
 	delete(f.apps, id)
 	return nil
 }
 
 func (f *fakeCF) DeleteAccessPolicy(_ context.Context, accountID, appID, policyID string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	f.deletedP = append(f.deletedP, policyID)
 	delete(f.policies, policyID)
 	return nil
@@ -424,8 +438,12 @@ func TestDomainApplyWritesCertbotDNSCredentialsFromAPIToken(t *testing.T) {
 	if _, err := os.Stat(creds); !os.IsNotExist(err) {
 		t.Fatal("certbot ini left after disconnect")
 	}
-	if _, err := os.Stat(request); !os.IsNotExist(err) {
-		t.Fatal("tls request left after disconnect")
+	cleanupRaw, err := os.ReadFile(request)
+	if err != nil {
+		t.Fatalf("cleanup request missing after disconnect: %v", err)
+	}
+	if string(cleanupRaw) != "cleanup_domain_tls\n" {
+		t.Fatalf("cleanup request = %q", cleanupRaw)
 	}
 	if strings.Contains(rec.Body.String(), apiToken) {
 		t.Fatal("API token leaked in disconnect response")
@@ -461,6 +479,92 @@ func TestDomainDisconnectDeletesOnlyCreated(t *testing.T) {
 	rec = serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
 	if !strings.Contains(rec.Body.String(), `"configured":false`) {
 		t.Fatalf("expected configured=false after disconnect: %s", rec.Body.String())
+	}
+}
+
+func TestDomainDisconnectRetainsPendingStateWhenCloudflareDeleteFails(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeCF()
+	srv.cloudflare = fake
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody)); rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	fake.deleteErr = errors.New("cloudflare unavailable")
+	rec := serve(handler, authed(http.MethodDelete, "/api/v1/domain", cookie, csrf, ""))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("disconnect delete failure = %d %s", rec.Code, rec.Body.String())
+	}
+	get := serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
+	if !strings.Contains(get.Body.String(), `"configured":true`) || !strings.Contains(get.Body.String(), `"disconnect_pending":true`) {
+		t.Fatalf("failed remote cleanup did not remain retryable: %s", get.Body.String())
+	}
+	fake.deleteErr = nil
+	rec = serve(handler, authed(http.MethodDelete, "/api/v1/domain", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disconnect retry = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDomainDisconnectPendingBlocksChangesAndRetriesAfterLateCleanup(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	srv.cloudflare = newFakeCF()
+	tmp := t.TempDir()
+	srv.cfg.CertbotDNSCredentialsFile = filepath.Join(tmp, "dns.ini")
+	srv.cfg.TLSIssueRequestFile = filepath.Join(tmp, "tls-issue.request")
+	srv.cfg.TLSIssueResultFile = filepath.Join(tmp, "tls-state", "issue.result")
+	if err := os.MkdirAll(filepath.Dir(srv.cfg.TLSIssueResultFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody)); rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	req := authed(http.MethodDelete, "/api/v1/domain", cookie, csrf, "").WithContext(ctx)
+	rec := serve(handler, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("timed-out disconnect = %d %s", rec.Code, rec.Body.String())
+	}
+	get := serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
+	if !strings.Contains(get.Body.String(), `"disconnect_pending":true`) {
+		t.Fatalf("pending disconnect is not visible: %s", get.Body.String())
+	}
+	blocked := serve(handler, authed(http.MethodPost, "/api/v1/domain/tls/issue", cookie, csrf, `{}`))
+	if blocked.Code != http.StatusConflict || !strings.Contains(blocked.Body.String(), `"operation_in_progress"`) {
+		t.Fatalf("pending disconnect did not block TLS mutation = %d %s", blocked.Code, blocked.Body.String())
+	}
+
+	_ = os.Remove(srv.cfg.TLSIssueRequestFile)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(srv.cfg.TLSIssueResultFile), "cleanup.result"), []byte("cleaned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			raw, err := os.ReadFile(srv.cfg.TLSIssueRequestFile)
+			if err == nil && string(raw) == "cleanup_domain_tls\n" {
+				_ = os.Remove(srv.cfg.TLSIssueRequestFile)
+				time.Sleep(20 * time.Millisecond)
+				_ = os.WriteFile(filepath.Join(filepath.Dir(srv.cfg.TLSIssueResultFile), "cleanup.result"), []byte("cleaned\n"), 0o644)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	rec = serve(handler, authed(http.MethodDelete, "/api/v1/domain", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry disconnect = %d %s", rec.Code, rec.Body.String())
+	}
+	get = serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
+	if !strings.Contains(get.Body.String(), `"configured":false`) {
+		t.Fatalf("retry did not clear deployment: %s", get.Body.String())
 	}
 }
 

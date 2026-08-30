@@ -247,7 +247,7 @@ func TestDomainTLSIssueQueuesPrivilegedHelper(t *testing.T) {
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			if _, err := os.Stat(request); err == nil {
-				_ = os.WriteFile(result, []byte("issued\ndb.example.com\nrs.example.com\n"), 0o644)
+				_ = os.WriteFile(result, []byte("issued\ndb.example.com\nrs.example.com\ndb_status=issued\nrs_status=certificate_prepared\n"), 0o644)
 				return
 			}
 			time.Sleep(20 * time.Millisecond)
@@ -259,8 +259,8 @@ func TestDomainTLSIssueQueuesPrivilegedHelper(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tls issue = %d %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"issued"`) {
-		t.Fatalf("expected issued tls: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `"certificate_prepared"`) {
+		t.Fatalf("expected prepared certificate status: %s", rec.Body.String())
 	}
 	raw, err := os.ReadFile(request)
 	if err == nil && strings.Contains(string(raw), "test-token") {
@@ -340,8 +340,8 @@ func TestDomainTLSIssueWithFakeCertbot(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tls issue = %d %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"issued"`) {
-		t.Fatalf("expected issued tls: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `"certificate_prepared"`) {
+		t.Fatalf("expected prepared certificate status: %s", rec.Body.String())
 	}
 }
 
@@ -364,7 +364,7 @@ func TestDomainTLSIssueHelperReportsFailed(t *testing.T) {
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			if _, err := os.Stat(srv.cfg.TLSIssueRequestFile); err == nil {
-				_ = os.WriteFile(srv.cfg.TLSIssueResultFile, []byte("failed\n"), 0o644)
+				_ = os.WriteFile(srv.cfg.TLSIssueResultFile, []byte("failed\nreason=rate_limited\nhost=db.example.com\nhost=rs.example.com\nretry_after=2026-08-31T10:43:35Z\nraw=canary-secret\n"), 0o644)
 				return
 			}
 			time.Sleep(20 * time.Millisecond)
@@ -376,6 +376,125 @@ func TestDomainTLSIssueHelperReportsFailed(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "test-token") {
 		t.Fatal("token leaked in tls failure")
+	}
+	rec = serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET activity = %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"failure_code":"rate_limited"`) || !strings.Contains(body, `"retry_after":"2026-08-31T10:43:35Z"`) {
+		t.Fatalf("missing safe TLS failure activity: %s", body)
+	}
+	if strings.Contains(body, "canary-secret") || strings.Contains(body, `"raw"`) {
+		t.Fatalf("raw helper output leaked: %s", body)
+	}
+}
+
+func TestDomainTLSIssueRejectsConcurrentOperation(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	srv.cloudflare = newFakeCF()
+	tmp := t.TempDir()
+	srv.cfg.CertbotDNSCredentialsFile = filepath.Join(tmp, "dns.ini")
+	srv.cfg.TLSIssueRequestFile = filepath.Join(tmp, "tls-issue.request")
+	srv.cfg.TLSIssueResultFile = filepath.Join(tmp, "tls-issue.result")
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody)); rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	_ = os.Remove(srv.cfg.TLSIssueRequestFile)
+	_ = os.Remove(srv.cfg.TLSIssueResultFile)
+
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		firstDone <- serve(handler, authed(http.MethodPost, "/api/v1/domain/tls/issue", cookie, csrf, `{}`))
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(srv.cfg.TLSIssueRequestFile); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first TLS operation did not queue")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	second := serve(handler, authed(http.MethodPost, "/api/v1/domain/tls/issue", cookie, csrf, `{}`))
+	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), `"operation_in_progress"`) {
+		t.Fatalf("concurrent TLS issue = %d %s", second.Code, second.Body.String())
+	}
+	if err := os.WriteFile(srv.cfg.TLSIssueResultFile, []byte("issued\ndb.example.com\nrs.example.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if first := <-firstDone; first.Code != http.StatusOK {
+		t.Fatalf("first TLS issue = %d %s", first.Code, first.Body.String())
+	}
+}
+
+func TestDomainTLSIssueHonorsPersistedRateLimitCooldown(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	srv.cloudflare = newFakeCF()
+	tmp := t.TempDir()
+	srv.cfg.CertbotDNSCredentialsFile = filepath.Join(tmp, "dns.ini")
+	srv.cfg.TLSIssueRequestFile = filepath.Join(tmp, "tls-issue.request")
+	srv.cfg.TLSIssueResultFile = filepath.Join(tmp, "tls-issue.result")
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody)); rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	_ = os.Remove(srv.cfg.TLSIssueRequestFile)
+	if err := os.WriteFile(srv.cfg.TLSIssueResultFile, []byte("failed\nreason=rate_limited\nhost=db.example.com\nhost=rs.example.com\nretry_after=2099-08-31T10:43:35Z\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/tls/issue", cookie, csrf, `{}`))
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), `"rate_limited"`) {
+		t.Fatalf("rate-limited TLS issue = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(srv.cfg.TLSIssueRequestFile); !os.IsNotExist(err) {
+		t.Fatalf("cooldown must not queue request: %v", err)
+	}
+	srv.domainActivity.Clear()
+	rec = serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"retry_after":"2099-08-31T10:43:35Z"`) {
+		t.Fatalf("persisted cooldown activity = %d %s", rec.Code, rec.Body.String())
+	}
+	if err := os.WriteFile(srv.cfg.TLSIssueResultFile, []byte("failed\nreason=rate_limited\nhost=db.other.example\nhost=rs.other.example\nretry_after=2099-08-31T10:43:35Z\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv.domainActivity.Clear()
+	rec = serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
+	if strings.Contains(rec.Body.String(), `"activity"`) {
+		t.Fatalf("mismatched persisted cooldown leaked into deployment: %s", rec.Body.String())
+	}
+}
+
+func TestDomainGetPrefersAsyncTLSFailureOverCompletedApply(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	srv.cloudflare = newFakeCF()
+	tmp := t.TempDir()
+	srv.cfg.CertbotDNSCredentialsFile = filepath.Join(tmp, "dns.ini")
+	srv.cfg.TLSIssueRequestFile = filepath.Join(tmp, "tls-issue.request")
+	srv.cfg.TLSIssueResultFile = filepath.Join(tmp, "tls-issue.result")
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody)); rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	if err := os.WriteFile(srv.cfg.TLSIssueResultFile, []byte("failed\nreason=dns\nhost=db.example.com\nhost=rs.example.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `"failure_code":"dns"`) {
+		t.Fatalf("async TLS failure hidden by completed apply = %d %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"tls":{"db":"failed","rs":"failed"}`) {
+		t.Fatalf("TLS cards do not reflect helper failure: %s", body)
 	}
 }
 

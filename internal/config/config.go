@@ -27,6 +27,9 @@ const (
 	DefaultLogLevel           = "info"
 	ProductionStateDirectory  = "/var/lib/redgres"
 	DefaultEnvFile            = "/etc/redgres/redgres.env"
+	ProductionCertbotDNSFile  = "/var/lib/redgres/secrets/certbot-dns.ini"
+	ProductionTLSRequestFile  = "/var/lib/redgres/tls-issue.request"
+	ProductionTLSResultFile   = "/var/lib/redgres-tls/issue.result"
 
 	MinSessionTTL     = 5 * time.Minute
 	MaxSessionTTL     = 24 * time.Hour
@@ -339,8 +342,19 @@ func (c Config) validate() error {
 	if err := validateOptionalSecretFilePath(c.TLSIssueRequestFile, "REDGRES_TLS_ISSUE_REQUEST_FILE", c.Production()); err != nil {
 		return err
 	}
-	if err := validateOptionalSecretFilePath(c.TLSIssueResultFile, "REDGRES_TLS_ISSUE_RESULT_FILE", c.Production()); err != nil {
+	if err := validateTLSIssueResultPath(c.TLSIssueResultFile, c.Production()); err != nil {
 		return err
+	}
+	if c.Production() {
+		for _, fixed := range []struct{ value, name, want string }{
+			{c.CertbotDNSCredentialsFile, "REDGRES_CERTBOT_DNS_TOKEN_FILE", ProductionCertbotDNSFile},
+			{c.TLSIssueRequestFile, "REDGRES_TLS_ISSUE_REQUEST_FILE", ProductionTLSRequestFile},
+			{c.TLSIssueResultFile, "REDGRES_TLS_ISSUE_RESULT_FILE", ProductionTLSResultFile},
+		} {
+			if err := validateProductionTLSHelperPath(fixed.value, fixed.name, fixed.want); err != nil {
+				return err
+			}
+		}
 	}
 	if c.BootstrapUFWRemoveCmd != "" {
 		if err := validateOptionalScriptPath(c.BootstrapUFWRemoveCmd); err != nil {
@@ -361,6 +375,26 @@ func (c Config) validate() error {
 	}
 	if c.Production() && !c.CookieSecure && c.BootstrapAddress == "" {
 		return errors.New("REDGRES_COOKIE_SECURE: must be true in production")
+	}
+	return nil
+}
+
+func validateProductionTLSHelperPath(value, name, want string) error {
+	if value != "" && filepath.Clean(value) != want {
+		return fmt.Errorf("%s: production path is installer-owned and must be %s", name, want)
+	}
+	return nil
+}
+
+func validateTLSIssueResultPath(value string, production bool) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	if strings.ContainsAny(value, "?#%") || strings.ContainsRune(value, 0) {
+		return errors.New("REDGRES_TLS_ISSUE_RESULT_FILE: must not contain URI reserved characters")
+	}
+	if production {
+		return validateProductionTLSHelperPath(value, "REDGRES_TLS_ISSUE_RESULT_FILE", ProductionTLSResultFile)
 	}
 	return nil
 }

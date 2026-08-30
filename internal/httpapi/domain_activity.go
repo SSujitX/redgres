@@ -1,6 +1,11 @@
 package httpapi
 
-import "sync"
+import (
+	"sync"
+	"time"
+
+	"github.com/SSujitX/redgres/internal/tlsops"
+)
 
 const (
 	domainActivityPending = "pending"
@@ -36,9 +41,11 @@ var domainActivityLabels = map[string]string{
 }
 
 type domainActivityStep struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	State string `json:"state"`
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	State       string `json:"state"`
+	FailureCode string `json:"failure_code,omitempty"`
+	RetryAfter  string `json:"retry_after,omitempty"`
 }
 
 // domainActivity is in-memory, secret-safe progress for Domain mutations.
@@ -84,6 +91,34 @@ func (a *domainActivity) Advance(id string) {
 				}
 			}
 			a.steps[i].State = domainActivityRunning
+			return
+		}
+	}
+}
+
+// SetFailure adds only stable TLS failure state. Raw dependency output never
+// enters activity snapshots.
+func (a *domainActivity) SetFailure(id, code, retryAfter string) {
+	if _, ok := domainActivityLabels[id]; !ok {
+		return
+	}
+	if !tlsops.IsIssueFailureCode(code) {
+		code = string(tlsops.IssueFailureDependency)
+		retryAfter = ""
+	}
+	if code != string(tlsops.IssueFailureRateLimited) {
+		retryAfter = ""
+	} else if parsed, err := time.Parse(time.RFC3339, retryAfter); err != nil {
+		retryAfter = ""
+	} else {
+		retryAfter = parsed.UTC().Format(time.RFC3339)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i := range a.steps {
+		if a.steps[i].ID == id {
+			a.steps[i].FailureCode = code
+			a.steps[i].RetryAfter = retryAfter
 			return
 		}
 	}
@@ -161,8 +196,34 @@ func (s *Server) beginDomainActivity(operation string, ids ...string) func(*bool
 
 func (s *Server) attachDomainActivity(resp map[string]any) {
 	snap, ok := s.domainActivity.Snapshot()
-	if !ok {
+	if ok && snap["in_progress"] == true {
+		resp["activity"] = snap
 		return
 	}
-	resp["activity"] = snap
+	if configured, _ := resp["configured"].(bool); !configured {
+		if ok {
+			resp["activity"] = snap
+		}
+		return
+	}
+	failure := tlsops.ReadIssueFailure(s.cfg.TLSIssueResultFile)
+	hosts, _ := resp["hostnames"].(map[string]string)
+	if tlsops.ReadIssueResult(s.cfg.TLSIssueResultFile) != "failed" || !failure.Covers([]string{hosts["db"], hosts["rs"]}) {
+		if ok {
+			resp["activity"] = snap
+		}
+		return
+	}
+	retryAfter := ""
+	if !failure.RetryAfter.IsZero() {
+		retryAfter = failure.RetryAfter.Format(time.RFC3339)
+	}
+	step := domainActivityStep{
+		ID:          "issue_tls",
+		Label:       domainActivityLabels["issue_tls"],
+		State:       domainActivityFailed,
+		FailureCode: string(failure.Code),
+		RetryAfter:  retryAfter,
+	}
+	resp["activity"] = map[string]any{"operation": "tls", "in_progress": false, "steps": []domainActivityStep{step}}
 }

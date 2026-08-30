@@ -13,11 +13,11 @@ const (
 )
 
 type domainHostnames struct {
-	Console       string
-	DB            string
-	RS            string
-	PgAdmin       string
-	RedisInsight  string
+	Console      string
+	DB           string
+	RS           string
+	PgAdmin      string
+	RedisInsight string
 }
 
 func parseDomainHostnames(zone, legacyConsole string, hostnames map[string]string) (domainHostnames, error) {
@@ -120,6 +120,11 @@ func (d deployment) tlsMap() map[string]string {
 		} else {
 			rs = "not_issued"
 		}
+	}
+	if rs == "issued" {
+		// Legacy persisted state meant only that the shared certificate was
+		// issued; Redis TLS has never been applied by this Partial.
+		rs = "certificate_prepared"
 	}
 	return map[string]string{"db": db, "rs": rs}
 }

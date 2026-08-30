@@ -42,6 +42,8 @@ func (i Issuer) Issue(ctx context.Context, hostnames []string) error {
 		"--register-unsafely-without-email",
 		"--dns-cloudflare",
 		"--dns-cloudflare-credentials", creds,
+		"--cert-name", strings.TrimSpace(strings.ToLower(hostnames[0])),
+		"--keep-until-expiring",
 	}
 	for _, h := range hostnames {
 		h = strings.TrimSpace(strings.ToLower(h))

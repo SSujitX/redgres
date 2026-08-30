@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/SSujitX/redgres/internal/audit"
 	"github.com/SSujitX/redgres/internal/cloudflare"
@@ -35,19 +36,21 @@ type redisHealth interface {
 }
 
 type Server struct {
-	cfg             config.Config
-	db              *sql.DB
-	assets          fs.FS
-	log             *slog.Logger
-	audit           audit.Store
-	operations      operations.Store
-	postgres        postgresadmin.Inventory
-	redis           redisHealth
-	cloudflare      cloudflare.Client
-	bootstrapCloser bootstrapCloser
-	tools           *toolgate.Memory
-	console         *toolgate.Origin
-	domainActivity  domainActivity
+	cfg                  config.Config
+	db                   *sql.DB
+	assets               fs.FS
+	log                  *slog.Logger
+	audit                audit.Store
+	operations           operations.Store
+	postgres             postgresadmin.Inventory
+	redis                redisHealth
+	cloudflare           cloudflare.Client
+	bootstrapCloser      bootstrapCloser
+	tools                *toolgate.Memory
+	console              *toolgate.Origin
+	domainActivity       domainActivity
+	domainMutationMu     sync.Mutex
+	domainMutationActive bool
 }
 
 // bootstrapCloser is the optional first-run public listener (OPS-008).
@@ -121,17 +124,17 @@ func (s *Server) Handler() http.Handler {
 	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/search", s.handleSearch)
 	r.With(s.requireSession, s.requireCapability("platform.read")).Get("/api/v1/operations/{id}", s.handleGetOperation)
 	r.With(s.requireSession, s.requireCapability("platform.network")).Get("/api/v1/domain", s.handleDomainGet)
-	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/token", s.handleDomainTokenSet)
-	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/apply", s.handleDomainApply)
-	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/access-policy", s.handleDomainAccessPolicy)
-	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/confirm-reachable", s.handleDomainConfirmReachable)
-	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/oauth-client", s.handleDomainOAuthClient)
-	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/oauth/start", s.handleDomainOAuthStart)
-	r.With(s.requireSession).Get("/api/v1/domain/oauth/callback", s.handleDomainOAuthCallback)
-	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/tls/issue", s.handleDomainTLSIssue)
-	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/manual/verify", s.handleDomainManualVerify)
-	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/domain/manual/confirm-access", s.handleDomainManualConfirmAccess)
-	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Delete("/api/v1/domain", s.handleDomainDisconnect)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation, s.serializeDomainMutation).Post("/api/v1/domain/token", s.handleDomainTokenSet)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation, s.serializeDomainMutation).Post("/api/v1/domain/apply", s.handleDomainApply)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation, s.serializeDomainMutation).Post("/api/v1/domain/access-policy", s.handleDomainAccessPolicy)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation, s.serializeDomainMutation).Post("/api/v1/domain/confirm-reachable", s.handleDomainConfirmReachable)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation, s.serializeDomainMutation).Post("/api/v1/domain/oauth-client", s.handleDomainOAuthClient)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation, s.serializeDomainMutation).Post("/api/v1/domain/oauth/start", s.handleDomainOAuthStart)
+	r.With(s.requireSession, s.serializeDomainMutation).Get("/api/v1/domain/oauth/callback", s.handleDomainOAuthCallback)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation, s.serializeDomainMutation).Post("/api/v1/domain/tls/issue", s.handleDomainTLSIssue)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation, s.serializeDomainMutation).Post("/api/v1/domain/manual/verify", s.handleDomainManualVerify)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation, s.serializeDomainMutation).Post("/api/v1/domain/manual/confirm-access", s.handleDomainManualConfirmAccess)
+	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation, s.serializeDomainMutation).Delete("/api/v1/domain", s.handleDomainDisconnect)
 	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/tools/{tool}/launch", s.handleToolLaunch)
 	r.With(s.requireSession, s.requireCapability("platform.network"), s.requireMutation).Post("/api/v1/tools/pgadmin/credentials/reveal", s.handlePgAdminReveal)
 	r.With(s.requireSession, s.requireCapability("redis.read")).Get("/api/v1/redis/status", s.handleRedisStatus)

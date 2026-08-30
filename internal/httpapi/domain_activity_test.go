@@ -70,3 +70,32 @@ func TestDomainActivitySucceedMarksAllDone(t *testing.T) {
 		}
 	}
 }
+
+func TestDomainActivityFailureExposesOnlyStableTLSReason(t *testing.T) {
+	var a domainActivity
+	a.Start("tls", []string{"issue_tls"})
+	a.Advance("issue_tls")
+	a.SetFailure("issue_tls", "rate_limited", "2026-08-31T10:43:35Z")
+	a.FailCurrent()
+
+	snap, ok := a.Snapshot()
+	if !ok {
+		t.Fatal("expected snapshot")
+	}
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, `"failure_code":"rate_limited"`) || !strings.Contains(body, `"retry_after":"2026-08-31T10:43:35Z"`) {
+		t.Fatalf("missing safe TLS failure detail: %s", body)
+	}
+
+	a.SetFailure("issue_tls", "raw dependency error canary", "owner@example.com")
+	snap, _ = a.Snapshot()
+	raw, _ = json.Marshal(snap)
+	body = string(raw)
+	if strings.Contains(body, "canary") || strings.Contains(body, "owner@example.com") {
+		t.Fatalf("untrusted failure detail leaked: %s", body)
+	}
+}

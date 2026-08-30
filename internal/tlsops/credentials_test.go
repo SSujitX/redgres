@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWriteCloudflareDNSCredentialsFormatAndMode(t *testing.T) {
@@ -81,7 +82,7 @@ func TestReadIssueResultIssuedOrFailed(t *testing.T) {
 		t.Fatalf("missing = %q", got)
 	}
 	bound := filepath.Join(dir, "bound")
-	if err := os.WriteFile(bound, []byte("issued\ndb.example.com\nrs.example.com\n"), 0o644); err != nil {
+	if err := os.WriteFile(bound, []byte("issued\ndb.example.com\nrs.example.com\ndb_status=issued\nrs_status=certificate_prepared\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if !IssueResultCovers(bound, []string{"db.example.com", "rs.example.com"}) {
@@ -89,6 +90,50 @@ func TestReadIssueResultIssuedOrFailed(t *testing.T) {
 	}
 	if IssueResultCovers(bound, []string{"db.other.com", "rs.example.com"}) {
 		t.Fatal("must not overlay issued for a different hostname")
+	}
+	statuses := ReadIssueEndpointStatuses(bound)
+	if statuses["db"] != "issued" || statuses["rs"] != "certificate_prepared" {
+		t.Fatalf("endpoint statuses = %#v", statuses)
+	}
+}
+
+func TestReadIssueFailureReturnsOnlyAllowListedReasonAndRetryTime(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "failed")
+	body := "failed\nreason=rate_limited\nhost=db.example.com\nhost=rs.example.com\nretry_after=2026-08-31T10:43:35Z\nraw=canary-secret\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	failure := ReadIssueFailure(path)
+	if failure.Code != IssueFailureRateLimited {
+		t.Fatalf("code = %q", failure.Code)
+	}
+	want := time.Date(2026, 8, 31, 10, 43, 35, 0, time.UTC)
+	if !failure.RetryAfter.Equal(want) {
+		t.Fatalf("retry_after = %s", failure.RetryAfter)
+	}
+	if !failure.Covers([]string{"db.example.com", "rs.example.com"}) || failure.Covers([]string{"db.other.com", "rs.example.com"}) {
+		t.Fatal("failure hostname scope is incorrect")
+	}
+	if strings.Contains(string(failure.Code), "canary") {
+		t.Fatal("unrecognized result data leaked into failure")
+	}
+}
+
+func TestReadIssueFailureRejectsUnknownReasonAndInvalidRetryTime(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "failed")
+	if err := os.WriteFile(path, []byte("failed\nreason=raw-certbot-error\nretry_after=tomorrow\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	failure := ReadIssueFailure(path)
+	if failure.Code != IssueFailureDependency {
+		t.Fatalf("code = %q", failure.Code)
+	}
+	if !failure.RetryAfter.IsZero() {
+		t.Fatalf("retry_after = %s", failure.RetryAfter)
 	}
 }
 
