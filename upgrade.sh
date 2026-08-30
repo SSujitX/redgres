@@ -792,6 +792,10 @@ if ! systemctl restart redgres.service; then
   die "systemd restart failed; previous release restored when available"
 fi
 
+if command -v docker >/dev/null 2>&1 && [[ -f /etc/redgres/expert-tools-compose.yml ]]; then
+  docker compose -f /etc/redgres/expert-tools-compose.yml up -d >/dev/null 2>&1 || true
+fi
+
 if ! redgres_wait_for_healthz "${HEALTHZ}" 15; then
   if [[ -n "${PREVIOUS}" && -d "${PREVIOUS}" ]]; then
     ln -sfn "${PREVIOUS}" "${OPT_ROOT}/current"
