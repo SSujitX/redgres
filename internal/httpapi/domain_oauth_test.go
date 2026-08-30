@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -222,6 +223,94 @@ func TestDomainOAuthPendingRejectsCorruptCreatedAt(t *testing.T) {
 	}
 }
 
+func TestDomainTLSIssueQueuesPrivilegedHelper(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	srv.cloudflare = newFakeCF()
+	tmp := t.TempDir()
+	creds := filepath.Join(tmp, "dns.ini")
+	request := filepath.Join(tmp, "tls-issue.request")
+	result := filepath.Join(tmp, "tls-issue.result")
+	srv.cfg.CertbotDNSCredentialsFile = creds
+	srv.cfg.TLSIssueRequestFile = request
+	srv.cfg.TLSIssueResultFile = result
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody)); rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	_ = os.Remove(request)
+	_ = os.Remove(result)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(request); err == nil {
+				_ = os.WriteFile(result, []byte("issued\ndb.example.com\nrs.example.com\n"), 0o644)
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/tls/issue", cookie, csrf, `{}`))
+	<-done
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tls issue = %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"issued"`) {
+		t.Fatalf("expected issued tls: %s", rec.Body.String())
+	}
+	raw, err := os.ReadFile(request)
+	if err == nil && strings.Contains(string(raw), "test-token") {
+		t.Fatal("token leaked in tls request")
+	}
+	rec = serve(handler, authed(http.MethodGet, "/api/v1/domain", cookie, csrf, ""))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"db":"issued"`) {
+		t.Fatalf("GET tls overlay = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDomainTLSIssueWritesCertbotINIFromAPIToken(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	const apiToken = "canary-tls-api-token"
+	if err := writeTokenFile(tokenPath, apiToken); err != nil {
+		t.Fatal(err)
+	}
+	srv.cloudflare = newFakeCF()
+	tmp := t.TempDir()
+	creds := filepath.Join(tmp, "dns.ini")
+	srv.cfg.CertbotDNSCredentialsFile = creds
+	live := filepath.Join(tmp, "live")
+	prevLive := tlsops.CertLiveDir
+	tlsops.CertLiveDir = live
+	t.Cleanup(func() { tlsops.CertLiveDir = prevLive })
+	writeTestLECert(t, live, "db.example.com", "rs.example.com")
+	srv.cfg.CertbotBin = writeFakeCertbot(t, tmp, true)
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody)); rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	if err := os.Remove(creds); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/tls/issue", cookie, csrf, `{}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tls issue = %d %s", rec.Code, rec.Body.String())
+	}
+	raw, err := os.ReadFile(creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "dns_cloudflare_api_token = "+apiToken+"\n" {
+		t.Fatalf("certbot ini = %q", raw)
+	}
+	if strings.Contains(rec.Body.String(), apiToken) {
+		t.Fatal("API token leaked in tls response")
+	}
+}
+
 func TestDomainTLSIssueWithFakeCertbot(t *testing.T) {
 	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
 	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
@@ -241,11 +330,7 @@ func TestDomainTLSIssueWithFakeCertbot(t *testing.T) {
 
 	writeTestLECert(t, live, "db.example.com", "rs.example.com")
 
-	fakeBin := filepath.Join(tmp, "certbot.bat")
-	if err := os.WriteFile(fakeBin, []byte("@echo off\nexit /b 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	srv.cfg.CertbotBin = fakeBin
+	srv.cfg.CertbotBin = writeFakeCertbot(t, tmp, true)
 
 	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody)); rec.Code != http.StatusOK {
 		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
@@ -258,6 +343,64 @@ func TestDomainTLSIssueWithFakeCertbot(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"issued"`) {
 		t.Fatalf("expected issued tls: %s", rec.Body.String())
 	}
+}
+
+func TestDomainTLSIssueHelperReportsFailed(t *testing.T) {
+	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
+	if err := writeTokenFile(tokenPath, "test-token"); err != nil {
+		t.Fatal(err)
+	}
+	srv.cloudflare = newFakeCF()
+	tmp := t.TempDir()
+	srv.cfg.CertbotDNSCredentialsFile = filepath.Join(tmp, "dns.ini")
+	srv.cfg.TLSIssueRequestFile = filepath.Join(tmp, "tls-issue.request")
+	srv.cfg.TLSIssueResultFile = filepath.Join(tmp, "tls-issue.result")
+	if rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/apply", cookie, csrf, domainApplyBody)); rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d %s", rec.Code, rec.Body.String())
+	}
+	_ = os.Remove(srv.cfg.TLSIssueRequestFile)
+	_ = os.Remove(srv.cfg.TLSIssueResultFile)
+	go func() {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(srv.cfg.TLSIssueRequestFile); err == nil {
+				_ = os.WriteFile(srv.cfg.TLSIssueResultFile, []byte("failed\n"), 0o644)
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	rec := serve(handler, authed(http.MethodPost, "/api/v1/domain/tls/issue", cookie, csrf, `{}`))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("tls issue failed = %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "test-token") {
+		t.Fatal("token leaked in tls failure")
+	}
+}
+
+func writeFakeCertbot(t *testing.T, dir string, ok bool) string {
+	t.Helper()
+	exit := "exit 1"
+	if ok {
+		exit = "exit 0"
+	}
+	if runtime.GOOS == "windows" {
+		path := filepath.Join(dir, "certbot.bat")
+		body := "@echo off\r\nexit /b 1\r\n"
+		if ok {
+			body = "@echo off\r\nexit /b 0\r\n"
+		}
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	path := filepath.Join(dir, "certbot")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+exit+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func writeTestLECert(t *testing.T, liveRoot, primary string, sans ...string) {
