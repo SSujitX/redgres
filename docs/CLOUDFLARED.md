@@ -82,18 +82,20 @@ How the connector gets the token:
 1. Apply writes the plaintext connector token to `/var/lib/redgres/secrets/cloudflared-tunnel-token` (`0600` via `securefile`). The token **does** live on disk by design; keep the parent directory `0700` root-owned.
 2. `cloudflared-redgres.service` uses `LoadCredential=TUNNEL_TOKEN:<that path>` (systemd copies into `$CREDENTIALS_DIRECTORY/TUNNEL_TOKEN`).
 3. `cloudflared-run.sh` exports `TUNNEL_TOKEN` and execs `cloudflared tunnel --no-autoupdate run` — **no `--token` on argv** (avoids process-list exposure). “Never on argv” does **not** mean the token exists only inside systemd.
-4. `cloudflared-redgres.path` watches the token file; on create/change it starts `cloudflared-redgres-restart.service`, which `systemctl restart`s the connector (plain `Unit=cloudflared-redgres.service` would **not** restart an already-running connector). On a first-ever apply this is effectively a **start** (`restart` starts an inactive unit).
+4. `cloudflared-redgres.service` has `ConditionPathExists` on the token file and is enabled so boot starts the connector when the file already exists.
+5. `cloudflared-redgres.path` uses **PathChanged only** (not PathExists). PathExists + the oneshot restart retriggers in a loop once the file exists (register/unregister, Error 1033). PathChanged restarts only when apply rewrites the token.
 
-### 4. Enable path watcher (and connector after apply)
+### 4. Enable connector + path watcher
 
 ```bash
+systemctl enable cloudflared-redgres.service
 systemctl enable --now cloudflared-redgres.path
 ```
 
 Order relative to Domain apply:
 
 1. Paste API token + run apply in the UI/API (creates tunnel, ingress, DNS, Access app, token file).
-2. Path unit sees the token file and restarts/starts the connector — **or** start explicitly:
+2. Enable+start the connector if the token file already exists; later token rewrites restart it via the path unit:
 
 ```bash
 systemctl start cloudflared-redgres.service
