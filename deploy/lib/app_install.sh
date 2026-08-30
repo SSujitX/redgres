@@ -504,10 +504,14 @@ redgres_enable_cloudflared_apt() {
 
 redgres_install_domain_packages() {
   redgres_enable_cloudflared_apt || return 1
-  DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
-  redgres_apt_install cloudflared
-  redgres_apt_install certbot
-  redgres_apt_install python3-certbot-dns-cloudflare
+  if declare -F redgres_apt_get >/dev/null 2>&1; then
+    redgres_apt_get update || return 1
+  else
+    DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update || return 1
+  fi
+  redgres_apt_install cloudflared || return 1
+  redgres_apt_install certbot || return 1
+  redgres_apt_install python3-certbot-dns-cloudflare || return 1
 }
 
 redgres_install_domain_runtime() {
