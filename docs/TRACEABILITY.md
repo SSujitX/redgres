@@ -31,6 +31,18 @@ Do not mark Complete.
 
 ## Current slice
 
+### Fresh install defaults to working loopback PgBouncer (2026-08-30)
+
+OPS-001 / OPS-007 Partial: interactive install defaults remain `fresh-postgres` + Redis `fresh`, and PgBouncer now defaults to `fresh` (non-interactive still requires explicit `--pgbouncer-mode`). Live fresh PgBouncer writes `127.0.0.1:6432` (TLS/SCRAM to local PostgreSQL, `admin_users=redgres_admin`, `SECURITY DEFINER` `auth_query`; no `userlist` consumed by the app). `REDGRES_POSTGRES_POOLED_PORT=6432` is written only after listen is configured. Finish box claims `127.0.0.1:6432` only then. Commands actually run: Git Bash `bash deploy/tests/interactive_logic_test.sh` (passed); Git Bash `bash deploy/tests/run.sh` (199 passed, 0 failed). Not done here: live Ubuntu `fresh` PgBouncer e2e, public `6432`, §6. Do not mark Complete.
+
+### Domain API token reused; installer starts cloudflared and queues TLS (2026-08-30)
+
+OPS-009 Partial: API token is pasted once. Apply writes certbot-dns-cloudflare ini from that token (`0600`) and queues hostnames-only `REDGRES_TLS_ISSUE_REQUEST_FILE`. `POST /tls/issue` recreates the ini if missing. The Domain wizard hides OAuth after `credential=api_token`; OAuth cannot apply from bootstrap. Live `deploy/install.sh` / `/opt/redgres` update install official `cloudflared` (`any` suite), certbot + dns plugin, units, and enable path watchers + `certbot.timer`. Renew hook copies certs to `/etc/redgres/tls` and reloads PostgreSQL. Commands actually run: `go test ./internal/tlsops/ ./internal/httpapi/ -count=1 -run 'TestWriteCloudflare|TestWriteTLSIssue|TestReadIssue|TestDomainApply|TestDomainTLSIssue|TestDomainToken|TestDomainDisconnect|TestDomainCapability'` (ok); `cd web && npx vitest --run src/features/domain/DomainNetworkPage.test.tsx` (15 passed); Git Bash `bash deploy/tests/run.sh` (191 passed, 0 failed). Not done here: live Ubuntu install/update on the VPS, live Cloudflare/certbot e2e, Redis public TLS, viewport screenshots, §6. Do not mark Complete.
+
+### Domain apply logs and live Apply result (2026-08-30)
+
+OPS-009 Partial: `POST /api/v1/domain/apply` writes a secret-safe `domain.apply` slog line (zone, hostname, hostname_count, request_id, access, bootstrap_still_open) and the existing audit event. GET `/api/v1/domain` now returns `tunnel_id`. The Domain page Apply result Access/Bootstrap/Tunnel ID follow live status after Access allow. Status copy says the connector belongs on the Redgres Ubuntu server (starts only after cloudflared is installed there; not Windows). Refresh keeps last-good status so Access does not flash deny. Commands actually run: `go test ./internal/httpapi/ -count=1 -run 'TestDomainApply|TestDomainToken|TestDomainDisconnect|TestDomainCapability'` (ok); `cd web && npx vitest --run src/features/domain/DomainNetworkPage.test.tsx` (13 passed). Not done here: live cloudflared start, certbot credentials, viewport screenshots, §6.
+
 ### Bootstrap UFW recovers sudo SSH IP or prompts (2026-08-30)
 
 OPS-008 Partial: live install still never runs `ufw allow 8989/tcp` (world-open). When `REDGRES_BOOTSTRAP_ALLOW_FROM` is unset, `redgres_bootstrap_allow_from` uses `SSH_CONNECTION` / `SSH_CLIENT`, then ancestor `/proc/*/environ` (so `sudo` no longer drops the client IP), then `who -m`. If still unknown and a TTY is readable, `redgres_resolve_bootstrap_allow_from` asks once for the operator browse IP and caches it. Confirm-reachable / TTL still close `:8989` and remove the rule. Commands actually run: Git Bash `bash deploy/tests/run.sh` (189 passed, 0 failed). Not done here: live UFW on the test VPS, §6.
