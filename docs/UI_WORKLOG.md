@@ -26,6 +26,8 @@ All capture screenshots live in `web/screenshots/` (Playwright, mocked `/api/v1/
 
 ## Changed in this pass
 
+- System **Expert tools** section: Open pgAdmin / RedisInsight via POST launch; Reveal pgAdmin login with copy/dismiss ticket. Overview tool card uses the same Open buttons (no raw hrefs). Wider card padding, 44px buttons with 16px gaps, header Refresh in a row. Recent tool activity uses compact GET `/audit?limit=8` (client filter to tool actions; 8s poll while visible; no request IDs/secrets).
+
 - Domain wizard: API token vs OAuth chosen once; API-token apply never shows OAuth paste. Status copy says the installer enables the Ubuntu connector and apply starts it. TLS retry copy says the same API token is reused.
 
 - `web/src/styles/tokens.css` — accent palette, dark theme, typography, radii, elevation, motion.
