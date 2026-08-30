@@ -81,6 +81,117 @@ redgres_port_free() {
   fi
 }
 
+redgres_live_preflight_ports() {
+  redgres_port_free 5432
+  redgres_port_free 6380
+  if [[ "${pgbouncer_mode}" == "fresh" ]]; then
+    redgres_port_free 6432
+  fi
+}
+
+redgres_pgbouncer_ini() {
+  local userlist="${1:-${REDGRES_PGBOUNCER_USERLIST:-/etc/pgbouncer/userlist.txt}}"
+  cat <<EOF
+[databases]
+* = host=127.0.0.1 port=5432
+
+[pgbouncer]
+logfile = /var/log/postgresql/pgbouncer.log
+pidfile = /var/run/postgresql/pgbouncer.pid
+unix_socket_dir = /var/run/postgresql
+listen_addr = 127.0.0.1
+listen_port = 6432
+auth_type = scram-sha-256
+auth_file = ${userlist}
+auth_user = redgres_admin
+auth_dbname = postgres
+auth_query = SELECT usename, passwd FROM pgbouncer.user_search(\$1)
+admin_users = redgres_admin
+pool_mode = transaction
+max_client_conn = 200
+default_pool_size = 20
+ignore_startup_parameters = extra_float_digits
+server_tls_sslmode = require
+client_tls_sslmode = require
+client_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem
+client_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key
+EOF
+}
+
+redgres_pgbouncer_userlist_line() {
+  local user="$1" pass="$2"
+  pass="${pass//\\/\\\\}"
+  pass="${pass//\"/\\\"}"
+  printf '"%s" "%s"\n' "${user}" "${pass}"
+}
+
+redgres_pgbouncer_auth_sql() {
+  cat <<'EOSQL'
+CREATE SCHEMA IF NOT EXISTS pgbouncer;
+REVOKE ALL ON SCHEMA pgbouncer FROM PUBLIC;
+GRANT USAGE ON SCHEMA pgbouncer TO redgres_admin;
+CREATE OR REPLACE FUNCTION pgbouncer.user_search(uname text)
+RETURNS TABLE(usename name, passwd text)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT usename, passwd FROM pg_catalog.pg_shadow WHERE usename = uname;
+$$;
+REVOKE ALL ON FUNCTION pgbouncer.user_search(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION pgbouncer.user_search(text) TO redgres_admin;
+EOSQL
+}
+
+redgres_apply_pgbouncer_auth_sql() {
+  /usr/sbin/runuser -u postgres -- /usr/bin/psql -d postgres -v ON_ERROR_STOP=1 <<EOSQL
+$(redgres_pgbouncer_auth_sql)
+EOSQL
+}
+
+redgres_pgbouncer_health() {
+  local i=0
+  while ! /usr/bin/pg_isready -h 127.0.0.1 -p 6432 >/dev/null 2>&1; do
+    i=$((i + 1))
+    (( i < 30 )) || redgres_die 'pgbouncer did not become ready on 127.0.0.1:6432'
+    /usr/bin/sleep 1
+  done
+}
+
+redgres_configure_fresh_pgbouncer() {
+  local ini userlist passfile pass
+  [[ "${pgbouncer_mode}" == "fresh" ]] || return 0
+  ini="${REDGRES_PGBOUNCER_INI:-/etc/pgbouncer/pgbouncer.ini}"
+  userlist="${REDGRES_PGBOUNCER_USERLIST:-/etc/pgbouncer/userlist.txt}"
+  passfile="${REDGRES_POSTGRES_PASSFILE:-/etc/redgres/postgres.pass}"
+  [[ -f "${passfile}" && ! -L "${passfile}" ]] || redgres_die 'postgres passfile is not trusted'
+  pass="$(/usr/bin/cat "${passfile}")"
+  [[ -n "${pass}" ]] || redgres_die 'postgres passfile is empty'
+  if [[ "${REDGRES_PGBOUNCER_SKIP_HOST:-}" != "1" ]]; then
+    redgres_apply_pgbouncer_auth_sql
+  fi
+  /usr/bin/mkdir -p "$(/usr/bin/dirname "${ini}")" "$(/usr/bin/dirname "${userlist}")"
+  umask 077
+  redgres_pgbouncer_ini "${userlist}" >"${ini}"
+  /usr/bin/chmod 644 "${ini}"
+  redgres_pgbouncer_userlist_line redgres_admin "${pass}" >"${userlist}"
+  /usr/bin/chmod 600 "${userlist}"
+  if [[ "${REDGRES_PGBOUNCER_SKIP_HOST:-}" != "1" ]]; then
+    if /usr/bin/getent passwd postgres >/dev/null; then
+      /usr/bin/chown postgres:postgres "${ini}" "${userlist}"
+    fi
+    /usr/sbin/usermod -aG ssl-cert postgres
+    if /usr/bin/getent passwd pgbouncer >/dev/null; then
+      /usr/sbin/usermod -aG ssl-cert pgbouncer
+    fi
+    /usr/bin/systemctl enable pgbouncer
+    /usr/bin/systemctl restart pgbouncer
+    redgres_pgbouncer_health
+  fi
+  redgres_pgbouncer_listen=1
+  redgres_log 'pgbouncer listening on 127.0.0.1:6432 (password not logged)'
+}
+
 redgres_refuse_existing_postgres_datadir() {
   local datadir="/var/lib/postgresql/${postgres_version}/main"
   if [[ -e "${datadir}" ]]; then
@@ -430,8 +541,7 @@ redgres_live_install() {
   redgres_read_os
   redgres_require_amd64
   redgres_refuse_existing_postgres_datadir
-  redgres_port_free 5432
-  redgres_port_free 6380
+  redgres_live_preflight_ports
 
   pg_pkg="postgresql-${postgres_version}"
   redgres_log "live preflight os=${REDGRES_OS_ID} ${REDGRES_OS_VERSION_ID} (${REDGRES_OS_CODENAME}) postgres=${postgres_version}"
@@ -468,9 +578,11 @@ redgres_live_install() {
   redgres_postgres_health
   redgres_redis_health
   redgres_create_postgres_admin
+  redgres_configure_fresh_pgbouncer
   redgres_write_redis_admin_url
   redgres_write_default_env
   redgres_install_bootstrap_firewall
+  redgres_install_domain_runtime || redgres_log 'domain runtime: units/packages not fully applied'
   release_path="$(redgres_download_latest_release)"
   redgres_update_apply "${release_path}"
   /usr/bin/rm -rf "$(/usr/bin/dirname "${release_path}")"
