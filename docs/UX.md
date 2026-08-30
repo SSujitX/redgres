@@ -118,6 +118,7 @@ On desktop this hierarchy uses the persistent left sidebar; tablet uses the comp
 - The owner chooses API token or OAuth once before apply. API token is pasted once and reused for tunnel, DNS, Access, and Let's Encrypt; the wizard must not ask for OAuth after an API-token apply. OAuth cannot add the domain from the bootstrap URL.
 - The Cloudflare connector belongs on the Ubuntu server where Redgres is installed, not the operator's browser. The installer enables `cloudflared`; apply writes the token and the server starts the connector. Do not install cloudflared on Windows from the Cloudflare dashboard.
 - Close bootstrap only after an Access allow policy, then opening the console hostname through Access, then **Console is reachable — close bootstrap**.
+- Long Domain mutations show secret-safe `activity` steps (When-equivalent state + allow-listed label). The UI polls GET `/api/v1/domain` while a mutation is in flight or `activity.in_progress` is true, and pauses when the tab is hidden. Tokens, emails, passwords, request IDs, and raw errors are never painted. **Disconnect domain** lives in a labeled danger zone and still requires typing the console hostname.
 
 ## Accessibility
 
