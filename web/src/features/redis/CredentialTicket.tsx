@@ -5,6 +5,7 @@ import { copyText } from "../../text/copyText";
 export type ShownCredential = {
   username: string;
   password: string;
+  masterPassword?: string;
   url?: string;
   directUrl?: string;
   pooledUrl?: string;
@@ -63,6 +64,15 @@ export default function CredentialTicket({
             Copy password
           </button>
         </div>
+        {pgadmin && credential.masterPassword ? (
+          <div>
+            <dt>Master password</dt>
+            <dd className="bidi-isolate identifier">{displayText(credential.masterPassword)}</dd>
+            <button type="button" className="text-button" onClick={() => void copyText(credential.masterPassword ?? "")}>
+              Copy master password
+            </button>
+          </div>
+        ) : null}
         {postgres ? (
           <>
             {credential.directUrl ? (
