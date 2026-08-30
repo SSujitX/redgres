@@ -2212,8 +2212,8 @@ domain_runtime_err="$(
   [[ -x "${libexec}/issue-tls.sh" ]]
   grep -q -- '--dns-cloudflare-propagation-seconds 60' "${libexec}/issue-tls.sh"
   grep -q '/etc/ssl/redgres' "${libexec}/issue-tls.sh"
-  grep -q 'chmod 0750' "${libexec}/issue-tls.sh"
-  grep -q 'runuser -u postgres' "${libexec}/issue-tls.sh"
+  grep -q 'redgres-fullchain.pem' "${libexec}/issue-tls.sh"
+  grep -q 'redgres_tls_install_owned' "${libexec}/issue-tls.sh"
   grep -q 'client_tls_cert_file' "${libexec}/issue-tls.sh"
   ! grep -q 'chown root:ssl-cert "${dir}" 2>/dev/null || true' "${libexec}/issue-tls.sh"
   [[ -f "${sysd}/redgres-tls-issue.path" ]]
