@@ -46,6 +46,7 @@ type Server struct {
 	cloudflare      cloudflare.Client
 	bootstrapCloser bootstrapCloser
 	tools           *toolgate.Memory
+	console         *toolgate.Origin
 }
 
 // bootstrapCloser is the optional first-run public listener (OPS-008).
@@ -72,11 +73,28 @@ func New(cfg config.Config, db *sql.DB, assets fs.FS, logger *slog.Logger, postg
 	if db != nil {
 		ops = operations.NewStore(db)
 	}
-	return &Server{cfg: cfg, db: db, assets: assets, log: logger, audit: audit.Store{DB: db}, operations: ops, postgres: postgres, redis: redis, tools: toolgate.NewMemory()}
+	s := &Server{cfg: cfg, db: db, assets: assets, log: logger, audit: audit.Store{DB: db}, operations: ops, postgres: postgres, redis: redis, tools: toolgate.NewMemory(), console: toolgate.NewOrigin("")}
+	s.refreshConsoleOrigin(context.Background())
+	return s
 }
 
 func (s *Server) ToolStore() *toolgate.Memory {
 	return s.tools
+}
+
+func (s *Server) ConsoleOrigin() *toolgate.Origin {
+	return s.console
+}
+
+func (s *Server) refreshConsoleOrigin(ctx context.Context) {
+	if s.console == nil {
+		s.console = toolgate.NewOrigin("")
+	}
+	extra := ""
+	if ctx != nil {
+		extra = s.configuredConsoleOrigin(ctx)
+	}
+	s.console.Set(toolgate.PreferredConsoleURL(s.cfg.BaseURL, extra))
 }
 
 func (s *Server) Handler() http.Handler {
