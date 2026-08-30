@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/SSujitX/redgres/internal/tlsops"
@@ -35,8 +36,10 @@ func (s *Server) handleDomainTLSIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := os.Stat(creds); err != nil {
-		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Certbot DNS credentials are not configured")
-		return
+		if syncErr := s.syncCertbotDNSCredentialsFromAPIToken(); syncErr != nil {
+			s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Certbot DNS credentials are not configured")
+			return
+		}
 	}
 	client, err := s.cloudflareClientFromConfig(r.Context())
 	if err != nil {
@@ -51,23 +54,39 @@ func (s *Server) handleDomainTLSIssue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	issuer := tlsops.Issuer{Bin: s.cfg.CertbotBin, DNSCredentialsFile: creds}
 	hostnames := []string{dep.DBHostname, dep.rsHostname()}
-	if err := issuer.Issue(ctx, hostnames); err != nil {
-		dep.TLSStatus = "failed"
-		dep.TLSDBStatus = "failed"
-		dep.TLSRSStatus = "failed"
-		_ = store.Save(ctx, dep)
-		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS issuance failed")
-		return
-	}
-	if err := tlsops.VerifyCertFiles(hostnames, time.Now().UTC()); err != nil {
-		dep.TLSStatus = "failed"
-		dep.TLSDBStatus = "failed"
-		dep.TLSRSStatus = "failed"
-		_ = store.Save(ctx, dep)
-		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS verification failed")
-		return
+	if s.cfg.TLSIssueRequestFile != "" {
+		_ = os.Remove(s.cfg.TLSIssueResultFile)
+		if err := tlsops.WriteTLSIssueRequest(s.cfg.TLSIssueRequestFile, hostnames); err != nil {
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS issue could not be queued")
+			return
+		}
+		if err := waitTLSIssueResult(ctx, s.cfg.TLSIssueResultFile, hostnames); err != nil {
+			dep.TLSStatus = "failed"
+			dep.TLSDBStatus = "failed"
+			dep.TLSRSStatus = "failed"
+			_ = store.Save(ctx, dep)
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS issuance failed")
+			return
+		}
+	} else {
+		issuer := tlsops.Issuer{Bin: s.cfg.CertbotBin, DNSCredentialsFile: creds}
+		if err := issuer.Issue(ctx, hostnames); err != nil {
+			dep.TLSStatus = "failed"
+			dep.TLSDBStatus = "failed"
+			dep.TLSRSStatus = "failed"
+			_ = store.Save(ctx, dep)
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS issuance failed")
+			return
+		}
+		if err := tlsops.VerifyCertFiles(hostnames, time.Now().UTC()); err != nil {
+			dep.TLSStatus = "failed"
+			dep.TLSDBStatus = "failed"
+			dep.TLSRSStatus = "failed"
+			_ = store.Save(ctx, dep)
+			s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, "TLS verification failed")
+			return
+		}
 	}
 	dep.TLSStatus = "issued"
 	dep.TLSDBStatus = "issued"
@@ -86,4 +105,25 @@ func (s *Server) handleDomainTLSIssue(w http.ResponseWriter, r *http.Request) {
 		"tls":        dep.tlsMap(),
 		"request_id": requestID(r),
 	})
+}
+
+func waitTLSIssueResult(ctx context.Context, path string, hostnames []string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("tls issue result file is not configured")
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if tlsops.IssueResultCovers(path, hostnames) {
+			return nil
+		}
+		if tlsops.ReadIssueResult(path) == "failed" {
+			return errors.New("tls issue failed")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
