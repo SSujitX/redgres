@@ -1,0 +1,9 @@
+[Unit]
+Description=Issue Redgres Let's Encrypt certificates for db/rs
+Documentation=https://github.com/SSujitX/redgres
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/redgres/redgres.env
+ExecStart=/usr/libexec/redgres/issue-tls.sh
