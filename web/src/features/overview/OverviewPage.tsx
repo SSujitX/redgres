@@ -5,6 +5,7 @@ import { errorMessage, type StatusComponent } from "../../api/status";
 import type { ToolLinks } from "../../api/auth";
 import { displayText } from "../../text/displayText";
 import type { SectionId } from "../../nav";
+import ExpertToolsSection from "../system/ExpertToolsSection";
 
 type CardSpec = {
   id: string;
@@ -221,26 +222,8 @@ function RecentAuditList({ events }: { events: AuditEvent[] }) {
   );
 }
 
-function ToolLinkAnchors({ links }: { links: ToolLinks }) {
-  const pgadmin = links.pgadmin;
-  const redisinsight = links.redisinsight;
-  if (!pgadmin && !redisinsight) {
-    return null;
-  }
-  return (
-    <div>
-      {pgadmin ? (
-        <a className="text-button" href={pgadmin} target="_blank" rel="noopener noreferrer">
-          pgAdmin
-        </a>
-      ) : null}
-      {redisinsight ? (
-        <a className="text-button" href={redisinsight} target="_blank" rel="noopener noreferrer">
-          RedisInsight
-        </a>
-      ) : null}
-    </div>
-  );
+function ToolLinkActions({ csrf, links }: { csrf: string; links: ToolLinks }) {
+  return <ExpertToolsSection csrf={csrf} toolLinks={links} variant="compact" />;
 }
 
 function RedisMetrics({
@@ -298,6 +281,7 @@ function RedisMetrics({
 }
 
 export default function OverviewPage({
+  csrf = "",
   toolLinks = {},
   onNavigate,
   statusComponents = null,
@@ -305,6 +289,7 @@ export default function OverviewPage({
   statusLoading = true,
   onRefreshStatus,
 }: {
+  csrf?: string;
   toolLinks?: ToolLinks;
   onNavigate?: (section: SectionId) => void;
   statusComponents?: StatusComponent[] | null;
@@ -441,7 +426,7 @@ export default function OverviewPage({
                   {text}
                 </p>
                 {card.id === "redis" ? <RedisMetrics headlineTone={tone} detail={redisDetail} /> : null}
-                {card.id === "tool_links" ? <ToolLinkAnchors links={toolLinks} /> : null}
+                {card.id === "tool_links" ? <ToolLinkActions csrf={csrf} links={toolLinks} /> : null}
               </li>
             );
           })}
