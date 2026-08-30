@@ -144,9 +144,20 @@ EOSQL
 }
 
 redgres_apply_pgbouncer_auth_sql() {
-  /usr/sbin/runuser -u postgres -- /usr/bin/psql -d postgres -v ON_ERROR_STOP=1 <<EOSQL
+  local log
+  log="$(/usr/bin/mktemp /tmp/redgres-cmd.XXXXXX)" || return 1
+  # shellcheck disable=SC2064
+  trap "rm -f $(printf '%q' "${log}")" RETURN
+  if /usr/sbin/runuser -u postgres -- /usr/bin/psql -q -d postgres -v ON_ERROR_STOP=1 >"${log}" 2>&1 <<EOSQL
 $(redgres_pgbouncer_auth_sql)
 EOSQL
+  then
+    /usr/bin/rm -f "${log}"
+    return 0
+  fi
+  redgres_cmd_log_safe "$(/usr/bin/tail -n 50 "${log}")" >&2
+  /usr/bin/rm -f "${log}"
+  return 1
 }
 
 redgres_pgbouncer_health() {
@@ -184,8 +195,8 @@ redgres_configure_fresh_pgbouncer() {
     if /usr/bin/getent passwd pgbouncer >/dev/null; then
       /usr/sbin/usermod -aG ssl-cert pgbouncer
     fi
-    /usr/bin/systemctl enable pgbouncer
-    /usr/bin/systemctl restart pgbouncer
+    redgres_run_quiet 'pgbouncer enable' /usr/bin/systemctl enable pgbouncer || redgres_die 'pgbouncer enable failed'
+    redgres_run_quiet 'pgbouncer restart' /usr/bin/systemctl restart pgbouncer || redgres_die 'pgbouncer restart failed'
     redgres_pgbouncer_health
   fi
   redgres_pgbouncer_listen=1
@@ -199,21 +210,62 @@ redgres_refuse_existing_postgres_datadir() {
   fi
 }
 
+# Capture apt-get. Success is quiet; failure dumps a secret-safe tail.
+# NEEDRESTART_SUSPEND skips the post-install process scan that floods SSH.
+redgres_apt_handle_log() {
+  local log="$1" rc="$2"
+  if [[ "${rc}" -ne 0 ]]; then
+    redgres_log 'apt-get failed'
+    redgres_cmd_log_safe "$(/usr/bin/tail -n 50 "${log}")" >&2
+    return 1
+  fi
+  if /usr/bin/grep -q 'NO_PUBKEY' "${log}"; then
+    redgres_log 'apt update: using cached PGDG index (signature key missing)'
+  fi
+  return 0
+}
+
+redgres_apt_bin() {
+  printf '%s' "${REDGRES_APT_GET:-/usr/bin/apt-get}"
+}
+
+redgres_apt_get() {
+  local log rc=0 apt
+  apt="$(redgres_apt_bin)"
+  if [[ "${REDGRES_INSTALL_VERBOSE:-}" == '1' ]]; then
+    NEEDRESTART_SUSPEND=1 NEEDRESTART_MODE=l DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \
+      redgres_run_filtered "${apt}" -o Dpkg::Use-Pty=0 "$@" </dev/null
+    return $?
+  fi
+  log="$(/usr/bin/mktemp /tmp/redgres-cmd.XXXXXX)" || return 1
+  # shellcheck disable=SC2064
+  trap "rm -f $(printf '%q' "${log}")" RETURN
+  if ! NEEDRESTART_SUSPEND=1 NEEDRESTART_MODE=l DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \
+    "${apt}" -o Dpkg::Use-Pty=0 "$@" </dev/null >"${log}" 2>&1; then
+    rc=$?
+  fi
+  if ! redgres_apt_handle_log "${log}" "${rc}"; then
+    /usr/bin/rm -f "${log}"
+    return 1
+  fi
+  /usr/bin/rm -f "${log}"
+}
+
 # Parse `apt-cache policy` stdout. Candidate is pinned before apt-get install pkg=ver.
 redgres_apt_candidate_from_policy() {
   local policy="$1"
   local candidate
   candidate="$(printf '%s\n' "${policy}" | /usr/bin/awk '/^[[:space:]]*Candidate:[[:space:]]+/ { print $2; exit }')"
-  [[ -n "${candidate}" ]] || redgres_die 'apt policy has no Candidate'
-  [[ "${candidate}" != '(none)' ]] || redgres_die 'apt policy Candidate is (none)'
-  [[ "${candidate}" =~ ^[0-9][A-Za-z0-9.+:~-]*$ ]] || redgres_die 'apt policy Candidate is not a Debian version'
+  [[ -n "${candidate}" ]] || return 1
+  [[ "${candidate}" != '(none)' ]] || return 1
+  [[ "${candidate}" =~ ^[0-9][A-Za-z0-9.+:~-]*$ ]] || return 1
   printf '%s\n' "${candidate}"
 }
 
 redgres_apt_candidate() {
   local pkg="$1" policy
-  [[ "${pkg}" =~ ^[a-z0-9][a-z0-9+.-]*$ ]] || redgres_die "invalid package name ${pkg}"
-  policy="$(/usr/bin/apt-cache policy "${pkg}")" || redgres_die "apt-cache policy failed for ${pkg}"
+  [[ "${pkg}" =~ ^[a-z0-9][a-z0-9+.-]*$ ]] || return 1
+  policy="$(/usr/bin/apt-cache policy "${pkg}")" || return 1
   redgres_apt_candidate_from_policy "${policy}"
 }
 
@@ -226,11 +278,11 @@ redgres_apt_install() {
     redgres_log "package already-correct ${pkg}=${ver}"
     return 0
   fi
-  candidate="$(redgres_apt_candidate "${pkg}")"
+  candidate="$(redgres_apt_candidate "${pkg}")" || return 1
   redgres_log "pinning ${pkg}=${candidate}"
-  DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends "${pkg}=${candidate}"
+  redgres_apt_get install -y --no-install-recommends "${pkg}=${candidate}" || return 1
   ver="$(/usr/bin/dpkg-query -W -f '${Version}' "${pkg}")"
-  [[ "${ver}" == "${candidate}" ]] || redgres_die "installed ${pkg}=${ver} did not match pin ${candidate}"
+  [[ "${ver}" == "${candidate}" ]] || return 1
   redgres_log "installed ${pkg}=${ver}"
 }
 
@@ -241,7 +293,7 @@ redgres_assert_redis_pong() {
 
 # Official redis image logs/config must never print requirepass. Keep installer stderr secret-safe.
 redgres_redis_logs_safe() {
-  printf '%s\n' "$1" | /usr/bin/awk 'BEGIN { IGNORECASE=1 } !/requirepass|password|AUTH / { print }'
+  redgres_cmd_log_safe "$1"
 }
 
 redgres_redis_container_status() {
@@ -489,7 +541,7 @@ redgres_write_redis_admin_url() {
 redgres_enable_postgres_loopback_ssl() {
   local confdir="/etc/postgresql/${postgres_version}/main/conf.d"
   if [[ ! -f /etc/ssl/certs/ssl-cert-snakeoil.pem || ! -f /etc/ssl/private/ssl-cert-snakeoil.key ]]; then
-    redgres_apt_install ssl-cert
+    redgres_apt_install ssl-cert || redgres_die 'apt-get failed'
     /usr/sbin/make-ssl-cert generate-default-snakeoil --force-overwrite >/dev/null
   fi
   /usr/sbin/usermod -aG ssl-cert postgres
@@ -497,7 +549,7 @@ redgres_enable_postgres_loopback_ssl() {
   printf '%s\n' "listen_addresses = '127.0.0.1'" >"${confdir}/redgres-listen.conf"
   printf '%s\n' "ssl = on" "ssl_cert_file = '/etc/ssl/certs/ssl-cert-snakeoil.pem'" "ssl_key_file = '/etc/ssl/private/ssl-cert-snakeoil.key'" >"${confdir}/redgres-ssl.conf"
   /usr/bin/chmod 644 "${confdir}/redgres-listen.conf" "${confdir}/redgres-ssl.conf"
-  /usr/bin/pg_ctlcluster "${postgres_version}" main restart
+  redgres_run_quiet 'postgres restart' /usr/bin/pg_ctlcluster "${postgres_version}" main restart || redgres_die 'postgres restart failed'
   redgres_log 'postgres loopback TLS enabled (snakeoil; sslmode=require)'
 }
 
@@ -513,7 +565,11 @@ redgres_create_postgres_admin() {
   /usr/bin/chmod 600 "${passfile}"
   pass="$(/usr/bin/cat "${passfile}")"
   [[ -n "${pass}" ]] || redgres_die 'postgres passfile is empty'
-  /usr/sbin/runuser -u postgres -- /usr/bin/psql -d postgres -v ON_ERROR_STOP=1 <<EOSQL
+  local log
+  log="$(/usr/bin/mktemp /tmp/redgres-cmd.XXXXXX)" || redgres_die 'postgres admin role failed'
+  # shellcheck disable=SC2064
+  trap "rm -f $(printf '%q' "${log}")" RETURN
+  if /usr/sbin/runuser -u postgres -- /usr/bin/psql -q -d postgres -v ON_ERROR_STOP=1 >"${log}" 2>&1 <<EOSQL
 DO \$\$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'redgres_admin') THEN
@@ -525,7 +581,14 @@ END
 \$\$;
 GRANT CONNECT ON DATABASE postgres TO redgres_admin;
 EOSQL
-  redgres_log 'postgres admin role redgres_admin ready (password not logged)'
+  then
+    /usr/bin/rm -f "${log}"
+    redgres_log 'postgres admin role redgres_admin ready (password not logged)'
+    return 0
+  fi
+  redgres_cmd_log_safe "$(/usr/bin/tail -n 50 "${log}")" >&2
+  /usr/bin/rm -f "${log}"
+  redgres_die 'postgres admin role failed'
 }
 
 redgres_live_install() {
@@ -544,46 +607,78 @@ redgres_live_install() {
   redgres_live_preflight_ports
 
   pg_pkg="postgresql-${postgres_version}"
-  redgres_log "live preflight os=${REDGRES_OS_ID} ${REDGRES_OS_VERSION_ID} (${REDGRES_OS_CODENAME}) postgres=${postgres_version}"
+  if redgres_color_ok; then
+    printf '\n  \033[0;36m\033[1mRedgres install\033[0m\n'
+    printf '  \033[2m%s %s (%s)  postgres=%s  redis=%s  pgbouncer=%s\033[0m\n' \
+      "${REDGRES_OS_ID}" "${REDGRES_OS_VERSION_ID}" "${REDGRES_OS_CODENAME}" \
+      "${postgres_version}" "${redis_version}" "${pgbouncer_mode}"
+  else
+    printf '\n  Redgres install\n'
+    printf '  %s %s (%s)  postgres=%s  redis=%s  pgbouncer=%s\n' \
+      "${REDGRES_OS_ID}" "${REDGRES_OS_VERSION_ID}" "${REDGRES_OS_CODENAME}" \
+      "${postgres_version}" "${redis_version}" "${pgbouncer_mode}"
+  fi
+  REDGRES_LOG_PREFIX='    '
 
-  DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
-  redgres_apt_install ca-certificates
-  redgres_apt_install postgresql-common
+  redgres_section 1 8 'Preflight'
+  redgres_log "os=${REDGRES_OS_ID} ${REDGRES_OS_VERSION_ID} (${REDGRES_OS_CODENAME}) postgres=${postgres_version}"
+
+  redgres_section 2 8 'Packages'
+  trap 'rm -f /tmp/redgres-cmd.*' EXIT
+  trap 'rm -f /tmp/redgres-cmd.*; exit 130' INT
+  trap 'rm -f /tmp/redgres-cmd.*; exit 143' TERM
+  redgres_apt_get update || redgres_die 'apt-get update failed'
+  redgres_apt_install ca-certificates || redgres_die 'apt-get failed'
+  redgres_apt_install postgresql-common || redgres_die 'apt-get failed'
   redgres_disable_auto_cluster
   redgres_enable_pgdg
-  DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
-  redgres_apt_install "postgresql-client-${postgres_version}"
-  redgres_apt_install "${pg_pkg}"
-  redgres_apt_install docker.io
-  redgres_apt_install docker-compose-v2
+  redgres_apt_get update || redgres_die 'apt-get update failed'
+  redgres_apt_install "postgresql-client-${postgres_version}" || redgres_die 'apt-get failed'
+  redgres_apt_install "${pg_pkg}" || redgres_die 'apt-get failed'
+  redgres_apt_install docker.io || redgres_die 'apt-get failed'
+  redgres_apt_install docker-compose-v2 || redgres_die 'apt-get failed'
   if [[ "${pgbouncer_mode}" == "fresh" ]]; then
-    redgres_apt_install pgbouncer
+    redgres_apt_install pgbouncer || redgres_die 'apt-get failed'
   fi
-
   redgres_ensure_identity
+
+  redgres_section 3 8 'Redis'
   redgres_write_redis_conf
   redgres_write_redis_compose "$(redgres_redis_image_pin "${redis_version}")"
-
-  /usr/bin/systemctl enable --now docker
+  redgres_run_quiet 'docker enable' /usr/bin/systemctl enable --now docker || redgres_die 'docker enable failed'
   redgres_wait_docker
-  /usr/bin/docker compose -f /etc/redgres/redis-compose.yml up -d
+  redgres_run_quiet 'redis compose' /usr/bin/docker compose -f /etc/redgres/redis-compose.yml up -d || redgres_die 'redis compose failed'
   redgres_wait_redis_container
 
+  redgres_section 4 8 'PostgreSQL'
   if /usr/bin/pg_lsclusters -h | /usr/bin/awk -v v="${postgres_version}" '$1==v { found=1 } END { exit found ? 0 : 1 }'; then
     redgres_die "refusing fresh-postgres: a PostgreSQL ${postgres_version} cluster already exists"
   fi
-  /usr/bin/pg_createcluster --start "${postgres_version}" main
+  redgres_run_quiet 'PostgreSQL cluster' /usr/bin/pg_createcluster --start "${postgres_version}" main || redgres_die 'PostgreSQL cluster create failed'
   redgres_low_memory_postgres
   redgres_enable_postgres_loopback_ssl
   redgres_postgres_health
   redgres_redis_health
   redgres_create_postgres_admin
-  redgres_configure_fresh_pgbouncer
+
+  redgres_section 5 8 'PgBouncer'
+  if [[ "${pgbouncer_mode}" == "fresh" ]]; then
+    redgres_configure_fresh_pgbouncer
+  else
+    redgres_log 'skipped (disabled)'
+  fi
   redgres_write_redis_admin_url
   redgres_write_default_env
+
+  redgres_section 6 8 'Firewall'
   redgres_install_bootstrap_firewall
+
+  redgres_section 7 8 'Domain runtime'
   redgres_install_domain_runtime || redgres_log 'domain runtime: units/packages not fully applied'
+
+  redgres_section 8 8 'Application'
   release_path="$(redgres_download_latest_release)"
+  REDGRES_DOMAIN_RUNTIME_OPTIONAL=1
   redgres_update_apply "${release_path}"
   /usr/bin/rm -rf "$(/usr/bin/dirname "${release_path}")"
   redgres_owner_bootstrap "$(redgres_opt_current_link)/redgres"
@@ -591,5 +686,6 @@ redgres_live_install() {
   redgres_record_resolved_packages
   redgres_log "live install result=partial mode=${mode} postgres=${postgres_version} redis=${redis_version} pgbouncer=${pgbouncer_mode} os=${REDGRES_OS_CODENAME}"
   redgres_log 'listeners bound to 127.0.0.1 only; UFW public DB ports not opened'
+  REDGRES_LOG_PREFIX=''
   redgres_finish_report
 }
