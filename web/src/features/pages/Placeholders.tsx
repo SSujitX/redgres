@@ -8,6 +8,7 @@ import DatabasesPage from "../postgres/DatabasesPage";
 import SecurityOverview from "../postgres/SecurityOverview";
 import AclUsersPage from "../redis/AclUsersPage";
 import PresetsPage from "../redis/PresetsPage";
+import ExpertToolsPage from "../system/ExpertToolsPage";
 import SystemPage from "../system/SystemPage";
 
 type PageProps = {
@@ -72,6 +73,10 @@ export function SectionPage({
 
   if (section === "domain") {
     return <DomainNetworkPage csrf={csrf} />;
+  }
+
+  if (section === "tools") {
+    return <ExpertToolsPage csrf={csrf} toolLinks={toolLinks} expertTools={expertTools} />;
   }
 
   if (section === "docs") {
