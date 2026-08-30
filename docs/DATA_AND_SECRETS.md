@@ -26,6 +26,7 @@
 10. Cloudflare Certbot DNS token: separate least-privilege root-owned file; used for the Let's Encrypt DNS-01 challenge when not covered by the OAuth `dns.write` scope.
 11. TLS private keys: readable only by root and the exact service group where necessary.
 12. Backup encryption/off-host credentials: isolated from application runtime where practical.
+13. Expert-tool launch tickets and tool-session cookies: process-local SHA-256 hashes only; raw ticket is one-time (60s) in `launch_url` query and is not logged or audited. pgAdmin login password lives in an operator file (`REDGRES_PGADMIN_PASSWORD_FILE`) and is revealed only by POST reveal (`no-store`); never on GET `/session`.
 
 ## Credential response policy
 
@@ -40,7 +41,7 @@ All credential-bearing endpoints:
 - clear frontend memory when dismissed, on logout, route change, or another target selection;
 - do not support browser autofill or persistence.
 
-PostgreSQL reveal is repeatable only because an encrypted vault entry exists. Redis create returns a one-time password (and an optional public `rediss://` URL only when both public host and port are configured). Redgres does not persist that password. Redis reveal is impossible; rotate again if lost.
+PostgreSQL reveal is repeatable only because an encrypted vault entry exists. Redis create returns a one-time password (and an optional public `rediss://` URL only when both public host and port are configured). Redgres does not persist that password. Redis reveal is impossible; rotate again if lost. pgAdmin reveal is repeatable from the server password file (vault-like UI copy). The launch ticket in `launch_url` is not a password.
 
 ## Legacy Fernet compatibility
 
