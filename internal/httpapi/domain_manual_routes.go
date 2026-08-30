@@ -52,6 +52,8 @@ func (s *Server) handleDomainManualApplyBody(w http.ResponseWriter, r *http.Requ
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
+	s.activateToolPublicURLs(hosts)
+	s.refreshConsoleOrigin(r.Context())
 	sess := sessionFrom(r)
 	if err := s.audit.Record(sess.Username, "domain.manual.apply", hosts.Console, "success", requestID(r), requestClientIP(r), map[string]any{"instruction_count": len(instructions)}); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
