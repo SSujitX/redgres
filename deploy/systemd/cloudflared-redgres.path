@@ -2,10 +2,10 @@
 Description=Start/restart Redgres Cloudflare Tunnel when the connector token file appears or changes
 
 [Path]
-# Path units do not restart an already-active Unit= service; they only start it.
-# Route through a oneshot that systemctl-restarts the real connector.
+# PathExists+oneshot retriggers in a loop once the token file exists (Degraded/1033).
+# Boot start is ConditionPathExists on cloudflared-redgres.service.
+# PathChanged restarts only when apply rewrites the token.
 PathChanged=/var/lib/redgres/secrets/cloudflared-tunnel-token
-PathExists=/var/lib/redgres/secrets/cloudflared-tunnel-token
 Unit=cloudflared-redgres-restart.service
 
 [Install]

@@ -3,6 +3,7 @@ Description=Cloudflare Tunnel connector for Redgres
 Documentation=https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel-api/
 After=network-online.target
 Wants=network-online.target
+ConditionPathExists=/var/lib/redgres/secrets/cloudflared-tunnel-token
 
 [Service]
 Type=notify
