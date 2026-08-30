@@ -226,7 +226,7 @@ describe("ExpertToolsSection", () => {
 
   it("does not poll tool activity while the tab is hidden", async () => {
     vi.useFakeTimers();
-    const fetch = vi.fn(async () => auditOk());
+    const fetch = vi.fn(async (_url: string) => auditOk());
     vi.stubGlobal("fetch", fetch);
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     render(
