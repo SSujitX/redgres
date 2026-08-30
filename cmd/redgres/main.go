@@ -100,7 +100,7 @@ func run(args []string) error {
 
 	api := httpapi.New(cfg, db, assets, log, pg, rd)
 	handler := api.Handler()
-	startToolGates(cfg, api.ToolStore(), log)
+	startToolGates(cfg, api.ToolStore(), api.ConsoleOrigin(), log)
 
 	srv := &http.Server{
 		Addr:              cfg.Address,
