@@ -1,3 +1,4 @@
+import type { ToolLinks } from "../../api/auth";
 import type { SectionId } from "../../nav";
 import AuditPage from "../audit/AuditPage";
 import DocsPage from "../docs/DocsPage";
@@ -12,6 +13,7 @@ import SystemPage from "../system/SystemPage";
 type PageProps = {
   section: SectionId;
   csrf?: string;
+  toolLinks?: ToolLinks;
   focusDatabase?: string | null;
   focusUsername?: string | null;
   focusArticle?: string | null;
@@ -23,6 +25,7 @@ type PageProps = {
 export function SectionPage({
   section,
   csrf = "",
+  toolLinks = {},
   focusDatabase = null,
   focusUsername = null,
   focusArticle = null,
@@ -31,7 +34,7 @@ export function SectionPage({
   onBackToDocs = () => {},
 }: PageProps) {
   if (section === "overview") {
-    return <OverviewPage />;
+    return <OverviewPage csrf={csrf} toolLinks={toolLinks} />;
   }
 
   if (section === "postgres" || section === "postgres-create") {
@@ -62,7 +65,7 @@ export function SectionPage({
   }
 
   if (section === "system") {
-    return <SystemPage />;
+    return <SystemPage csrf={csrf} toolLinks={toolLinks} />;
   }
 
   if (section === "domain") {
