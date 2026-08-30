@@ -28,6 +28,9 @@ func (s *Server) handleDomainManualApplyBody(w http.ResponseWriter, r *http.Requ
 		s.writeError(w, r, http.StatusConflict, CodeConflict, "A domain is already configured; disconnect first")
 		return
 	}
+	ok := false
+	finish := s.beginDomainActivity("manual_apply", "write_instructions", "save_config")
+	defer finish(&ok)
 	greySpecs, err := cloudflare.GreyCloudRecords(originIP)
 	if err != nil {
 		s.writeError(w, r, http.StatusBadRequest, CodeValidationError, "Invalid origin IP")
@@ -48,6 +51,7 @@ func (s *Server) handleDomainManualApplyBody(w http.ResponseWriter, r *http.Requ
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	s.domainActivity.Advance("save_config")
 	if err := (domainStore{s.db}).Save(ctx, dep); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
@@ -59,6 +63,7 @@ func (s *Server) handleDomainManualApplyBody(w http.ResponseWriter, r *http.Requ
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
+	ok = true
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
 		"zone":                 zone,
 		"hostnames":            dep.hostnamesMap(),
@@ -90,6 +95,9 @@ func (s *Server) handleDomainManualConfirmAccess(w http.ResponseWriter, r *http.
 		s.writeError(w, r, http.StatusConflict, CodeConflict, "Manual Access is already confirmed")
 		return
 	}
+	ok := false
+	finish := s.beginDomainActivity("confirm_access", "confirm_access")
+	defer finish(&ok)
 	dep.AccessManualConfirmed = true
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -102,6 +110,7 @@ func (s *Server) handleDomainManualConfirmAccess(w http.ResponseWriter, r *http.
 		s.writeError(w, r, http.StatusServiceUnavailable, CodeDependencyUnavailable, storageUnavailable)
 		return
 	}
+	ok = true
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
 		"ok":                   true,
 		"access":               "allow",
