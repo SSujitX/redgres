@@ -29,7 +29,8 @@ check() {
   echo "ok - ${desc}"
 }
 
-check "fresh defaults" $'fresh-postgres\n\ndisabled\nfresh\n' "mode=fresh-postgres pg=18 expect_pg= pb=disabled redis=fresh rv=8.2 expect_redis="
+check "fresh defaults" $'\n\n\n\n' "mode=fresh-postgres pg=18 expect_pg= pb=fresh redis=fresh rv=8.2 expect_redis="
+check "explicit pgbouncer disabled" $'fresh-postgres\n\ndisabled\nfresh\n' "mode=fresh-postgres pg=18 expect_pg= pb=disabled redis=fresh rv=8.2 expect_redis="
 check "existing explicit" $'existing-postgres\n17\nexisting\nexisting\n8.8\n' "mode=existing-postgres pg= expect_pg=17 pb=existing redis=existing rv= expect_redis=8.8"
 
 echo "interactive logic passed"
