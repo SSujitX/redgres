@@ -1913,9 +1913,16 @@ uninstall_purge_err="$(
   [[ "${dump}" != *'password leaked'* ]]
   stub_bin="${tmpdir}/uninstall-stub-bin"
   mkdir -p "${stub_bin}"
+  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "E: simulated apt failure" "password canary"' 'exit 7' >"${stub_bin}/apt-fail"
   printf '%s\n' '#!/bin/sh' 'exit 1' >"${stub_bin}/dpkg-query"
   printf '%s\n' '#!/bin/sh' 'echo RAN_APT; exit 1' >"${stub_bin}/apt-get"
-  chmod +x "${stub_bin}/dpkg-query" "${stub_bin}/apt-get"
+  chmod +x "${stub_bin}/apt-fail" "${stub_bin}/dpkg-query" "${stub_bin}/apt-get"
+  apt_fail_rc=0
+  apt_fail_output="$(REDGRES_UNINSTALL_APT_GET="${stub_bin}/apt-fail" redgres_uninstall_apt_get purge -y redis-tools 2>&1)" || apt_fail_rc=$?
+  [[ "${apt_fail_rc}" -eq 7 ]]
+  [[ "${apt_fail_output}" == *'apt-get failed'* ]]
+  [[ "${apt_fail_output}" == *'E: simulated apt failure'* ]]
+  [[ "${apt_fail_output}" != *'password canary'* ]]
   miss="$(PATH="${stub_bin}:${PATH}" REDGRES_UNINSTALL_APT_GET="${stub_bin}/apt-get" redgres_uninstall_purge_installed redis-server pgbouncer cloudflared)"
   [[ -z "${miss}" ]]
   [[ "${miss}" != *RAN_APT* ]]

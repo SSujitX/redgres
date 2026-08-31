@@ -74,6 +74,70 @@ redgres_uninstall_collect_git_checkouts() {
   fi
 }
 
+redgres_uninstall_path_footprint_present() {
+  local path
+  for path in "$@"; do
+    if [[ -e "${path}" || -L "${path}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+redgres_uninstall_local_footprint_present() {
+  local installed dpkg_rc=0 docker_rows docker_part socket_rows listeners ufw_rows
+  redgres_uninstall_path_footprint_present "$@" && return 0
+  id redgres >/dev/null 2>&1 && return 0
+  getent group redgres >/dev/null 2>&1 && return 0
+  if command -v dpkg-query >/dev/null 2>&1; then
+    installed="$(dpkg-query -W -f='${binary:Package} ${db:Status-Status}\n' \
+      'postgresql*' 'redis*' pgbouncer cloudflared 2>/dev/null)" || dpkg_rc=$?
+    (( dpkg_rc <= 1 )) || return 0
+    if printf '%s\n' "${installed}" | awk '$2 == "installed" { found=1 } END { exit found ? 0 : 1 }'; then
+      return 0
+    fi
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    docker info >/dev/null 2>&1 || return 0
+    docker_rows=""
+    docker_part="$(docker ps -a --format '{{.Names}}|{{.Label "com.docker.compose.project"}}' 2>/dev/null)" || return 0
+    docker_rows+="${docker_part}"$'\n'
+    docker_part="$(docker volume ls --format '{{.Name}}|{{.Labels}}' 2>/dev/null)" || return 0
+    docker_rows+="${docker_part}"$'\n'
+    docker_part="$(docker network ls --format '{{.Name}}|{{.Labels}}' 2>/dev/null)" || return 0
+    docker_rows+="${docker_part}"
+    docker_rows="$(printf '%s\n' "${docker_rows}" | awk '$0 ~ /^(redgres|redis-insight|redisinsight|pgadmin-redgres|dpage\/pgadmin4|redis\/redisinsight)/ || $0 ~ /com\.docker\.compose\.project=redgres/')"
+    [[ -n "${docker_rows}" ]] && return 0
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    socket_rows="$(ss -tlnH 2>/dev/null)" || return 0
+    listeners="$(printf '%s\n' "${socket_rows}" | awk '{print $4}' | grep -E ':(8790|8989|5432|6379|6380|6432|5542|5052)$' || true)"
+    [[ -n "${listeners}" ]] && return 0
+  fi
+  if command -v ufw >/dev/null 2>&1; then
+    ufw_rows="$(ufw status 2>/dev/null)" || return 0
+    if printf '%s\n' "${ufw_rows}" | grep -E '(^|[[:space:]])8989(/tcp)?([[:space:]]|$)' | grep -Fvq 'redgres-bootstrap'; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+redgres_uninstall_exit_if_already_removed() {
+  local app_only="$1"
+  shift
+  [[ "${app_only}" == "0" ]] || return 0
+  redgres_uninstall_local_footprint_present "$@" && return 0
+  printf '%s\n' \
+    'No installed Redgres footprint was detected; only tagged bootstrap firewall rules and verified repository checkouts will be removed.' \
+    'Package, service, database, and remote cleanup will not be attempted.' \
+    'Cloudflare ownership cannot be verified without saved domain state. Check manually:' \
+    '  DNS      https://dash.cloudflare.com/' \
+    '  Access   https://one.dash.cloudflare.com/access/applications' \
+    '  Tunnels  https://one.dash.cloudflare.com/networks/tunnels'
+  return 10
+}
+
 # Leftover cluster dirs after apt purge. dpkg will not remove non-empty
 # /etc/postgresql or /var/log/postgresql; a shell cwd there also blocks rmdir.
 redgres_uninstall_postgres_leftover_dirs() {
@@ -198,12 +262,10 @@ redgres_uninstall_apt_get() {
   }
   # shellcheck disable=SC2064
   trap "rm -f $(printf '%q' "${log}")" RETURN
-  if ! "${apt}" -o Dpkg::Use-Pty=0 -o APT::Get::Assume-Yes=true \
+  "${apt}" -o Dpkg::Use-Pty=0 -o APT::Get::Assume-Yes=true \
     -o Dpkg::Options::=--force-confdef \
     -o Dpkg::Options::=--force-confold \
-    "$@" </dev/null >"${log}" 2>&1; then
-    rc=$?
-  fi
+    "$@" </dev/null >"${log}" 2>&1 || rc=$?
   if ! redgres_uninstall_apt_handle_log "${log}" "${rc}"; then
     rm -f "${log}"
     return "${rc}"
@@ -389,6 +451,19 @@ done
 
 [[ "${EUID}" -eq 0 ]] || { printf '%b\n' "${RED}Error: Run with sudo${NC}" >&2; exit 1; }
 
+UNINSTALL_LOCAL_PATHS=(
+  "${OPT_ROOT}" "${ETC_ROOT}" "${VAR_ROOT}" "${BACKUP_ROOT}" "${LIBEXEC_ROOT}"
+  /var/lib/redgres-tls /var/lib/redgres-release /var/log/redgres /etc/ssl/redgres
+  /etc/letsencrypt/renewal-hooks/deploy/redgres-copy-certs.sh
+  /usr/local/bin/redgres "${UNIT_PATH}"
+  /etc/systemd/system/redgres-bootstrap-ufw-remove.service
+  /etc/systemd/system/redgres-bootstrap-ufw-remove.path
+  /etc/systemd/system/cloudflared-redgres.service
+  /etc/systemd/system/cloudflared-redgres.path
+  /etc/systemd/system/cloudflared-redgres-restart.service
+  /etc/systemd/system/redgres-tls-issue.service
+  /etc/systemd/system/redgres-tls-issue.path
+)
 printf '%b\n' ""
 printf '%b\n' "  ${CYAN}${BOLD}Redgres uninstaller${NC}"
 printf '%b\n' "  ${DIM}Removes Redgres from this host. Full purge is destructive.${NC}"
@@ -860,6 +935,19 @@ remove_bootstrap_firewall() {
   ufw delete allow 8989/tcp 2>/dev/null || true
 }
 
+remove_owned_bootstrap_firewall_rules() {
+  command -v ufw >/dev/null 2>&1 || return 0
+  local i line rule
+  for ((i = 0; i < 20; i++)); do
+    line="$(ufw status numbered 2>/dev/null | grep -E '8989.*redgres-bootstrap' | head -1 || true)"
+    [[ -n "${line}" ]] || return 0
+    rule="$(printf '%s\n' "${line}" | grep -oE '^\[[[:space:]]*[0-9]+\]' | tr -cd '0-9')"
+    [[ -n "${rule}" ]] || return 1
+    ufw --force delete "${rule}" >/dev/null 2>&1 || return 1
+  done
+  return 1
+}
+
 purge_postgresql() {
   redgres_uninstall_drop_postgres_clusters
   redgres_uninstall_remove_postgres_leftovers
@@ -917,6 +1005,25 @@ redgres_quiesce_domain_tls() {
     fi
   done
 }
+
+already_removed_rc=0
+redgres_uninstall_exit_if_already_removed "${APP_ONLY}" "${UNINSTALL_LOCAL_PATHS[@]}" || already_removed_rc=$?
+case "${already_removed_rc}" in
+  0) ;;
+  10)
+    if ! remove_owned_bootstrap_firewall_rules; then
+      printf '%s\n' 'Error: tagged Redgres bootstrap firewall rules could not be removed.' >&2
+      exit 1
+    fi
+    redgres_uninstall_enter_safe_cwd || true
+    while IFS= read -r checkout || [[ -n "${checkout}" ]]; do
+      [[ -n "${checkout}" ]] || continue
+      rm -rf "${checkout}" 2>/dev/null || true
+    done < <(redgres_uninstall_collect_git_checkouts)
+    exit 0
+    ;;
+  *) exit "${already_removed_rc}" ;;
+esac
 
 # ── 0. Cloudflare + TLS (before local state is deleted) ─────────────────────
 if [[ "${APP_ONLY}" -eq 0 ]]; then

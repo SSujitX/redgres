@@ -25,6 +25,59 @@ trap cleanup EXIT
 # shellcheck disable=SC1091
 REDGRES_UNINSTALL_FUNCTIONS_ONLY=1 source "${repo_root}/uninstall.sh"
 
+clean_root="${test_root}/already-removed"
+mkdir -p "${clean_root}"
+! redgres_uninstall_path_footprint_present \
+  "${clean_root}/opt" "${clean_root}/etc" "${clean_root}/var" "${clean_root}/unit"
+mkdir -p "${clean_root}/etc"
+redgres_uninstall_path_footprint_present \
+  "${clean_root}/opt" "${clean_root}/etc" "${clean_root}/var" "${clean_root}/unit"
+(
+  docker() { return 1; }
+  redgres_uninstall_local_footprint_present "${clean_root}/missing"
+)
+(
+  id() { return 1; }
+  getent() { return 2; }
+  dpkg-query() { return 1; }
+  docker() { return 0; }
+  ss() { return 0; }
+  ufw_mode=owned
+  ufw() {
+    [[ "${1:-}" == status ]] || return 1
+    if [[ "${ufw_mode}" == owned ]]; then
+      printf '%s\n' '8989/tcp ALLOW 198.51.100.2 # redgres-bootstrap'
+    else
+      printf '%s\n' '8989/tcp ALLOW Anywhere # another-application'
+    fi
+  }
+  ! redgres_uninstall_local_footprint_present "${clean_root}/missing"
+  ufw_mode=unowned
+  redgres_uninstall_local_footprint_present "${clean_root}/missing"
+)
+
+already_removed_rc=0
+already_removed_output="$(
+  redgres_uninstall_local_footprint_present() { return 1; }
+  redgres_uninstall_exit_if_already_removed 0 "${clean_root}/missing"
+)" || already_removed_rc=$?
+[[ "${already_removed_rc}" -eq 10 ]]
+[[ "${already_removed_output}" == *'No installed Redgres footprint was detected'* ]]
+[[ "${already_removed_output}" == *'Cloudflare ownership cannot be verified'* ]]
+[[ "${already_removed_output}" == *'https://one.dash.cloudflare.com/networks/tunnels'* ]]
+(
+  redgres_uninstall_local_footprint_present() { return 0; }
+  [[ -z "$(redgres_uninstall_exit_if_already_removed 0 "${clean_root}/etc")" ]]
+)
+[[ -z "$(redgres_uninstall_exit_if_already_removed 1 "${clean_root}/missing")" ]]
+
+already_removed_line="$(grep -n 'redgres_uninstall_exit_if_already_removed' "${repo_root}/uninstall.sh" | tail -n1 | cut -d: -f1)"
+confirm_line="$(grep -n '^[[:space:]]*confirm_uninstall$' "${repo_root}/uninstall.sh" | tail -n1 | cut -d: -f1)"
+disconnect_line="$(grep -n 'remote_cloudflare_disconnect || exit 1' "${repo_root}/uninstall.sh" | tail -n1 | cut -d: -f1)"
+[[ -n "${confirm_line}" && -n "${already_removed_line}" && -n "${disconnect_line}" ]]
+(( confirm_line < already_removed_line ))
+(( already_removed_line < disconnect_line ))
+
 systemctl_log="${test_root}/systemctl.log"
 service_active=1
 path_active=1
