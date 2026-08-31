@@ -1890,6 +1890,18 @@ uninstall_purge_err="$(
   grep -q '\[8/8\]' "${deploy_dir%/*}/uninstall.sh"
   grep -q 'redgres_uninstall_enter_safe_cwd' "${deploy_dir%/*}/uninstall.sh"
   grep -q 'redgres_uninstall_remove_postgres_leftovers' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'leaving /var/lib/postgresql for retry' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'redgres_uninstall_postgres_packages_present' "${deploy_dir%/*}/uninstall.sh"
+  # Must not wipe datadir before purge while packages can remain.
+  ! awk '/^purge_postgresql\(\)/,/^}/ { if ($0 ~ /remove_postgres_leftovers/ && !seen_purge) early=1; if ($0 ~ /purge_postgresql_packages|dnf remove -y postgresql|yum remove -y postgresql/) seen_purge=1 } END { exit early ? 0 : 1 }' "${deploy_dir%/*}/uninstall.sh"
+  (
+    present_rc=0
+    redgres_uninstall_list_installed_target_packages() { printf '%s\n' 'postgresql-18' 'pgbouncer'; }
+    redgres_uninstall_postgres_packages_present || present_rc=$?
+    [[ "${present_rc}" -eq 0 ]]
+    redgres_uninstall_list_installed_target_packages() { printf '%s\n' 'pgbouncer' 'redis-tools'; }
+    ! redgres_uninstall_postgres_packages_present
+  )
   grep -q '</dev/null' "${deploy_dir%/*}/uninstall.sh"
   grep -q '/etc/ssl/redgres' "${deploy_dir%/*}/uninstall.sh"
   grep -q 'redgres-copy-certs.sh' "${deploy_dir%/*}/uninstall.sh"

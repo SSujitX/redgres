@@ -1460,9 +1460,23 @@ remove_owned_bootstrap_firewall_rules() {
   return 1
 }
 
+# After clusters are dropped and packages purged, remove dirs dpkg leaves behind.
+# Never wipe /var/lib/postgresql while postgresql-* is still installed — that
+# breaks a later fresh pg_createcluster (initdb Permission denied on 18/main).
+redgres_uninstall_postgres_packages_present() {
+  local row
+  command -v dpkg-query >/dev/null 2>&1 || return 1
+  while IFS= read -r row || [[ -n "${row}" ]]; do
+    [[ -n "${row}" ]] || continue
+    case "${row}" in
+      postgresql|postgresql-*) return 0 ;;
+    esac
+  done < <(redgres_uninstall_list_installed_target_packages 2>/dev/null || true)
+  return 1
+}
+
 purge_postgresql() {
   redgres_uninstall_drop_postgres_clusters
-  redgres_uninstall_remove_postgres_leftovers
   stop_systemd_unit postgresql.service
   stop_systemd_unit postgresql@.service
   if command -v apt-get >/dev/null 2>&1; then
@@ -1471,6 +1485,10 @@ purge_postgresql() {
     dnf remove -y postgresql\* 2>/dev/null || true
   elif command -v yum >/dev/null 2>&1; then
     yum remove -y postgresql\* 2>/dev/null || true
+  fi
+  if redgres_uninstall_postgres_packages_present; then
+    printf '%b\n' "         ${YELLOW}postgresql packages still installed; leaving /var/lib/postgresql for retry${NC}" >&2
+    return 0
   fi
   redgres_uninstall_remove_postgres_leftovers
 }
@@ -1635,6 +1653,10 @@ if [[ "${APP_ONLY}" -eq 0 ]]; then
     purge_redis_native
     purge_pgbouncer
     purge_cloudflared_package
+  fi
+  # Final leftover wipe only when postgresql packages are actually gone.
+  if ! redgres_uninstall_postgres_packages_present; then
+    redgres_uninstall_remove_postgres_leftovers
   fi
   step_done
 else

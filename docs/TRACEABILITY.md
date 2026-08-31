@@ -20,6 +20,6 @@ New work replaces **one** current-slice block. Do not re-copy older slices.
 
 ## Current slice
 
-### Uninstall repairs interrupted dpkg before package purge (2026-09-01)
+### Uninstall full local clean after Cloudflare warn (2026-09-01)
 
-OPS-001 Partial: full uninstall now runs `dpkg --configure -a` and `apt-get -f install -y` before PostgreSQL/Redis/PgBouncer/cloudflared purge and again before autoremove, then retries purge once if targeted packages remain. Finish text no longer claims “fully removed” when `dpkg-query` still lists those packages; it prints the leftover names and recovery commands. Cloudflare incomplete cleanup still continues the local purge (prior slice). Evidence: `deploy/tests/run.sh` asserts repair/list helpers and stubbed `dpkg --configure -a` / `apt-get -f install -y` ordering. Do not mark Complete: live VPS confirmation after an interrupted-dpkg uninstall remains outstanding.
+OPS-001 Partial: plain full uninstall (`-y`, not `--keep-remote`) continues past unconfirmed Cloudflare cleanup and still attempts complete local removal of what Redgres installed. Interrupted `dpkg` is repaired before purge; package purge is retried once; `/var/lib/postgresql` (and related leftover dirs) are removed only after `postgresql-*` packages are gone—never while those packages remain (prevents fresh `initdb` Permission denied). Finish text reports leftover packages instead of claiming a clean host. Evidence: `deploy/tests/run.sh` / `uninstall_cloudflare_test.sh` cover continue-on-incomplete-remote, dpkg repair stubs, and “no early leftover wipe” ordering. Do not mark Complete: live VPS confirmation after push remains outstanding.
