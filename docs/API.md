@@ -917,7 +917,7 @@ Then `CREATE DATABASE {db} OWNER {owner}`, `REVOKE CONNECT ON DATABASE {db} FROM
 
 Password: 24-byte `crypto/rand` then `base64.RawURLEncoding` (same algorithm as Redis `GeneratePassword`; **do not import `redisadmin`**). Duplicate the helper in `postgresadmin`.
 
-**Encrypt / vault.** Implement `secrets.Encrypt` as the Fernet inverse of existing `Decrypt` (no TTL, no new Go module, no `fernet-go`). Roundtrip tests against `internal/secrets/testdata/python49.json` plaintext. DATA_AND_SECRETS Gate 2 is in-scope for writes; Gate 4 stays out. **No `ensure_vault` DDL.** Never `CREATE DATABASE database_console_vault`. Missing vault DB/table/CONNECT after cluster objects exist → compensate then **503**.
+**Encrypt / vault.** Implement `secrets.Encrypt` as the Fernet inverse of existing `Decrypt` (no TTL, no new Go module, no `fernet-go`). Roundtrip tests against `internal/secrets/testdata/python49.json` plaintext. DATA_AND_SECRETS Gate 2 is in-scope for writes; Gate 4 stays out. **No request-time `ensure_vault` DDL.** The root fresh installer initializes the vault before application startup; this endpoint never creates `database_console_vault`. Missing vault DB/table/CONNECT after cluster objects exist → compensate then **503**.
 
 ```sql
 INSERT INTO public.project_credentials (role_name, encrypted_password, updated_at)

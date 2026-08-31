@@ -50,10 +50,13 @@ Recommended permissions, adjusted for the selected systemd credential mechanism:
 |---|---|---|
 | `/opt/redgres` | `root:root 0755` | Releases immutable to service user |
 | `/etc/redgres` | `root:redgres 0750` | Directory traversal limited; not used for PostgreSQL TLS files |
+| `/etc/redgres/secrets` | `root:redgres 0750` | Root-controlled application-secret directory; service cannot replace entries |
+| `/etc/redgres/secrets/legacy-vault-secret` | `root:root 0600` | Fresh-install Fernet KDF source; generated once and loaded through systemd credentials |
+| `/etc/redgres/secrets/legacy-vault-secret.managed` | `root:root 0600` | Root-only authority that keeps the managed source selected across upgrades |
 | `/etc/ssl/redgres` | `root:root 0755` | Staging Let's Encrypt copies |
 | `/etc/postgresql/*/main/redgres-*.pem` | `postgres:postgres` `0644`/`0600` | Files PostgreSQL reload can re-read |
 | `redgres.env` | `root:redgres 0640` | No secrets where avoidable |
-| secret source files | `root:root 0600` | Inject via systemd credentials; otherwise narrowly `root:redgres 0640` |
+| secret source files | `root:root 0600` | Inject via systemd credentials; group-readable `0640` is not accepted by the production reader |
 | `/var/lib/redgres` | `redgres:redgres 0700` | SQLite/application state |
 | `/var/backups/redgres` | `root:root 0700` | Backup job controls access |
 
