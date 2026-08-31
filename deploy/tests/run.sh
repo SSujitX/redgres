@@ -2666,6 +2666,25 @@ else
   fail "bootstrap allow-from / UFW argv (rc=${ip_rc})"
 fi
 
+ufw_quiet_rc=0
+ufw_quiet_out="$(
+  s2_lib_src
+  REDGRES_BOOTSTRAP_ALLOW_FROM='198.51.100.20'
+  ufw() {
+    case "${1:-}" in
+      allow) printf 'Rule added\n'; return 0 ;;
+      status) printf 'Status: active\n'; return 0 ;;
+      *) return 0 ;;
+    esac
+  }
+  redgres_ufw_restrict_bootstrap
+)" || ufw_quiet_rc=$?
+if [[ "${ufw_quiet_rc}" -eq 0 && "${ufw_quiet_out}" != *'Rule added'* && "${ufw_quiet_out}" == *'ufw: allow 8989/tcp from 198.51.100.20 only'* ]]; then
+  pass 'bootstrap UFW allow output stays on the indented note line'
+else
+  fail "bootstrap UFW quiet allow (rc=${ufw_quiet_rc} out=${ufw_quiet_out})"
+fi
+
 sudo_ip_rc=0
 ( s2_lib_src
   REDGRES_BOOTSTRAP_ALLOW_FROM=

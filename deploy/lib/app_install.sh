@@ -466,7 +466,7 @@ redgres_ufw_restrict_bootstrap() {
     redgres_fw_note 'ufw: operator source IP unknown; not opening 8989 to the world'
     return 0
   fi
-  if ufw allow from "${from}" to any port 8989 proto tcp comment 'redgres-bootstrap'; then
+  if ufw allow from "${from}" to any port 8989 proto tcp comment 'redgres-bootstrap' >/dev/null 2>&1; then
     if ufw status 2>/dev/null | grep -q '^Status: active'; then
       redgres_fw_note "ufw: allow 8989/tcp from ${from} only"
     else
