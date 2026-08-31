@@ -1,0 +1,39 @@
+---
+name: "source-command-start-redgres"
+description: "Migrated source command `start-redgres`"
+---
+
+# source-command-start-redgres
+
+Use this skill when the user asks to run the migrated source command `start-redgres`.
+
+## Command Template
+
+Act as the lead Redgres orchestrator and continuously advance local development from repository evidence, not from assumed chat memory. This is the canonical command for both a clean start and recovery of unfinished work. The same loop is always applied by `.cursor/rules/06-continuous-orchestration.mdc` even when this command is not typed.
+
+1. Follow `AGENTS.md` bootstrap. Route only the additional documents listed there. Do not preload `docs/INDEX.md`.
+2. Inspect `git status`, recent commits, current implementation, tests, open local tracker items if configured, and traceability evidence. Preserve all unrelated/user changes. Treat target documentation as requirements, never as proof that code exists.
+3. If the repository has only reviewed Redgres specification/rule/skill changes awaiting a baseline, validate them and create a clearly named local baseline commit. Never include unrelated files. Never push.
+4. Recovery gate: if the checkout, branch, worktree, tests, or traceability show unfinished work, recover and finish that exact PRD slice before selecting new work. Preserve partial work and determine its safest continuation point. Do not require the previous Codex chat.
+5. When no unfinished slice remains, select the next smallest dependency-ready vertical slice from the roadmap and traceability gaps. Do not ask routine questions whose answer is already in accepted docs, source evidence, or repository state. Make only safe, reversible assumptions and record material assumptions in the plan/handoff. Do not broaden the slice with speculative features/refactors.
+6. Invoke `redgres-planner` before implementation. The plan must name PRD IDs, acceptance criteria, external test seam, required reading, source-system evidence, uncertain/version-sensitive facts and how they will be verified, relevant skills, allowed paths, shared contracts, risks, docs to update, commands, and completion gate. It must also run the parallelism gate from `.cursor/rules/50-multi-agent-orchestration.mdc`, identify parent-owned shared files, and construct a dynamic wave of at most ten total participants: one parent, up to three independent writers, and only concrete non-duplicative read-only research/review/verification packets. If it chooses one writer, it must name the concrete dependency that makes parallel editing unsafe.
+   For OPS-007 or PostgreSQL/PgBouncer installer work, the context packet must include `docs/POSTGRESQL_PROVISIONING.md` and ADR-009, distinguish server/package/per-database/preload/service state, and forbid invented package mappings or automatic restart.
+7. Run Wave 0/shared foundation sequentially. For later independent work, delegate no more than three concurrent editing packets to `redgres-implementer` subagents in isolated Git worktrees/branches. Add scoped read-only compatibility, security, UI, or evidence packets only as their inputs become ready; never spawn agents merely to fill the ten-participant ceiling. Subagents start clean: never assume they know this conversation. Give each all required file paths, decisions, interfaces, tests, restrictions, fixed commit, and handoff format. Keep shared route/config/dependency/migration/traceability files parent-owned. While subagents run, the parent performs non-overlapping contract, integration preparation, or evidence work instead of waiting. Do not give two writers overlapping files, migrations, API contracts, or dependency manifests.
+8. The parent is the sole integration master. Review every returned diff and integrate writers in dependency order. Run applicable security and UI reviews independently against a fixed integrated commit, route required corrections to their owning packet, then run `redgres-verifier` against the corrected commit and rerun the complete available suite. No agent self-approves, and no second master merges or changes shared contracts.
+9. Keep documentation synchronized in the same change using the ownership table in `AGENTS.md`. Update `docs/TRACEABILITY.md` with exact implementation files, commands/results, and limitations. Update canonical requirements/contracts/ADRs when behavior or a decision changes; do not create duplicate status documents.
+10. For UI work, load `redgres-ui-design` and run `redgres-ui-reviewer`. For security-sensitive work, run one or more non-duplicative `redgres-security-reviewer` packets split by threat boundary. Use `redgres-compatibility-researcher` for unresolved source/version facts and `redgres-evidence-reviewer` before a broad completion claim. Always finish a slice with `redgres-verifier`; independent reviewers may run in parallel when read-only. Unavailable Docker, live-service, browser, staging, vulnerability, or production checks remain explicit blockers to the corresponding acceptance claim, not permission to skip them.
+
+## Continuation loop
+
+After a slice passes its completion gate:
+
+1. Synchronize canonical docs and traceability.
+2. Create a focused local commit when the diff is reviewed and all claimed checks pass. Never commit known-failing work merely as a checkpoint and never push.
+3. Re-read Git/roadmap/traceability state and immediately begin the next dependency-ready slice.
+4. Repeat without asking whether to continue. A completed slice, reviewer approval, local commit, or clean worktree is a checkpoint—not a reason to end the run.
+
+Before any voluntary final response, apply this stop test: end only for a genuine product/architecture choice not already decided, a repeated failing gate with no safe correction, missing secret/access, destructive or external-state action, production/DNS/Cloudflare work, completion of the current approved roadmap scope, or an unavoidable session/tool/context limit. If none applies, continue working.
+
+When an unavoidable session/tool/context limit is approaching, leave a recoverable checkpoint: finish the current safe atomic action, keep verified work in focused commits, leave unverified partial work visible in the working tree, and report the exact active PRD slice, last passing checks, remaining checks/work, and next safe command. The next command is normally `/start-redgres`; it must recover this state before selecting new work.
+
+Never invent technical facts/APIs/results, copy random internet code, edit either legacy repository, expose secrets, weaken tests, modify production, push, or claim unexecuted evidence. Verify uncertain external details against exact pinned-version source/docs or official primary sources. At each handoff, report completed PRD IDs, commits/diffs, tests, documentation updates, external evidence/versions where material, unresolved risks, and the next dependency-ready slice.
