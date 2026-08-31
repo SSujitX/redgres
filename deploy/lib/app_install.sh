@@ -374,7 +374,7 @@ User=redgres
 Group=redgres
 UMask=0077
 EnvironmentFile=-/etc/redgres/redgres.env
-ExecStart=${binary_path} serve
+$(redgres_app_unit_runtime_lines "${binary_path}" '/etc/redgres/secrets/legacy-vault-secret' '/etc/redgres/secrets/legacy-vault-secret.managed')
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

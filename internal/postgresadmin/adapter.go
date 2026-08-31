@@ -234,8 +234,8 @@ func readPasswordFile(path string, production bool) (string, error) {
 }
 
 func readSecretFile(path, envName string, production bool) ([]byte, error) {
-	raw, err := securefile.ReadRegular(path, func(mode fs.FileMode) error {
-		if production && mode.Perm()&0o077 != 0 {
+	raw, err := securefile.ReadRegularInfo(path, func(info fs.FileInfo) error {
+		if production && info.Mode().Perm()&0o077 != 0 && !trustedSystemdVaultCredential(path, envName, info) {
 			return errors.New(envName + ": must not be group or world accessible")
 		}
 		return nil

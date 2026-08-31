@@ -769,6 +769,130 @@ redgres_write_tls_targets() {
   /usr/bin/mv -fT "${tmp}" "${targets}"
 }
 
+redgres_assert_fresh_vault_env_path() {
+  local env_file="${1:-/etc/redgres/redgres.env}"
+  local configured
+  [[ -e "${env_file}" || -L "${env_file}" ]] || return 0
+  [[ -f "${env_file}" && ! -L "${env_file}" ]] || return 1
+  configured="$(/usr/bin/grep '^REDGRES_LEGACY_VAULT_SECRET_FILE=' "${env_file}" || true)"
+  [[ -z "${configured}" ]]
+}
+
+redgres_ensure_legacy_vault_secret() {
+  local dir="${1:-/etc/redgres/secrets}"
+  local secret="${dir}/legacy-vault-secret"
+  local marker="${dir}/legacy-vault-secret.managed"
+  local tmp marker_tmp
+  [[ ! -L "${dir}" ]] || redgres_die 'postgres vault secret directory is not trusted'
+  /usr/bin/mkdir -p "${dir}" || redgres_die 'postgres vault secret directory could not be created'
+  [[ -d "${dir}" && ! -L "${dir}" ]] || redgres_die 'postgres vault secret directory is not trusted'
+  redgres_chown_legacy_vault_secret_dir "${dir}" || redgres_die 'postgres vault secret directory ownership could not be set'
+  /usr/bin/chmod 750 "${dir}" || redgres_die 'postgres vault secret directory mode could not be set'
+  if [[ ! -e "${secret}" && ! -L "${secret}" ]]; then
+    tmp="$(/usr/bin/mktemp "${dir}/legacy-vault-secret.XXXXXX")" || redgres_die 'postgres vault secret could not be created'
+    # shellcheck disable=SC2064
+    trap "rm -f $(printf '%q' "${tmp}")" RETURN
+    /usr/bin/dd if=/dev/urandom bs=32 count=1 status=none | /usr/bin/base64 | /usr/bin/tr -d '\n' >"${tmp}" || redgres_die 'postgres vault secret could not be generated'
+    printf '\n' >>"${tmp}" || redgres_die 'postgres vault secret could not be finalized'
+    redgres_chown_legacy_vault_secret "${tmp}" || redgres_die 'postgres vault secret ownership could not be set'
+    /usr/bin/chmod 600 "${tmp}" || redgres_die 'postgres vault secret mode could not be set'
+    /usr/bin/mv -fT "${tmp}" "${secret}" || redgres_die 'postgres vault secret could not be installed'
+  fi
+  [[ -f "${secret}" && ! -L "${secret}" && -s "${secret}" ]] || redgres_die 'postgres vault secret file is not trusted'
+  redgres_chown_legacy_vault_secret "${secret}" || redgres_die 'postgres vault secret ownership could not be set'
+  /usr/bin/chmod 600 "${secret}" || redgres_die 'postgres vault secret mode could not be set'
+  if [[ ! -e "${marker}" && ! -L "${marker}" ]]; then
+    marker_tmp="$(/usr/bin/mktemp "${dir}/legacy-vault-secret.managed.XXXXXX")" || redgres_die 'postgres vault marker could not be created'
+    # shellcheck disable=SC2064
+    trap "rm -f $(printf '%q' "${marker_tmp}")" RETURN
+    printf '%s\n' 'managed-by-redgres-installer-v1' >"${marker_tmp}" || redgres_die 'postgres vault marker could not be written'
+    redgres_chown_legacy_vault_secret "${marker_tmp}" || redgres_die 'postgres vault marker ownership could not be set'
+    /usr/bin/chmod 600 "${marker_tmp}" || redgres_die 'postgres vault marker mode could not be set'
+    /usr/bin/mv -fT "${marker_tmp}" "${marker}" || redgres_die 'postgres vault marker could not be installed'
+  fi
+  [[ -f "${marker}" && ! -L "${marker}" ]] || redgres_die 'postgres vault marker is not trusted'
+  [[ "$(/usr/bin/cat "${marker}")" == 'managed-by-redgres-installer-v1' ]] || redgres_die 'postgres vault marker is not trusted'
+  redgres_chown_legacy_vault_secret "${marker}" || redgres_die 'postgres vault marker ownership could not be set'
+  /usr/bin/chmod 600 "${marker}" || redgres_die 'postgres vault marker mode could not be set'
+}
+
+redgres_chown_legacy_vault_secret_dir() {
+  /usr/bin/chown root:redgres "$1"
+}
+
+redgres_chown_legacy_vault_secret() {
+  /usr/bin/chown root:root "$1"
+}
+
+redgres_vault_source_metadata() {
+  /usr/bin/stat -Lc '%u:%g:%a' "$1"
+}
+
+redgres_canonical_vault_credential_ready() {
+  local source="${1:-/etc/redgres/secrets/legacy-vault-secret}"
+  local marker="${2:-/etc/redgres/secrets/legacy-vault-secret.managed}"
+  [[ -f "${source}" && ! -L "${source}" && -s "${source}" ]] || return 1
+  [[ -f "${marker}" && ! -L "${marker}" ]] || return 1
+  [[ "$(/usr/bin/cat "${marker}" 2>/dev/null || true)" == 'managed-by-redgres-installer-v1' ]] || return 1
+  [[ "$(redgres_vault_source_metadata "${source}" 2>/dev/null || true)" == '0:0:600' ]] || return 1
+  [[ "$(redgres_vault_source_metadata "${marker}" 2>/dev/null || true)" == '0:0:600' ]]
+}
+
+redgres_app_unit_runtime_lines() {
+  local binary_path="$1"
+  local source="${2:-/etc/redgres/secrets/legacy-vault-secret}"
+  local marker="${3:-/etc/redgres/secrets/legacy-vault-secret.managed}"
+  if redgres_canonical_vault_credential_ready "${source}" "${marker}"; then
+    printf 'LoadCredential=legacy-vault-secret:%s\n' "${source}"
+    printf 'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE=%%d/legacy-vault-secret %s serve\n' "${binary_path}"
+  else
+    printf 'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= %s serve\n' "${binary_path}"
+  fi
+}
+
+redgres_assert_postgres_admin_password() {
+  local pass="$1"
+  [[ "${pass}" =~ ^[A-Za-z0-9+/]{32}$ ]]
+}
+
+redgres_postgres_control_sql() {
+  local pass="$1"
+  redgres_assert_postgres_admin_password "${pass}" || redgres_die 'postgres passfile has an invalid generated value'
+  cat <<EOSQL
+DO \$\$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'redgres_admin') THEN
+    ALTER ROLE redgres_admin WITH LOGIN CREATEDB CREATEROLE NOSUPERUSER NOREPLICATION PASSWORD \$redgres\$${pass}\$redgres\$;
+  ELSE
+    CREATE ROLE redgres_admin LOGIN CREATEDB CREATEROLE NOSUPERUSER NOREPLICATION PASSWORD \$redgres\$${pass}\$redgres\$;
+  END IF;
+END
+\$\$;
+GRANT CONNECT ON DATABASE postgres TO redgres_admin;
+SELECT 'CREATE DATABASE database_console_vault OWNER redgres_admin'
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'database_console_vault')\gexec
+ALTER DATABASE database_console_vault OWNER TO redgres_admin;
+REVOKE CONNECT ON DATABASE database_console_vault FROM PUBLIC;
+\connect database_console_vault
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+CREATE TABLE IF NOT EXISTS public.project_credentials (
+  role_name text PRIMARY KEY,
+  encrypted_password text NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.project_credentials OWNER TO redgres_admin;
+EOSQL
+}
+
+redgres_postgres_control_exec() {
+  /usr/sbin/runuser -u postgres -- /usr/bin/psql -q -d postgres -v ON_ERROR_STOP=1
+}
+
+redgres_run_postgres_control_sql() {
+  local pass="$1"
+  redgres_postgres_control_sql "${pass}" | redgres_postgres_control_exec
+}
+
 redgres_create_postgres_admin() {
   local passfile='/etc/redgres/postgres.pass' pass
   if [[ ! -f "${passfile}" ]]; then
@@ -780,26 +904,17 @@ redgres_create_postgres_admin() {
   /usr/bin/chown redgres:redgres "${passfile}"
   /usr/bin/chmod 600 "${passfile}"
   pass="$(/usr/bin/cat "${passfile}")"
-  [[ -n "${pass}" ]] || redgres_die 'postgres passfile is empty'
+  redgres_assert_postgres_admin_password "${pass}" || redgres_die 'postgres passfile has an invalid generated value'
+  redgres_assert_fresh_vault_env_path || redgres_die 'fresh install vault secret path does not match the managed path'
+  redgres_ensure_legacy_vault_secret
   local log
   log="$(/usr/bin/mktemp /tmp/redgres-cmd.XXXXXX)" || redgres_die 'postgres admin role failed'
   # shellcheck disable=SC2064
   trap "rm -f $(printf '%q' "${log}")" RETURN
-  if /usr/sbin/runuser -u postgres -- /usr/bin/psql -q -d postgres -v ON_ERROR_STOP=1 >"${log}" 2>&1 <<EOSQL
-DO \$\$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'redgres_admin') THEN
-    ALTER ROLE redgres_admin WITH LOGIN PASSWORD \$redgres\$${pass}\$redgres\$;
-  ELSE
-    CREATE ROLE redgres_admin LOGIN PASSWORD \$redgres\$${pass}\$redgres\$;
-  END IF;
-END
-\$\$;
-GRANT CONNECT ON DATABASE postgres TO redgres_admin;
-EOSQL
+  if redgres_run_postgres_control_sql "${pass}" >"${log}" 2>&1
   then
     /usr/bin/rm -f "${log}"
-    redgres_log 'postgres admin role redgres_admin ready (password not logged)'
+    redgres_log 'postgres control role and encrypted vault ready (password not logged)'
     return 0
   fi
   redgres_cmd_log_safe "$(/usr/bin/tail -n 50 "${log}")" >&2
@@ -817,6 +932,7 @@ redgres_live_install() {
   esac
 
   redgres_require_root
+  redgres_assert_fresh_vault_env_path || redgres_die 'fresh install requires REDGRES_LEGACY_VAULT_SECRET_FILE to be absent from redgres.env'
   redgres_read_os
   redgres_require_amd64
   redgres_refuse_existing_postgres_datadir

@@ -507,6 +507,17 @@ redgres_chown_app_state() {
 
 redgres_app_unit_body() {
   local binary_path="$1"
+  local vault_credential='' exec_start="ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= ${binary_path} serve"
+  local vault_source='/etc/redgres/secrets/legacy-vault-secret'
+  local vault_marker='/etc/redgres/secrets/legacy-vault-secret.managed'
+  if [[ -f "${vault_source}" && ! -L "${vault_source}" && -s "${vault_source}" ]] &&
+    [[ -f "${vault_marker}" && ! -L "${vault_marker}" ]] &&
+    [[ "$(/usr/bin/cat "${vault_marker}" 2>/dev/null || true)" == 'managed-by-redgres-installer-v1' ]] &&
+    [[ "$(/usr/bin/stat -Lc '%u:%g:%a' "${vault_source}" 2>/dev/null || true)" == '0:0:600' ]] &&
+    [[ "$(/usr/bin/stat -Lc '%u:%g:%a' "${vault_marker}" 2>/dev/null || true)" == '0:0:600' ]]; then
+    vault_credential='LoadCredential=legacy-vault-secret:/etc/redgres/secrets/legacy-vault-secret'
+    exec_start="ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE=%d/legacy-vault-secret ${binary_path} serve"
+  fi
   cat <<EOF
 [Unit]
 Description=Redgres control plane
@@ -519,7 +530,8 @@ User=redgres
 Group=redgres
 UMask=0077
 EnvironmentFile=-/etc/redgres/redgres.env
-ExecStart=${binary_path} serve
+${vault_credential}
+${exec_start}
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

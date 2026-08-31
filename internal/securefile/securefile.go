@@ -120,6 +120,18 @@ func EnsureRealDir(path string, perm fs.FileMode) error {
 }
 
 func ReadRegular(path string, validateMode func(fs.FileMode) error) ([]byte, error) {
+	return ReadRegularInfo(path, func(info fs.FileInfo) error {
+		if validateMode == nil {
+			return nil
+		}
+		return validateMode(info.Mode())
+	})
+}
+
+// ReadRegularInfo is ReadRegular with access to the opened file identity for
+// ownership-aware permission checks. The callback runs after the descriptor
+// and path have been verified to identify the same regular file.
+func ReadRegularInfo(path string, validateInfo func(fs.FileInfo) error) ([]byte, error) {
 	file, err := OpenRegular(path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
@@ -129,8 +141,8 @@ func ReadRegular(path string, validateMode func(fs.FileMode) error) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	if validateMode != nil {
-		if err := validateMode(info.Mode()); err != nil {
+	if validateInfo != nil {
+		if err := validateInfo(info); err != nil {
 			return nil, err
 		}
 	}

@@ -1560,6 +1560,89 @@ s2_lib_src() {
   source "${deploy_dir}/lib/app_install.sh"
 }
 
+postgres_control_rc=0
+postgres_control_err="$(
+  s2_lib_src
+  test_pass='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef'
+  redgres_assert_postgres_admin_password "${test_pass}" || exit 1
+  if redgres_assert_postgres_admin_password 'bad$redgres$; SELECT 1; --'; then exit 1; fi
+  if redgres_assert_postgres_admin_password $'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nB'; then exit 1; fi
+  sql="$(redgres_postgres_control_sql "${test_pass}")" || exit 1
+  printf '%s\n' "${sql}" | grep -q 'ALTER ROLE redgres_admin WITH LOGIN CREATEDB CREATEROLE NOSUPERUSER NOREPLICATION PASSWORD' || exit 1
+  printf '%s\n' "${sql}" | grep -q 'CREATE ROLE redgres_admin LOGIN CREATEDB CREATEROLE NOSUPERUSER NOREPLICATION PASSWORD' || exit 1
+  printf '%s\n' "${sql}" | grep -q 'CREATE DATABASE database_console_vault OWNER redgres_admin' || exit 1
+  printf '%s\n' "${sql}" | grep -q 'REVOKE CONNECT ON DATABASE database_console_vault FROM PUBLIC' || exit 1
+  printf '%s\n' "${sql}" | grep -q 'CREATE TABLE IF NOT EXISTS public.project_credentials' || exit 1
+  printf '%s\n' "${sql}" | grep -q 'ALTER TABLE public.project_credentials OWNER TO redgres_admin' || exit 1
+  printf '%s\n' "${sql}" | grep -q "${test_pass}" || exit 1
+  sql_capture="${tmpdir}/postgres-control.sql"
+  redgres_postgres_control_exec() { /usr/bin/cat >"${sql_capture}"; }
+  redgres_run_postgres_control_sql "${test_pass}" || exit 1
+  grep -q 'CREATE DATABASE database_console_vault OWNER redgres_admin' "${sql_capture}" || exit 1
+  redgres_postgres_control_exec() { /usr/bin/cat >/dev/null; return 23; }
+  if redgres_run_postgres_control_sql "${test_pass}"; then exit 1; fi
+  env_file="${tmpdir}/postgres-vault.env"
+  printf '%s\n' 'REDGRES_ENVIRONMENT=production' >"${env_file}"
+  redgres_assert_fresh_vault_env_path "${env_file}" || exit 1
+  printf '%s\n' 'REDGRES_LEGACY_VAULT_SECRET_FILE=/etc/redgres/secrets/legacy-vault-secret' >"${env_file}.canonical"
+  if redgres_assert_fresh_vault_env_path "${env_file}.canonical"; then exit 1; fi
+  printf '%s\n' 'REDGRES_LEGACY_VAULT_SECRET_FILE=/custom/legacy-secret' >"${env_file}.keep"
+  if redgres_assert_fresh_vault_env_path "${env_file}.keep"; then exit 1; fi
+  vault_dir="${tmpdir}/vault-secrets"
+  chown_log="${tmpdir}/vault-chown.log"
+  redgres_chown_legacy_vault_secret_dir() { printf 'dir:%s\n' "$1" >>"${chown_log}"; }
+  redgres_chown_legacy_vault_secret() { printf '%s\n' "$1" >>"${chown_log}"; }
+  redgres_ensure_legacy_vault_secret "${vault_dir}" || exit 1
+  vault_secret="${vault_dir}/legacy-vault-secret"
+  vault_marker="${vault_dir}/legacy-vault-secret.managed"
+  [[ -s "${vault_secret}" && ! -L "${vault_secret}" ]] || exit 1
+  [[ "$(cat "${vault_marker}")" == 'managed-by-redgres-installer-v1' ]] || exit 1
+  original_hash="$(sha256sum "${vault_secret}" | cut -d' ' -f1)" || exit 1
+  redgres_ensure_legacy_vault_secret "${vault_dir}" || exit 1
+  [[ "$(sha256sum "${vault_secret}" | cut -d' ' -f1)" == "${original_hash}" ]] || exit 1
+  [[ "$(wc -l <"${chown_log}")" -ge 8 ]] || exit 1
+  grep -q "^dir:${vault_dir}$" "${chown_log}" || exit 1
+  redgres_vault_source_metadata() { printf '%s\n' '0:0:600'; }
+  unit_lines="$(redgres_app_unit_runtime_lines '/opt/redgres/current/redgres' "${vault_secret}" "${vault_marker}")" || exit 1
+  [[ "${unit_lines}" == *"LoadCredential=legacy-vault-secret:${vault_secret}"* ]] || exit 1
+  [[ "${unit_lines}" == *'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE=%d/legacy-vault-secret /opt/redgres/current/redgres serve'* ]] || exit 1
+  inherited='source-path'
+  effective="$(env REDGRES_ENVIRONMENT=development REDGRES_LEGACY_VAULT_SECRET_FILE="${inherited}" /usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE='%d/legacy-vault-secret' /bin/sh -c 'printf "%s:%s" "$REDGRES_ENVIRONMENT" "$REDGRES_LEGACY_VAULT_SECRET_FILE"')" || exit 1
+  [[ "${effective}" == 'production:%d/legacy-vault-secret' ]] || exit 1
+  custom_lines="$(redgres_app_unit_runtime_lines '/opt/redgres/current/redgres' "${vault_secret}" "${vault_marker}")" || exit 1
+  [[ "${custom_lines}" == *'REDGRES_LEGACY_VAULT_SECRET_FILE=%d/legacy-vault-secret'* ]] || exit 1
+  adoption_lines="$(redgres_app_unit_runtime_lines '/opt/redgres/current/redgres' "${vault_secret}" "${vault_marker}.absent")" || exit 1
+  [[ "${adoption_lines}" == 'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= /opt/redgres/current/redgres serve' ]] || exit 1
+  redgres_vault_source_metadata() { printf '%s\n' '1000:1000:600'; }
+  untrusted_lines="$(redgres_app_unit_runtime_lines '/opt/redgres/current/redgres' "${vault_secret}" "${vault_marker}")" || exit 1
+  [[ "${untrusted_lines}" == 'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= /opt/redgres/current/redgres serve' ]] || exit 1
+)" 2>&1 || postgres_control_rc=$?
+if [[ "${postgres_control_rc}" -eq 0 ]]; then
+  pass 'fresh PostgreSQL control role and encrypted vault satisfy create-database prerequisites'
+else
+  fail "fresh PostgreSQL create-database prerequisites (rc=${postgres_control_rc})"
+  printf '%s\n' "${postgres_control_err}" >&2
+fi
+
+vault_preflight_rc=0
+vault_preflight_err="$(
+  s2_lib_src
+  mode='fresh-postgres'
+  redis_mode='fresh'
+  pgbouncer_mode='disabled'
+  marker="${tmpdir}/vault-preflight-order"
+  redgres_require_root() { printf '%s\n' root >>"${marker}"; }
+  redgres_assert_fresh_vault_env_path() { printf '%s\n' gate >>"${marker}"; return 1; }
+  redgres_read_os() { printf '%s\n' mutation >>"${marker}"; }
+  if redgres_live_install; then exit 1; fi
+)" 2>&1 || vault_preflight_rc=$?
+if [[ "${vault_preflight_rc}" -ne 0 ]] && grep -qx root "${tmpdir}/vault-preflight-order" && grep -qx gate "${tmpdir}/vault-preflight-order" && ! grep -q mutation "${tmpdir}/vault-preflight-order"; then
+  pass 'fresh vault env compatibility gate runs before live-install mutation'
+else
+  fail "fresh vault env preflight ordering (rc=${vault_preflight_rc})"
+  printf '%s\n' "${vault_preflight_err}" >&2
+fi
+
 coreutils_pick_rc=0
 coreutils_pick_err="$(
   s2_lib_src

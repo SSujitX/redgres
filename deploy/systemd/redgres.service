@@ -10,7 +10,7 @@ User=redgres
 Group=redgres
 UMask=0077
 EnvironmentFile=-/etc/redgres/redgres.env
-ExecStart=/opt/redgres/current/redgres serve
+ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= /opt/redgres/current/redgres serve
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
