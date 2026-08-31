@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -278,8 +279,9 @@ func TestDomainApplyCreatesPersistsAndDoesNotAutoClose(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"bootstrap_still_open":true`) {
 		t.Fatalf("expected bootstrap_still_open=true: %s", rec.Body.String())
 	}
-	if !boot.open || boot.closed != 0 {
-		t.Fatalf("apply closed bootstrap: open=%v closed=%d", boot.open, boot.closed)
+	bootOpen, bootClosed := boot.state()
+	if !bootOpen || bootClosed != 0 {
+		t.Fatalf("apply closed bootstrap: open=%v closed=%d", bootOpen, bootClosed)
 	}
 	if strings.Contains(rec.Body.String(), "fake-tunnel-token") {
 		t.Fatal("tunnel token leaked in response")
@@ -643,17 +645,29 @@ func TestDomainApplyCompensatesOnVerifyFailure(t *testing.T) {
 }
 
 type fakeBootstrap struct {
+	mu     sync.Mutex
 	open   bool
 	closed int
 }
 
-func (f *fakeBootstrap) Open() bool { return f.open }
+func (f *fakeBootstrap) Open() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.open
+}
 func (f *fakeBootstrap) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.open = false
 	f.closed++
 	return nil
 }
 func (f *fakeBootstrap) Shutdown(context.Context) error { return f.Close() }
+func (f *fakeBootstrap) state() (bool, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.open, f.closed
+}
 
 func TestDomainAccessPolicyAndConfirmReachable(t *testing.T) {
 	srv, handler, cookie, csrf, tokenPath := newDomainServer(t)
@@ -706,11 +720,16 @@ func TestDomainAccessPolicyAndConfirmReachable(t *testing.T) {
 		t.Fatalf("confirm body = %s", rec.Body.String())
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && boot.closed == 0 {
+	for time.Now().Before(deadline) {
+		_, bootClosed := boot.state()
+		if bootClosed != 0 {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if boot.open || boot.closed != 1 {
-		t.Fatalf("bootstrap open=%v closed=%d", boot.open, boot.closed)
+	bootOpen, bootClosed := boot.state()
+	if bootOpen || bootClosed != 1 {
+		t.Fatalf("bootstrap open=%v closed=%d", bootOpen, bootClosed)
 	}
 
 	rec = serve(handler, authed(http.MethodDelete, "/api/v1/domain", cookie, csrf, ""))
@@ -882,7 +901,7 @@ func TestDomainConfirmReachablePersistFailureDoesNotClose(t *testing.T) {
 	if bootstrap.MarkerPresent(srv.cfg.SQLitePath) {
 		t.Fatal("persist failure must not write bootstrap.closed")
 	}
-	if !boot.open {
+	if !boot.Open() {
 		t.Fatal("persist failure must not close bootstrap")
 	}
 }
@@ -911,7 +930,7 @@ func TestDomainConfirmReachableProductionMissingEnvDoesNotClose(t *testing.T) {
 	if bootstrap.MarkerPresent(srv.cfg.SQLitePath) {
 		t.Fatal("missing env must not write bootstrap.closed")
 	}
-	if !boot.open {
+	if !boot.Open() {
 		t.Fatal("missing env must not close bootstrap")
 	}
 }
