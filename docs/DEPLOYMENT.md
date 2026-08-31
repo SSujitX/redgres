@@ -53,6 +53,7 @@ Recommended permissions, adjusted for the selected systemd credential mechanism:
 | `/etc/redgres/secrets` | `root:redgres 0750` | Root-controlled application-secret directory; service cannot replace entries |
 | `/etc/redgres/secrets/legacy-vault-secret` | `root:root 0600` | Fresh-install Fernet KDF source; generated once and loaded through systemd credentials |
 | `/etc/redgres/secrets/legacy-vault-secret.managed` | `root:root 0600` | Root-only authority that keeps the managed source selected across upgrades |
+| `/etc/redgres/secrets/legacy-vault-secret.adopt` | `root:root 0600` | Optional one-time root authorization for a legacy source path; consumed after successful adoption |
 | `/etc/ssl/redgres` | `root:root 0755` | Staging Let's Encrypt copies |
 | `/etc/postgresql/*/main/redgres-*.pem` | `postgres:postgres` `0644`/`0600` | Files PostgreSQL reload can re-read |
 | `redgres.env` | `root:redgres 0660` | Mutable non-secret application settings only; never a trust source for privileged credential selection |
