@@ -1553,11 +1553,55 @@ update_order_rc=0
   [[ -n "${quiesce_line}" && -n "${runtime_line}" && -n "${restart_line}" && -n "${adoption_line}" && -n "${dest_create_line}" ]]
   [[ "${quiesce_line}" -lt "${runtime_line}" && "${runtime_line}" -lt "${restart_line}" ]]
   [[ "${adoption_line}" -lt "${dest_create_line}" && "${dest_create_line}" -lt "${quiesce_line}" ]]
+  grep -q 'if systemctl is-active --quiet redgres.service; then' "${release_lib}"
+  # Inactive/missing unit: stop is best-effort (|| true), not a die gate.
+  grep -q 'systemctl stop redgres.service >/dev/null 2>&1 || true' "${release_lib}"
 ) || update_order_rc=$?
 if [[ "${update_order_rc}" -eq 0 ]]; then
   pass 'update quiesces old app/helper before installing matched runtime and restarting'
 else
   fail "update runtime ordering (rc=${update_order_rc})"
+fi
+
+fresh_quiesce_rc=0
+(
+  active=0
+  stop_calls=0
+  systemctl() {
+    case "${1:-}" in
+      is-active)
+        [[ "${3:-}" == redgres.service && "${active}" -eq 1 ]] && return 0
+        return 1
+        ;;
+      stop)
+        stop_calls=$((stop_calls + 1))
+        # Missing unit: nonzero stop, like systemd exit 5.
+        [[ "${2:-}" == redgres.service && "${active}" -eq 0 ]] && return 5
+        [[ "${2:-}" == redgres.service ]] && active=0
+        return 0
+        ;;
+      *) return 0 ;;
+    esac
+  }
+  # Fresh-install quiesce gate: inactive/missing unit must not abort.
+  systemctl stop redgres-tls-issue.path >/dev/null 2>&1 || true
+  systemctl stop redgres-tls-issue.service >/dev/null 2>&1 || true
+  if systemctl is-active --quiet redgres.service; then
+    if ! systemctl stop redgres.service >/dev/null 2>&1 || systemctl is-active --quiet redgres.service; then
+      exit 2
+    fi
+  else
+    systemctl stop redgres.service >/dev/null 2>&1 || true
+  fi
+  if systemctl is-active --quiet redgres-tls-issue.path || systemctl is-active --quiet redgres-tls-issue.service; then
+    exit 3
+  fi
+  [[ "${stop_calls}" -ge 1 ]]
+) || fresh_quiesce_rc=$?
+if [[ "${fresh_quiesce_rc}" -eq 0 ]]; then
+  pass 'fresh application install treats missing redgres.service as already quiesced'
+else
+  fail "fresh application quiesce for missing unit (rc=${fresh_quiesce_rc})"
 fi
 
 # Restore checksum fixture for remaining dry-run negative tests that use release_file.

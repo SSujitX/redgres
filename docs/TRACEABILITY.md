@@ -20,6 +20,6 @@ New work replaces **one** current-slice block. Do not re-copy older slices.
 
 ## Current slice
 
-### Uninstall full local clean after Cloudflare warn (2026-09-01)
+### Fresh install application quiesce (2026-09-01)
 
-OPS-001 Partial: plain full uninstall (`-y`, not `--keep-remote`) continues past unconfirmed Cloudflare cleanup and still attempts complete local removal of what Redgres installed. Interrupted `dpkg` is repaired before purge; package purge is retried once; `/var/lib/postgresql` (and related leftover dirs) are removed only after `postgresql-*` packages are gone—never while those packages remain (prevents fresh `initdb` Permission denied). Finish text reports leftover packages instead of claiming a clean host. Evidence: `deploy/tests/run.sh` / `uninstall_cloudflare_test.sh` cover continue-on-incomplete-remote, dpkg repair stubs, and “no early leftover wipe” ordering. Do not mark Complete: live VPS confirmation after push remains outstanding.
+OPS-005 Partial: live `[8/8] Application` / `redgres_update_apply` no longer treats `systemctl stop redgres.service` failure on a missing unit as a quiesce error. Fresh hosts have no unit yet; stop is required only when `redgres.service` is active. TLS path/service still must be inactive before switching `current`. Evidence: authorized Ubuntu install failed at Application with `could not quiesce application and TLS helper before update` after Postgres/PgBouncer/Redis succeeded; `deploy/tests/run.sh` asserts the active-only stop gate and a missing-unit stub path. Do not mark Complete: live re-run on the Atlanta host remains outstanding.

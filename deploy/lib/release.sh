@@ -490,10 +490,16 @@ redgres_update_apply() {
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && command -v systemctl >/dev/null 2>&1; then
     systemctl stop redgres-tls-issue.path >/dev/null 2>&1 || true
     systemctl stop redgres-tls-issue.service >/dev/null 2>&1 || true
-    if ! systemctl stop redgres.service >/dev/null 2>&1 || systemctl is-active --quiet redgres.service; then
-      systemctl start redgres.service >/dev/null 2>&1 || true
-      systemctl cat redgres-tls-issue.path >/dev/null 2>&1 && systemctl start redgres-tls-issue.path >/dev/null 2>&1 || true
-      redgres_die 'could not quiesce application and TLS helper before update'
+    # Fresh install has no unit yet: systemctl stop returns nonzero for missing
+    # units. Only require a successful stop when the app is actually active.
+    if systemctl is-active --quiet redgres.service; then
+      if ! systemctl stop redgres.service >/dev/null 2>&1 || systemctl is-active --quiet redgres.service; then
+        systemctl start redgres.service >/dev/null 2>&1 || true
+        systemctl cat redgres-tls-issue.path >/dev/null 2>&1 && systemctl start redgres-tls-issue.path >/dev/null 2>&1 || true
+        redgres_die 'could not quiesce application and TLS helper before update'
+      fi
+    else
+      systemctl stop redgres.service >/dev/null 2>&1 || true
     fi
     if systemctl is-active --quiet redgres-tls-issue.path || systemctl is-active --quiet redgres-tls-issue.service; then
       systemctl start redgres.service >/dev/null 2>&1 || true
