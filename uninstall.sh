@@ -568,27 +568,45 @@ nofollow = getattr(os, "O_NOFOLLOW", 0)
 directory = getattr(os, "O_DIRECTORY", 0)
 
 def safe_secret(name):
+    if not name or "/" in name or "\\" in name or name in (".", "..") or ".." in name:
+        return b""
     try:
         root_fd = os.open(var_root, os.O_RDONLY | directory | nofollow)
     except OSError:
+        root_fd = None
+    if root_fd is not None:
+        try:
+            secrets_fd = os.open("secrets", os.O_RDONLY | directory | nofollow, dir_fd=root_fd)
+            try:
+                fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=secrets_fd)
+                try:
+                    info = os.fstat(fd)
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+                        return b""
+                    return os.read(fd, 65537)
+                finally:
+                    os.close(fd)
+            finally:
+                os.close(secrets_fd)
+        except OSError:
+            return b""
+        finally:
+            os.close(root_fd)
+    # Fallback when O_DIRECTORY/openat is unavailable (e.g. some Windows Python builds).
+    path = os.path.join(var_root, "secrets", name)
+    if os.path.islink(path) or not os.path.isfile(path):
         return b""
     try:
-        secrets_fd = os.open("secrets", os.O_RDONLY | directory | nofollow, dir_fd=root_fd)
-        try:
-            fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=secrets_fd)
-            try:
-                info = os.fstat(fd)
-                if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
-                    return b""
-                return os.read(fd, 65537)
-            finally:
-                os.close(fd)
-        finally:
-            os.close(secrets_fd)
+        fd = os.open(path, os.O_RDONLY | nofollow)
     except OSError:
         return b""
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+            return b""
+        return os.read(fd, 65537)
     finally:
-        os.close(root_fd)
+        os.close(fd)
 
 def valid_host(value):
     value = (value or "").strip().lower().rstrip(".")
@@ -641,44 +659,49 @@ def decode_tunnel_ids():
         tunnel = ""
     return account, tunnel
 
+def safe_regular_text(path, max_bytes=65536):
+    if not path or not os.path.isfile(path) or os.path.islink(path):
+        return ""
+    try:
+        fd = os.open(path, os.O_RDONLY | nofollow)
+    except OSError:
+        return ""
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+            return ""
+        return os.read(fd, max_bytes + 1).decode("utf-8", errors="ignore")
+    except OSError:
+        return ""
+    finally:
+        os.close(fd)
+
 def collect_hosts():
+    # Snapshot display may include env URLs; destructive deletes use root TLS only.
     hosts = set()
-    env_path = os.path.join(etc_root, "redgres.env")
-    if os.path.isfile(env_path) and not os.path.islink(env_path):
-        try:
-            with open(env_path, encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, value = line.split("=", 1)
-                    if key in ("REDGRES_BASE_URL", "REDGRES_PGADMIN_URL", "REDGRES_REDISINSIGHT_URL"):
-                        host = hostname_from_url(value.strip().strip('"').strip("'"))
-                        if host:
-                            hosts.add(host)
-        except OSError:
-            pass
-    if os.path.isfile(issue_result) and not os.path.islink(issue_result):
-        try:
-            with open(issue_result, encoding="utf-8") as fh:
-                for line in fh:
-                    if line.startswith("host="):
-                        host = valid_host(line[5:])
-                        if host:
-                            hosts.add(host)
-        except OSError:
-            pass
-    if os.path.isfile(tls_lineage) and not os.path.islink(tls_lineage):
-        try:
-            with open(tls_lineage, encoding="utf-8") as fh:
-                first = (fh.readline() or "").strip()
-            if first.startswith("/etc/letsencrypt/live/"):
-                base = re.sub(r"-\d+$", "", first.rsplit("/", 1)[-1])
-                host = valid_host(base)
-                if host:
-                    hosts.add(host)
-        except OSError:
-            pass
+    env_text = safe_regular_text(os.path.join(etc_root, "redgres.env"))
+    for line in env_text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key in ("REDGRES_BASE_URL", "REDGRES_PGADMIN_URL", "REDGRES_REDISINSIGHT_URL"):
+            host = hostname_from_url(value.strip().strip('"').strip("'"))
+            if host:
+                hosts.add(host)
+    for line in safe_regular_text(issue_result).splitlines():
+        if line.startswith("host="):
+            host = valid_host(line[5:])
+            if host:
+                hosts.add(host)
+    lineage_text = safe_regular_text(tls_lineage, max_bytes=4096)
+    if lineage_text:
+        first = (lineage_text.splitlines() or [""])[0].strip()
+        if first.startswith("/etc/letsencrypt/live/"):
+            base = re.sub(r"-\d+$", "", first.rsplit("/", 1)[-1])
+            host = valid_host(base)
+            if host:
+                hosts.add(host)
     return hosts
 
 dep = None
@@ -844,27 +867,45 @@ nofollow = getattr(os, "O_NOFOLLOW", 0)
 directory = getattr(os, "O_DIRECTORY", 0)
 
 def safe_secret(name):
+    if not name or "/" in name or "\\" in name or name in (".", "..") or ".." in name:
+        return b""
     try:
         root_fd = os.open(var_root, os.O_RDONLY | directory | nofollow)
     except OSError:
+        root_fd = None
+    if root_fd is not None:
+        try:
+            secrets_fd = os.open("secrets", os.O_RDONLY | directory | nofollow, dir_fd=root_fd)
+            try:
+                fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=secrets_fd)
+                try:
+                    info = os.fstat(fd)
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+                        return b""
+                    return os.read(fd, 65537)
+                finally:
+                    os.close(fd)
+            finally:
+                os.close(secrets_fd)
+        except OSError:
+            return b""
+        finally:
+            os.close(root_fd)
+    # Fallback when O_DIRECTORY/openat is unavailable (e.g. some Windows Python builds).
+    path = os.path.join(var_root, "secrets", name)
+    if os.path.islink(path) or not os.path.isfile(path):
         return b""
     try:
-        secrets_fd = os.open("secrets", os.O_RDONLY | directory | nofollow, dir_fd=root_fd)
-        try:
-            fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=secrets_fd)
-            try:
-                info = os.fstat(fd)
-                if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
-                    return b""
-                return os.read(fd, 65537)
-            finally:
-                os.close(fd)
-        finally:
-            os.close(secrets_fd)
+        fd = os.open(path, os.O_RDONLY | nofollow)
     except OSError:
         return b""
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+            return b""
+        return os.read(fd, 65537)
     finally:
-        os.close(root_fd)
+        os.close(fd)
 
 def read_token():
     raw = safe_secret("cloudflare-api-token")

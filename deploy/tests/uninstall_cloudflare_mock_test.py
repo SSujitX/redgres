@@ -145,7 +145,13 @@ def run_case(
         ]
         urllib.request.urlopen = fake_urlopen
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            exec(compile(embedded_cleanup(), "uninstall.sh:cloudflare", "exec"), {"__name__": "__main__"})
+            try:
+                exec(compile(embedded_cleanup(), "uninstall.sh:cloudflare", "exec"), {"__name__": "__main__"})
+            except SystemExit as exc:
+                # Embedded cleanup uses SystemExit(0) for STATUS lines; catch so
+                # callers still assert. Non-zero exits remain hard failures.
+                if exc.code not in (0, None):
+                    raise
     finally:
         sys.argv = old_argv
         urllib.request.urlopen = old_urlopen
