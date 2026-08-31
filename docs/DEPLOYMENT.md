@@ -55,7 +55,7 @@ Recommended permissions, adjusted for the selected systemd credential mechanism:
 | `/etc/redgres/secrets/legacy-vault-secret.managed` | `root:root 0600` | Root-only authority that keeps the managed source selected across upgrades |
 | `/etc/ssl/redgres` | `root:root 0755` | Staging Let's Encrypt copies |
 | `/etc/postgresql/*/main/redgres-*.pem` | `postgres:postgres` `0644`/`0600` | Files PostgreSQL reload can re-read |
-| `redgres.env` | `root:redgres 0640` | No secrets where avoidable |
+| `redgres.env` | `root:redgres 0660` | Mutable non-secret application settings only; never a trust source for privileged credential selection |
 | secret source files | `root:root 0600` | Inject via systemd credentials; group-readable `0640` is not accepted by the production reader |
 | `/var/lib/redgres` | `redgres:redgres 0700` | SQLite/application state |
 | `/var/backups/redgres` | `root:root 0700` | Backup job controls access |

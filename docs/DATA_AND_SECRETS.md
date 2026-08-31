@@ -106,7 +106,7 @@ Do not rotate or repurpose the legacy secret in the same change as the applicati
 Recommended:
 
 ```text
-/etc/redgres/redgres.env                         root:redgres 0640
+/etc/redgres/redgres.env                         root:redgres 0660
 /etc/redgres/secrets/postgres-admin-password     root:root    0600
 /etc/redgres/secrets/legacy-vault-secret         root:root    0600
 /etc/redgres/secrets/legacy-vault-secret.managed root:root    0600
