@@ -215,15 +215,73 @@ redgres_uninstall_cloudflare_status_confirmed() {
   esac
 }
 
+redgres_uninstall_restore_unit() {
+  local unit="$1" attempt
+  if ! systemctl --no-block start "${unit}" >/dev/null 2>&1; then
+    printf '         warn: could not request restart for %s\n' "${unit}" >&2
+    return 0
+  fi
+  for attempt in 1 2 3; do
+    if systemctl is-active --quiet "${unit}"; then
+      return 0
+    fi
+    if systemctl is-failed --quiet "${unit}"; then
+      printf '         warn: %s failed while restoring pre-uninstall state\n' "${unit}" >&2
+      return 0
+    fi
+    sleep 1
+  done
+  printf '         warn: %s restoration was not confirmed within 3 seconds\n' "${unit}" >&2
+  return 0
+}
+
 redgres_uninstall_restore_quiesced() {
   [[ "${REDGRES_UNINSTALL_QUIESCE_GUARD:-0}" == "1" ]] || return 0
-  REDGRES_UNINSTALL_QUIESCE_GUARD=0
-  command -v systemctl >/dev/null 2>&1 || return 0
+  if ! command -v systemctl >/dev/null 2>&1; then
+    REDGRES_UNINSTALL_QUIESCE_GUARD=0
+    return 0
+  fi
   if [[ "${REDGRES_UNINSTALL_APP_WAS_ACTIVE:-0}" == "1" ]]; then
-    systemctl start redgres.service >/dev/null 2>&1 || true
+    redgres_uninstall_restore_unit redgres.service
   fi
   if [[ "${REDGRES_UNINSTALL_TLS_PATH_WAS_ACTIVE:-0}" == "1" ]]; then
-    systemctl start redgres-tls-issue.path >/dev/null 2>&1 || true
+    redgres_uninstall_restore_unit redgres-tls-issue.path
+  fi
+  if [[ "${REDGRES_UNINSTALL_TUNNEL_WAS_ACTIVE:-0}" == "1" ]]; then
+    redgres_uninstall_restore_unit cloudflared-redgres.service
+  fi
+  if [[ "${REDGRES_UNINSTALL_TUNNEL_PATH_WAS_ACTIVE:-0}" == "1" ]]; then
+    redgres_uninstall_restore_unit cloudflared-redgres.path
+  fi
+  REDGRES_UNINSTALL_QUIESCE_GUARD=0
+  return 0
+}
+
+redgres_uninstall_quiesce_cloudflare() {
+  local unit
+  command -v systemctl >/dev/null 2>&1 || return 0
+  REDGRES_UNINSTALL_TUNNEL_WAS_ACTIVE=0
+  REDGRES_UNINSTALL_TUNNEL_PATH_WAS_ACTIVE=0
+  systemctl is-active --quiet cloudflared-redgres.service && REDGRES_UNINSTALL_TUNNEL_WAS_ACTIVE=1
+  systemctl is-active --quiet cloudflared-redgres.path && REDGRES_UNINSTALL_TUNNEL_PATH_WAS_ACTIVE=1
+  systemctl stop cloudflared-redgres.path >/dev/null 2>&1 || true
+  systemctl stop cloudflared-redgres.service >/dev/null 2>&1 || true
+  for unit in cloudflared-redgres.path cloudflared-redgres.service; do
+    if systemctl is-active --quiet "${unit}"; then
+      printf '%s\n' 'Error: Cloudflare Tunnel connector could not be quiesced; cleanup aborted.' >&2
+      return 1
+    fi
+  done
+}
+
+redgres_uninstall_apply_cloudflare_result() {
+  local cf_out="$1"
+  CF_TUNNEL_STATUS="$(printf '%s\n' "${cf_out}" | grep '^TUNNEL:' | tail -n1 | cut -d: -f2-)"
+  CF_API_STATUS="$(printf '%s\n' "${cf_out}" | grep '^STATUS:' | tail -n1 | cut -d: -f2-)"
+  [[ -n "${CF_API_STATUS}" ]] || CF_API_STATUS="unknown"
+  if [[ "${CF_TUNNEL_STATUS}" == "deleted" ]]; then
+    REDGRES_UNINSTALL_TUNNEL_WAS_ACTIVE=0
+    REDGRES_UNINSTALL_TUNNEL_PATH_WAS_ACTIVE=0
   fi
 }
 
@@ -670,15 +728,24 @@ for rec in dep.get("records") or []:
     if rec_id and zone and not cf_delete(f"/zones/{zone}/dns_records/{rec_id}", token):
         failed = True
 tunnel_id = dep.get("tunnel_id") or ""
-if tunnel_id and account and not cf_delete(f"/accounts/{account}/cfd_tunnel/{tunnel_id}", token):
-    failed = True
+tunnel_status = "none"
+if tunnel_id and account:
+    tunnel_status = "preserved"
+    if not failed:
+        if cf_delete(f"/accounts/{account}/cfd_tunnel/{tunnel_id}/connections", token):
+            if cf_delete(f"/accounts/{account}/cfd_tunnel/{tunnel_id}", token):
+                tunnel_status = "deleted"
+            else:
+                failed = True
+        else:
+            failed = True
 print("         Cloudflare disconnect attempted (DNS records, tunnel, Access)")
+print(f"TUNNEL:{tunnel_status}")
 print("STATUS:api_partial" if failed else "STATUS:api_ok")
 PY
 )"
-  printf '%s\n' "${cf_out}" | grep -v '^STATUS:' || true
-  CF_API_STATUS="$(printf '%s\n' "${cf_out}" | grep '^STATUS:' | tail -n1 | cut -d: -f2-)"
-  [[ -n "${CF_API_STATUS}" ]] || CF_API_STATUS="unknown"
+  printf '%s\n' "${cf_out}" | grep -Ev '^(STATUS|TUNNEL):' || true
+  redgres_uninstall_apply_cloudflare_result "${cf_out}"
   if ! redgres_uninstall_cloudflare_status_confirmed "${CF_API_STATUS}"; then
     printf '%b\n' "${RED}Error: Cloudflare cleanup was not confirmed; local state and credentials were preserved for retry. Use --keep-remote only to accept manual remote cleanup.${NC}" >&2
     return 1
@@ -835,6 +902,7 @@ redgres_quiesce_domain_tls() {
   systemctl is-active --quiet redgres.service && REDGRES_UNINSTALL_APP_WAS_ACTIVE=1
   systemctl is-active --quiet redgres-tls-issue.path && REDGRES_UNINSTALL_TLS_PATH_WAS_ACTIVE=1
   REDGRES_UNINSTALL_QUIESCE_GUARD=1
+  redgres_uninstall_quiesce_cloudflare || return 1
   systemctl stop redgres-tls-issue.path >/dev/null 2>&1 || true
   systemctl stop redgres.service >/dev/null 2>&1 || true
   systemctl stop redgres-tls-issue.service >/dev/null 2>&1 || true

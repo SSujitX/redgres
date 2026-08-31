@@ -1828,9 +1828,9 @@ uninstall_checkout_err="$(
   REDGRES_UNINSTALL_APP_WAS_ACTIVE=1
   REDGRES_UNINSTALL_TLS_PATH_WAS_ACTIVE=1
   redgres_uninstall_restore_quiesced
-  grep -qx 'start redgres.service' "${restore_log}"
-  grep -qx 'start redgres-tls-issue.path' "${restore_log}"
-  [[ "${REDGRES_UNINSTALL_QUIESCE_GUARD}" == "0" ]]
+  grep -Fqx -- '--no-block start redgres.service' "${restore_log}" || exit 1
+  grep -Fqx -- '--no-block start redgres-tls-issue.path' "${restore_log}" || exit 1
+  [[ "${REDGRES_UNINSTALL_QUIESCE_GUARD}" == "0" ]] || exit 1
   lineage_fixture="${tmpdir}/tls-lineage-fixture"
   printf '%s\n' '/etc/letsencrypt/live/db.example.com' >"${lineage_fixture}"
   chmod 0600 "${lineage_fixture}"
@@ -1848,6 +1848,15 @@ if [[ "${uninstall_checkout_rc}" -eq 0 ]]; then
 else
   fail "uninstall git-checkout detector (rc=${uninstall_checkout_rc})"
   printf '%s\n' "${uninstall_checkout_err}" >&2
+fi
+
+uninstall_cloudflare_output=""
+if uninstall_cloudflare_output="$(bash "${tests_dir}/uninstall_cloudflare_test.sh" 2>&1)" && \
+  [[ "${uninstall_cloudflare_output}" == *'uninstall_cloudflare_cleanup=pass'* ]]; then
+  pass 'uninstall quiesces and restores cloudflared around connector cleanup'
+else
+  fail 'uninstall cloudflared quiesce and connector cleanup ordering'
+  printf '%s\n' "${uninstall_cloudflare_output}" >&2
 fi
 
 uninstall_purge_rc=0
