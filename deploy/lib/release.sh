@@ -468,6 +468,14 @@ redgres_update_apply() {
   if [[ -e "${dest}" ]]; then
     redgres_die 'release version directory already exists'
   fi
+  if declare -F redgres_adopt_legacy_vault_secret >/dev/null 2>&1 &&
+    [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" || -n "${REDGRES_VAULT_ADOPTION_ENV_FILE:-}" ]]; then
+    redgres_adopt_legacy_vault_secret \
+      "${REDGRES_VAULT_ADOPTION_ENV_FILE:-/etc/redgres/redgres.env}" \
+      "${REDGRES_VAULT_ADOPTION_CANONICAL_DIR:-/etc/redgres/secrets}" \
+      "${REDGRES_VAULT_ADOPTION_MANIFEST:-/etc/redgres/secrets/legacy-vault-secret.adopt}" ||
+      redgres_die 'legacy vault migration requires root authorization: stage the exact existing bytes as root:root 0600 under trusted ancestors, point legacy-vault-secret.adopt at that copy, and retry (docs/CONFIGURATION.md)'
+  fi
   redgres_chmod_opt_layout "${dest}"
   /usr/bin/install -m 0755 "${binary_src}" "${dest}/redgres"
   /usr/bin/install -m 0644 "${version_src}" "${dest}/VERSION"
@@ -477,10 +485,6 @@ redgres_update_apply() {
 
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" && -n "${previous}" ]]; then
     redgres_snapshot_rollback_runtime "${previous}" || redgres_die 'could not snapshot version-matched rollback runtime'
-  fi
-
-  if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && declare -F redgres_adopt_legacy_vault_secret >/dev/null 2>&1; then
-    redgres_adopt_legacy_vault_secret || redgres_die 'legacy vault migration requires root authorization: ensure /etc/redgres/secrets is root:redgres 0750, then create legacy-vault-secret.adopt as root:root 0600 containing only the absolute legacy source path and retry'
   fi
 
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && command -v systemctl >/dev/null 2>&1; then

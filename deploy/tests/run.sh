@@ -1358,6 +1358,62 @@ else
   fail 'live update missing current'
 fi
 
+vault_retry_rc=0
+(
+  retry_stage="${tmpdir}/vault-retry-stage"
+  retry_opt="${tmpdir}/vault-retry-opt"
+  retry_env="${tmpdir}/vault-retry.env"
+  retry_manifest="${tmpdir}/vault-retry.adopt"
+  retry_canonical="${tmpdir}/vault-retry-canonical"
+  mkdir -p "${retry_stage}"
+  printf '#!/bin/sh\necho retry-stub\n' >"${retry_stage}/redgres"
+  chmod 0755 "${retry_stage}/redgres"
+  printf '1.0.3\n' >"${retry_stage}/VERSION"
+  retry_release="${tmpdir}/redgres_retry_1.0.3_linux_amd64.tar.gz"
+  /usr/bin/tar -C "${retry_stage}" -czf "${retry_release}" redgres VERSION
+  retry_digest="$(/usr/bin/sha256sum "${retry_release}")"
+  retry_digest="${retry_digest%% *}"
+  printf '%s  %s\n' "${retry_digest}" "${retry_release##*/}" >"${checksum_file}"
+  : >"${retry_env}"
+  if (
+    # shellcheck source=../lib/common.sh
+    source "${deploy_dir}/lib/common.sh"
+    # shellcheck source=../lib/mutate.sh
+    source "${deploy_dir}/lib/mutate.sh"
+    # shellcheck source=../lib/app_install.sh
+    source "${deploy_dir}/lib/app_install.sh"
+    # shellcheck source=../lib/release.sh
+    source "${deploy_dir}/lib/release.sh"
+    redgres_adopt_legacy_vault_secret() { return 1; }
+    REDGRES_OPT_ROOT="${retry_opt}" REDGRES_UNIT_PATH="${tmpdir}/vault-retry.service" REDGRES_SKIP_HEALTHZ=1 \
+      REDGRES_VAULT_ADOPTION_ENV_FILE="${retry_env}" REDGRES_VAULT_ADOPTION_CANONICAL_DIR="${retry_canonical}" \
+      REDGRES_VAULT_ADOPTION_MANIFEST="${retry_manifest}" redgres_update_apply "${retry_release}"
+  ); then
+    exit 1
+  fi
+  [[ ! -e "${retry_opt}/releases/1.0.3" ]]
+  (
+    # shellcheck source=../lib/common.sh
+    source "${deploy_dir}/lib/common.sh"
+    # shellcheck source=../lib/mutate.sh
+    source "${deploy_dir}/lib/mutate.sh"
+    # shellcheck source=../lib/app_install.sh
+    source "${deploy_dir}/lib/app_install.sh"
+    # shellcheck source=../lib/release.sh
+    source "${deploy_dir}/lib/release.sh"
+    redgres_adopt_legacy_vault_secret() { return 0; }
+    REDGRES_OPT_ROOT="${retry_opt}" REDGRES_UNIT_PATH="${tmpdir}/vault-retry.service" REDGRES_SKIP_HEALTHZ=1 \
+      REDGRES_VAULT_ADOPTION_ENV_FILE="${retry_env}" REDGRES_VAULT_ADOPTION_CANONICAL_DIR="${retry_canonical}" \
+      REDGRES_VAULT_ADOPTION_MANIFEST="${retry_manifest}" redgres_update_apply "${retry_release}" >/dev/null
+  )
+  grep -qx '1.0.3' "${retry_opt}/current/VERSION"
+) || vault_retry_rc=$?
+if [[ "${vault_retry_rc}" -eq 0 ]]; then
+  pass 'vault adoption failure leaves no release directory and same-version retry succeeds'
+else
+  fail "vault adoption transactional retry (rc=${vault_retry_rc})"
+fi
+
 packaged_upgrade_rc=0
 (
   packaged_root="${tmpdir}/packaged-upgrade"
@@ -1492,8 +1548,11 @@ update_order_rc=0
   quiesce_line="$(grep -n 'systemctl stop redgres-tls-issue.path' "${release_lib}" | head -n1 | cut -d: -f1)"
   runtime_line="$(grep -n 'redgres_install_domain_runtime || redgres_die' "${release_lib}" | head -n1 | cut -d: -f1)"
   restart_line="$(grep -n 'systemctl restart redgres.service || {' "${release_lib}" | head -n1 | cut -d: -f1)"
-  [[ -n "${quiesce_line}" && -n "${runtime_line}" && -n "${restart_line}" ]]
+  adoption_line="$(grep -n 'redgres_adopt_legacy_vault_secret || redgres_die' "${release_lib}" | head -n1 | cut -d: -f1)"
+  dest_create_line="$(grep -n 'redgres_chmod_opt_layout "${dest}"' "${release_lib}" | head -n1 | cut -d: -f1)"
+  [[ -n "${quiesce_line}" && -n "${runtime_line}" && -n "${restart_line}" && -n "${adoption_line}" && -n "${dest_create_line}" ]]
   [[ "${quiesce_line}" -lt "${runtime_line}" && "${runtime_line}" -lt "${restart_line}" ]]
+  [[ "${adoption_line}" -lt "${dest_create_line}" && "${dest_create_line}" -lt "${quiesce_line}" ]]
 ) || update_order_rc=$?
 if [[ "${update_order_rc}" -eq 0 ]]; then
   pass 'update quiesces old app/helper before installing matched runtime and restarting'
@@ -1637,17 +1696,24 @@ vault_adoption_rc=0
 vault_adoption_err="$(
   s2_lib_src
   candidate="${tmpdir}/legacy-adoption-source"
+  staged="${tmpdir}/legacy-adoption-staged"
   env_file="${tmpdir}/legacy-adoption.env"
   canonical_dir="${tmpdir}/legacy-adoption-canonical"
   adoption_manifest="${tmpdir}/legacy-vault-secret.adopt"
   printf '%s\n' 'stable-existing-vault-source' >"${candidate}"
+  cp "${candidate}" "${staged}"
   printf 'REDGRES_LEGACY_VAULT_SECRET_FILE=%s\n' "${candidate}" >"${env_file}"
   if redgres_adopt_legacy_vault_secret "${env_file}" "${canonical_dir}" "${adoption_manifest}"; then exit 1; fi
-  printf '%s\n' "${candidate}" >"${adoption_manifest}"
+  printf '%s\n' "${staged}" >"${adoption_manifest}"
   redgres_trusted_legacy_vault_source() {
     exec {adopt_fd}<"$1" || return 1
     REDGRES_TRUSTED_VAULT_FD="${adopt_fd}"
     REDGRES_TRUSTED_VAULT_PID="${BASHPID}"
+  }
+  redgres_open_legacy_vault_source_for_comparison() {
+    exec {compare_fd}<"$1" || return 1
+    REDGRES_LEGACY_COMPARE_FD="${compare_fd}"
+    REDGRES_LEGACY_COMPARE_PID="${BASHPID}"
   }
   redgres_chown_legacy_vault_secret_dir() { :; }
   redgres_chown_legacy_vault_secret() { :; }
@@ -1655,8 +1721,11 @@ vault_adoption_err="$(
   printf 'REDGRES_LEGACY_VAULT_SECRET_FILE=%s\nREDGRES_LEGACY_VAULT_SECRET_FILE=%s\n' "${candidate}" "${candidate}" >"${env_file}"
   if redgres_adopt_legacy_vault_secret "${env_file}" "${canonical_dir}" "${adoption_manifest}"; then exit 1; fi
   printf 'REDGRES_LEGACY_VAULT_SECRET_FILE=%s\n' "${candidate}" >"${env_file}"
+  printf '%s\n' 'different-staged-source' >"${staged}"
+  if redgres_adopt_legacy_vault_secret "${env_file}" "${canonical_dir}" "${adoption_manifest}"; then exit 1; fi
+  cp "${candidate}" "${staged}"
   redgres_adopt_legacy_vault_secret "${env_file}" "${canonical_dir}" "${adoption_manifest}" || exit 1
-  cmp -s "${candidate}" "${canonical_dir}/legacy-vault-secret" || exit 1
+  cmp -s "${staged}" "${canonical_dir}/legacy-vault-secret" || exit 1
   [[ "$(cat "${canonical_dir}/legacy-vault-secret.managed")" == 'managed-by-redgres-installer-v1' ]] || exit 1
   [[ ! -e "${adoption_manifest}" ]] || exit 1
 )" 2>&1 || vault_adoption_rc=$?
@@ -2076,6 +2145,12 @@ upgrade_master_err="$(
   /usr/bin/grep -q 'redgres_restore_pgadmin_master_ownership' "${deploy_dir%/*}/install-dev.sh"
   /usr/bin/grep -q 'legacy-vault-secret.adopt' "${deploy_dir%/*}/upgrade.sh"
   /usr/bin/grep -q 'legacy vault migration requires root authorization' "${deploy_dir%/*}/upgrade.sh"
+  stable_adopt_line="$(/usr/bin/grep -n 'legacy vault migration requires root authorization before changing the current release' "${deploy_dir%/*}/install.sh" | head -n1 | cut -d: -f1)"
+  stable_switch_line="$(/usr/bin/grep -n 'ln -sfn "${DEST}" "${OPT_ROOT}/current"' "${deploy_dir%/*}/install.sh" | head -n1 | cut -d: -f1)"
+  dev_adopt_line="$(/usr/bin/grep -n 'legacy vault migration requires root authorization before changing the current release' "${deploy_dir%/*}/install-dev.sh" | head -n1 | cut -d: -f1)"
+  dev_switch_line="$(/usr/bin/grep -n 'ln -sfn "${DEST}" "${OPT_ROOT}/current"' "${deploy_dir%/*}/install-dev.sh" | head -n1 | cut -d: -f1)"
+  [[ -n "${stable_adopt_line}" && -n "${stable_switch_line}" && "${stable_adopt_line}" -lt "${stable_switch_line}" ]]
+  [[ -n "${dev_adopt_line}" && -n "${dev_switch_line}" && "${dev_adopt_line}" -lt "${dev_switch_line}" ]]
 )" 2>&1 || upgrade_master_rc=$?
 if [[ "${upgrade_master_rc}" -eq 0 ]]; then
   pass 'public upgrade delegates to checksummed transactional installer'

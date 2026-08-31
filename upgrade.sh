@@ -558,10 +558,43 @@ redgres_public_open_trusted_vault_source() {
   REDGRES_PUBLIC_VAULT_PID="${shell_pid}"
 }
 
+redgres_public_open_legacy_vault_source_for_comparison() {
+  local source="$1" dir meta uid gid mode fd shell_pid path_id size device inode redgres_uid
+  [[ "${source}" == /* && -f "${source}" && ! -L "${source}" ]] || return 1
+  redgres_uid="$(/usr/bin/id -u redgres 2>/dev/null || true)"
+  [[ "${redgres_uid}" =~ ^[0-9]+$ ]] || return 1
+  dir="${source%/*}"
+  [[ -n "${dir}" ]] || dir='/'
+  while :; do
+    [[ -d "${dir}" && ! -L "${dir}" ]] || return 1
+    meta="$(/usr/bin/stat -Lc '%u:%a' "${dir}" 2>/dev/null || true)"
+    uid="${meta%%:*}"
+    mode="${meta#*:}"
+    [[ ( "${uid}" == '0' || "${uid}" == "${redgres_uid}" ) && "${mode}" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#${mode} & 8#022) == 0 )) || return 1
+    [[ "${dir}" == '/' ]] && break
+    dir="${dir%/*}"
+    [[ -n "${dir}" ]] || dir='/'
+  done
+  exec {fd}<"${source}" || return 1
+  shell_pid="${BASHPID}"
+  path_id="$(/usr/bin/stat -Lc '%d:%i' "${source}" 2>/dev/null || true)"
+  meta="$(/usr/bin/stat -Lc '%u:%g:%a:%s:%d:%i' "/proc/${shell_pid}/fd/${fd}" 2>/dev/null || true)"
+  IFS=: read -r uid gid mode size device inode <<<"${meta}"
+  if [[ ( "${uid}" != '0' && "${uid}" != "${redgres_uid}" ) || "${mode}" != '600' ||
+    "${path_id}" != "${device}:${inode}" || ! "${size}" =~ ^[0-9]+$ ]] ||
+    ((size < 1 || size > 4096)); then
+    exec {fd}<&-
+    return 1
+  fi
+  REDGRES_PUBLIC_LEGACY_COMPARE_FD="${fd}"
+  REDGRES_PUBLIC_LEGACY_COMPARE_PID="${shell_pid}"
+}
+
 redgres_public_adopt_legacy_vault_secret() {
   local env_file="${1:-/etc/redgres/redgres.env}"
   local dir='/etc/redgres/secrets' source marker manifest
-  local configured candidate manifest_fd manifest_path fd fd_path tmp marker_tmp
+  local configured configured_source candidate manifest_fd manifest_path fd fd_path compare_fd compare_path tmp marker_tmp
   source="${dir}/legacy-vault-secret"
   marker="${dir}/legacy-vault-secret.managed"
   manifest="${dir}/legacy-vault-secret.adopt"
@@ -583,12 +616,24 @@ redgres_public_adopt_legacy_vault_secret() {
   candidate="$(/usr/bin/cat "${manifest_path}" 2>/dev/null || true)"
   exec {manifest_fd}<&-
   [[ -n "${candidate}" && "${candidate}" == /* && "${candidate}" != *$'\n'* ]] || return 1
-  if [[ -n "${configured}" && "${configured#REDGRES_LEGACY_VAULT_SECRET_FILE=}" != "${candidate}" ]]; then
-    return 1
-  fi
   redgres_public_open_trusted_vault_source "${candidate}" || return 1
   fd="${REDGRES_PUBLIC_VAULT_FD}"
   fd_path="/proc/${REDGRES_PUBLIC_VAULT_PID}/fd/${fd}"
+  configured_source="${configured#REDGRES_LEGACY_VAULT_SECRET_FILE=}"
+  if [[ -n "${configured}" && "${configured_source}" != "${candidate}" ]]; then
+    if ! redgres_public_open_legacy_vault_source_for_comparison "${configured_source}"; then
+      exec {fd}<&-
+      return 1
+    fi
+    compare_fd="${REDGRES_PUBLIC_LEGACY_COMPARE_FD}"
+    compare_path="/proc/${REDGRES_PUBLIC_LEGACY_COMPARE_PID}/fd/${compare_fd}"
+    if ! /usr/bin/cmp -s "${fd_path}" "${compare_path}"; then
+      exec {compare_fd}<&-
+      exec {fd}<&-
+      return 1
+    fi
+    exec {compare_fd}<&-
+  fi
   [[ ! -L "${dir}" ]] || { exec {fd}<&-; return 1; }
   /usr/bin/mkdir -p "${dir}" || { exec {fd}<&-; return 1; }
   /usr/bin/chown root:redgres "${dir}" || { exec {fd}<&-; return 1; }
@@ -741,7 +786,7 @@ EOF
 
 redgres_write_app_unit() {
   local binary_path="$1" unit_path="${2:-/etc/systemd/system/redgres.service}"
-  redgres_public_adopt_legacy_vault_secret || die 'legacy vault migration requires root authorization: ensure /etc/redgres/secrets is root:redgres 0750, then create legacy-vault-secret.adopt as root:root 0600 containing only the absolute legacy source path and retry'
+  redgres_public_adopt_legacy_vault_secret || die 'legacy vault migration requires root authorization: stage the exact existing bytes as root:root 0600 under trusted ancestors, point legacy-vault-secret.adopt at that copy, and retry (docs/CONFIGURATION.md)'
   mkdir -p "$(dirname "${unit_path}")"
   redgres_app_unit_body "${binary_path}" >"${unit_path}"
 }
