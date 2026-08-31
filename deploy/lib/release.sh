@@ -479,6 +479,10 @@ redgres_update_apply() {
     redgres_snapshot_rollback_runtime "${previous}" || redgres_die 'could not snapshot version-matched rollback runtime'
   fi
 
+  if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && declare -F redgres_adopt_legacy_vault_secret >/dev/null 2>&1; then
+    redgres_adopt_legacy_vault_secret || redgres_die 'legacy vault migration requires root authorization: ensure /etc/redgres/secrets is root:redgres 0750, then create legacy-vault-secret.adopt as root:root 0600 containing only the absolute legacy source path and retry'
+  fi
+
   if [[ "${REDGRES_OPT_ROOT}" == "/opt/redgres" ]] && command -v systemctl >/dev/null 2>&1; then
     systemctl stop redgres-tls-issue.path >/dev/null 2>&1 || true
     systemctl stop redgres-tls-issue.service >/dev/null 2>&1 || true

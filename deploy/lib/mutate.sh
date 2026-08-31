@@ -838,13 +838,126 @@ redgres_canonical_vault_credential_ready() {
   [[ "$(redgres_vault_source_metadata "${marker}" 2>/dev/null || true)" == '0:0:600' ]]
 }
 
+redgres_version_supports_systemd_vault_credential() {
+  local version="$1" major minor patch
+  [[ "${version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+  major="${BASH_REMATCH[1]}"
+  minor="${BASH_REMATCH[2]}"
+  patch="${BASH_REMATCH[3]}"
+  ((10#${major} > 1)) && return 0
+  ((10#${major} < 1)) && return 1
+  ((10#${minor} > 1)) && return 0
+  ((10#${minor} < 1)) && return 1
+  ((10#${patch} >= 9))
+}
+
+redgres_binary_supports_systemd_vault_credential() {
+  local binary_path="$1" version_file version
+  version_file="${binary_path%/*}/VERSION"
+  [[ -f "${version_file}" && ! -L "${version_file}" ]] || return 1
+  version="$(/usr/bin/tr -d '[:space:]' <"${version_file}")"
+  redgres_version_supports_systemd_vault_credential "${version}"
+}
+
+redgres_trusted_legacy_vault_source() {
+  local source="$1" dir meta uid gid mode fd shell_pid path_id fd_id size device inode
+  [[ "${source}" == /* && -f "${source}" && ! -L "${source}" ]] || return 1
+  dir="${source%/*}"
+  [[ -n "${dir}" ]] || dir='/'
+  while :; do
+    [[ -d "${dir}" && ! -L "${dir}" ]] || return 1
+    meta="$(/usr/bin/stat -Lc '%u:%a' "${dir}" 2>/dev/null || true)"
+    uid="${meta%%:*}"
+    mode="${meta#*:}"
+    [[ "${uid}" == '0' && "${mode}" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#${mode} & 8#022) == 0 )) || return 1
+    [[ "${dir}" == '/' ]] && break
+    dir="${dir%/*}"
+    [[ -n "${dir}" ]] || dir='/'
+  done
+  exec {fd}<"${source}" || return 1
+  shell_pid="${BASHPID}"
+  path_id="$(/usr/bin/stat -Lc '%d:%i' "${source}" 2>/dev/null || true)"
+  meta="$(/usr/bin/stat -Lc '%u:%g:%a:%s:%d:%i' "/proc/${shell_pid}/fd/${fd}" 2>/dev/null || true)"
+  IFS=: read -r uid gid mode size device inode <<<"${meta}"
+  fd_id="${device}:${inode}"
+  if [[ "${uid}:${gid}:${mode}" != '0:0:600' || "${path_id}" != "${fd_id}" || ! "${size}" =~ ^[0-9]+$ ]] ||
+    ((size < 1 || size > 4096)); then
+    exec {fd}<&-
+    return 1
+  fi
+  REDGRES_TRUSTED_VAULT_FD="${fd}"
+  REDGRES_TRUSTED_VAULT_PID="${shell_pid}"
+}
+
+redgres_adopt_legacy_vault_secret() {
+  local env_file="${1:-/etc/redgres/redgres.env}"
+  local canonical_dir="${2:-/etc/redgres/secrets}"
+  local adoption_manifest="${3:-/etc/redgres/secrets/legacy-vault-secret.adopt}"
+  local canonical="${canonical_dir}/legacy-vault-secret"
+  local marker="${canonical_dir}/legacy-vault-secret.managed"
+  local configured candidate manifest_fd manifest_path fd fd_path tmp
+  redgres_canonical_vault_credential_ready "${canonical}" "${marker}" && return 0
+  [[ ! -e "${marker}" && ! -L "${marker}" ]] || return 1
+  configured=''
+  if [[ -e "${env_file}" || -L "${env_file}" ]]; then
+    [[ -f "${env_file}" && ! -L "${env_file}" ]] || return 1
+    configured="$(/usr/bin/grep '^REDGRES_LEGACY_VAULT_SECRET_FILE=' "${env_file}" 2>/dev/null || true)"
+  fi
+  [[ "${configured}" != *$'\n'* ]] || return 1
+  if [[ ! -e "${adoption_manifest}" && ! -L "${adoption_manifest}" ]]; then
+    [[ -z "${configured}" ]] && return 0
+    return 1
+  fi
+  redgres_trusted_legacy_vault_source "${adoption_manifest}" || return 1
+  manifest_fd="${REDGRES_TRUSTED_VAULT_FD}"
+  manifest_path="/proc/${REDGRES_TRUSTED_VAULT_PID}/fd/${manifest_fd}"
+  candidate="$(/usr/bin/cat "${manifest_path}" 2>/dev/null || true)"
+  exec {manifest_fd}<&-
+  [[ -n "${candidate}" && "${candidate}" == /* && "${candidate}" != *$'\n'* ]] || return 1
+  if [[ -n "${configured}" && "${configured#REDGRES_LEGACY_VAULT_SECRET_FILE=}" != "${candidate}" ]]; then
+    return 1
+  fi
+  redgres_trusted_legacy_vault_source "${candidate}" || return 1
+  fd="${REDGRES_TRUSTED_VAULT_FD}"
+  fd_path="/proc/${REDGRES_TRUSTED_VAULT_PID}/fd/${fd}"
+  [[ ! -L "${canonical_dir}" ]] || { exec {fd}<&-; return 1; }
+  /usr/bin/mkdir -p "${canonical_dir}" || { exec {fd}<&-; return 1; }
+  redgres_chown_legacy_vault_secret_dir "${canonical_dir}" || { exec {fd}<&-; return 1; }
+  /usr/bin/chmod 750 "${canonical_dir}" || { exec {fd}<&-; return 1; }
+  if [[ -e "${canonical}" || -L "${canonical}" ]]; then
+    [[ -f "${canonical}" && ! -L "${canonical}" ]] || { exec {fd}<&-; return 1; }
+    [[ "$(redgres_vault_source_metadata "${canonical}" 2>/dev/null || true)" == '0:0:600' ]] || { exec {fd}<&-; return 1; }
+    /usr/bin/cmp -s "${fd_path}" "${canonical}" || { exec {fd}<&-; return 1; }
+  else
+    tmp="$(/usr/bin/mktemp "${canonical_dir}/legacy-vault-secret.XXXXXX")" || { exec {fd}<&-; return 1; }
+    if ! /usr/bin/cat "${fd_path}" >"${tmp}" ||
+      ! redgres_chown_legacy_vault_secret "${tmp}" ||
+      ! /usr/bin/chmod 600 "${tmp}" ||
+      ! /usr/bin/mv -fT "${tmp}" "${canonical}"; then
+      /usr/bin/rm -f "${tmp}"
+      exec {fd}<&-
+      return 1
+    fi
+  fi
+  exec {fd}<&-
+  redgres_ensure_legacy_vault_secret "${canonical_dir}" || return 1
+  /usr/bin/rm -f "${adoption_manifest}" || return 1
+}
+
 redgres_app_unit_runtime_lines() {
   local binary_path="$1"
   local source="${2:-/etc/redgres/secrets/legacy-vault-secret}"
   local marker="${3:-/etc/redgres/secrets/legacy-vault-secret.managed}"
   if redgres_canonical_vault_credential_ready "${source}" "${marker}"; then
     printf 'LoadCredential=legacy-vault-secret:%s\n' "${source}"
-    printf 'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE=%%d/legacy-vault-secret %s serve\n' "${binary_path}"
+    if redgres_binary_supports_systemd_vault_credential "${binary_path}"; then
+      printf 'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE=%%d/legacy-vault-secret %s serve\n' "${binary_path}"
+    else
+      printf '%s\n' 'RuntimeDirectory=redgres-vault' 'RuntimeDirectoryMode=0700'
+      printf '%s\n' 'ExecStartPre=/usr/bin/install -m 0600 %d/legacy-vault-secret /run/redgres-vault/legacy-vault-secret'
+      printf 'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE=/run/redgres-vault/legacy-vault-secret %s serve\n' "${binary_path}"
+    fi
   else
     printf 'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= %s serve\n' "${binary_path}"
   fi

@@ -466,18 +466,136 @@ redgres_chown_app_state() {
   fi
 }
 
+redgres_public_vault_source_ready() {
+  local source="${1:-/etc/redgres/secrets/legacy-vault-secret}"
+  local marker="${2:-/etc/redgres/secrets/legacy-vault-secret.managed}"
+  [[ -f "${source}" && ! -L "${source}" && -s "${source}" ]] || return 1
+  [[ -f "${marker}" && ! -L "${marker}" ]] || return 1
+  [[ "$(/usr/bin/cat "${marker}" 2>/dev/null || true)" == 'managed-by-redgres-installer-v1' ]] || return 1
+  [[ "$(/usr/bin/stat -Lc '%u:%g:%a' "${source}" 2>/dev/null || true)" == '0:0:600' ]] || return 1
+  [[ "$(/usr/bin/stat -Lc '%u:%g:%a' "${marker}" 2>/dev/null || true)" == '0:0:600' ]]
+}
+
+redgres_public_binary_supports_systemd_vault_credential() {
+  local binary_path="$1" version_file version major minor patch
+  version_file="${binary_path%/*}/VERSION"
+  [[ -f "${version_file}" && ! -L "${version_file}" ]] || return 1
+  version="$(/usr/bin/tr -d '[:space:]' <"${version_file}")"
+  [[ "${version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+  major="${BASH_REMATCH[1]}"
+  minor="${BASH_REMATCH[2]}"
+  patch="${BASH_REMATCH[3]}"
+  ((10#${major} > 1)) && return 0
+  ((10#${major} < 1)) && return 1
+  ((10#${minor} > 1)) && return 0
+  ((10#${minor} < 1)) && return 1
+  ((10#${patch} >= 9))
+}
+
+redgres_public_open_trusted_vault_source() {
+  local source="$1" dir meta uid gid mode fd shell_pid path_id size device inode
+  [[ "${source}" == /* && -f "${source}" && ! -L "${source}" ]] || return 1
+  dir="${source%/*}"
+  [[ -n "${dir}" ]] || dir='/'
+  while :; do
+    [[ -d "${dir}" && ! -L "${dir}" ]] || return 1
+    meta="$(/usr/bin/stat -Lc '%u:%a' "${dir}" 2>/dev/null || true)"
+    uid="${meta%%:*}"
+    mode="${meta#*:}"
+    [[ "${uid}" == '0' && "${mode}" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#${mode} & 8#022) == 0 )) || return 1
+    [[ "${dir}" == '/' ]] && break
+    dir="${dir%/*}"
+    [[ -n "${dir}" ]] || dir='/'
+  done
+  exec {fd}<"${source}" || return 1
+  shell_pid="${BASHPID}"
+  path_id="$(/usr/bin/stat -Lc '%d:%i' "${source}" 2>/dev/null || true)"
+  meta="$(/usr/bin/stat -Lc '%u:%g:%a:%s:%d:%i' "/proc/${shell_pid}/fd/${fd}" 2>/dev/null || true)"
+  IFS=: read -r uid gid mode size device inode <<<"${meta}"
+  if [[ "${uid}:${gid}:${mode}" != '0:0:600' || "${path_id}" != "${device}:${inode}" || ! "${size}" =~ ^[0-9]+$ ]] ||
+    ((size < 1 || size > 4096)); then
+    exec {fd}<&-
+    return 1
+  fi
+  REDGRES_PUBLIC_VAULT_FD="${fd}"
+  REDGRES_PUBLIC_VAULT_PID="${shell_pid}"
+}
+
+redgres_public_adopt_legacy_vault_secret() {
+  local env_file="${1:-/etc/redgres/redgres.env}"
+  local dir='/etc/redgres/secrets' source marker manifest
+  local configured candidate manifest_fd manifest_path fd fd_path tmp marker_tmp
+  source="${dir}/legacy-vault-secret"
+  marker="${dir}/legacy-vault-secret.managed"
+  manifest="${dir}/legacy-vault-secret.adopt"
+  redgres_public_vault_source_ready "${source}" "${marker}" && return 0
+  [[ ! -e "${marker}" && ! -L "${marker}" ]] || return 1
+  configured=''
+  if [[ -e "${env_file}" || -L "${env_file}" ]]; then
+    [[ -f "${env_file}" && ! -L "${env_file}" ]] || return 1
+    configured="$(/usr/bin/grep '^REDGRES_LEGACY_VAULT_SECRET_FILE=' "${env_file}" 2>/dev/null || true)"
+  fi
+  [[ "${configured}" != *$'\n'* ]] || return 1
+  if [[ ! -e "${manifest}" && ! -L "${manifest}" ]]; then
+    [[ -z "${configured}" ]] && return 0
+    return 1
+  fi
+  redgres_public_open_trusted_vault_source "${manifest}" || return 1
+  manifest_fd="${REDGRES_PUBLIC_VAULT_FD}"
+  manifest_path="/proc/${REDGRES_PUBLIC_VAULT_PID}/fd/${manifest_fd}"
+  candidate="$(/usr/bin/cat "${manifest_path}" 2>/dev/null || true)"
+  exec {manifest_fd}<&-
+  [[ -n "${candidate}" && "${candidate}" == /* && "${candidate}" != *$'\n'* ]] || return 1
+  if [[ -n "${configured}" && "${configured#REDGRES_LEGACY_VAULT_SECRET_FILE=}" != "${candidate}" ]]; then
+    return 1
+  fi
+  redgres_public_open_trusted_vault_source "${candidate}" || return 1
+  fd="${REDGRES_PUBLIC_VAULT_FD}"
+  fd_path="/proc/${REDGRES_PUBLIC_VAULT_PID}/fd/${fd}"
+  [[ ! -L "${dir}" ]] || { exec {fd}<&-; return 1; }
+  /usr/bin/mkdir -p "${dir}" || { exec {fd}<&-; return 1; }
+  /usr/bin/chown root:redgres "${dir}" || { exec {fd}<&-; return 1; }
+  /usr/bin/chmod 750 "${dir}" || { exec {fd}<&-; return 1; }
+  if [[ -e "${source}" || -L "${source}" ]]; then
+    redgres_public_vault_source_ready "${source}" "${marker}" && { exec {fd}<&-; return 0; }
+    [[ -f "${source}" && ! -L "${source}" ]] || { exec {fd}<&-; return 1; }
+    [[ "$(/usr/bin/stat -Lc '%u:%g:%a' "${source}" 2>/dev/null || true)" == '0:0:600' ]] || { exec {fd}<&-; return 1; }
+    /usr/bin/cmp -s "${fd_path}" "${source}" || { exec {fd}<&-; return 1; }
+  else
+    tmp="$(/usr/bin/mktemp "${dir}/legacy-vault-secret.XXXXXX")" || { exec {fd}<&-; return 1; }
+    if ! /usr/bin/cat "${fd_path}" >"${tmp}" || ! /usr/bin/chown root:root "${tmp}" ||
+      ! /usr/bin/chmod 600 "${tmp}" || ! /usr/bin/mv -fT "${tmp}" "${source}"; then
+      /usr/bin/rm -f "${tmp}"
+      exec {fd}<&-
+      return 1
+    fi
+  fi
+  exec {fd}<&-
+  marker_tmp="$(/usr/bin/mktemp "${dir}/legacy-vault-secret.managed.XXXXXX")" || return 1
+  if ! printf '%s\n' 'managed-by-redgres-installer-v1' >"${marker_tmp}" ||
+    ! /usr/bin/chown root:root "${marker_tmp}" || ! /usr/bin/chmod 600 "${marker_tmp}" ||
+    ! /usr/bin/mv -fT "${marker_tmp}" "${marker}"; then
+    /usr/bin/rm -f "${marker_tmp}"
+    return 1
+  fi
+  redgres_public_vault_source_ready "${source}" "${marker}" || return 1
+  /usr/bin/rm -f "${manifest}" || return 1
+}
+
 redgres_app_unit_body() {
   local binary_path="$1"
-  local vault_credential='' exec_start="ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= ${binary_path} serve"
+  local vault_credential='' runtime_prelude='' exec_start="ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= ${binary_path} serve"
   local vault_source='/etc/redgres/secrets/legacy-vault-secret'
   local vault_marker='/etc/redgres/secrets/legacy-vault-secret.managed'
-  if [[ -f "${vault_source}" && ! -L "${vault_source}" && -s "${vault_source}" ]] &&
-    [[ -f "${vault_marker}" && ! -L "${vault_marker}" ]] &&
-    [[ "$(/usr/bin/cat "${vault_marker}" 2>/dev/null || true)" == 'managed-by-redgres-installer-v1' ]] &&
-    [[ "$(/usr/bin/stat -Lc '%u:%g:%a' "${vault_source}" 2>/dev/null || true)" == '0:0:600' ]] &&
-    [[ "$(/usr/bin/stat -Lc '%u:%g:%a' "${vault_marker}" 2>/dev/null || true)" == '0:0:600' ]]; then
+  if redgres_public_vault_source_ready "${vault_source}" "${vault_marker}"; then
     vault_credential='LoadCredential=legacy-vault-secret:/etc/redgres/secrets/legacy-vault-secret'
-    exec_start="ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE=%d/legacy-vault-secret ${binary_path} serve"
+    if redgres_public_binary_supports_systemd_vault_credential "${binary_path}"; then
+      exec_start="ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE=%d/legacy-vault-secret ${binary_path} serve"
+    else
+      runtime_prelude=$'RuntimeDirectory=redgres-vault\nRuntimeDirectoryMode=0700\nExecStartPre=/usr/bin/install -m 0600 %d/legacy-vault-secret /run/redgres-vault/legacy-vault-secret'
+      exec_start="ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE=/run/redgres-vault/legacy-vault-secret ${binary_path} serve"
+    fi
   fi
   cat <<EOF
 [Unit]
@@ -492,6 +610,7 @@ Group=redgres
 UMask=0077
 EnvironmentFile=-/etc/redgres/redgres.env
 ${vault_credential}
+${runtime_prelude}
 ${exec_start}
 Restart=on-failure
 RestartSec=3
@@ -586,6 +705,7 @@ EOF
 
 redgres_write_app_unit() {
   local binary_path="$1" unit_path="${2:-/etc/systemd/system/redgres.service}"
+  redgres_public_adopt_legacy_vault_secret || die 'legacy vault migration requires root authorization: ensure /etc/redgres/secrets is root:redgres 0750, then create legacy-vault-secret.adopt as root:root 0600 containing only the absolute legacy source path and retry'
   mkdir -p "$(dirname "${unit_path}")"
   redgres_app_unit_body "${binary_path}" >"${unit_path}"
 }

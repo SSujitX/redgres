@@ -1603,25 +1603,68 @@ postgres_control_err="$(
   [[ "$(wc -l <"${chown_log}")" -ge 8 ]] || exit 1
   grep -q "^dir:${vault_dir}$" "${chown_log}" || exit 1
   redgres_vault_source_metadata() { printf '%s\n' '0:0:600'; }
-  unit_lines="$(redgres_app_unit_runtime_lines '/opt/redgres/current/redgres' "${vault_secret}" "${vault_marker}")" || exit 1
+  modern_release="${tmpdir}/vault-modern-release"
+  legacy_release="${tmpdir}/vault-legacy-release"
+  mkdir -p "${modern_release}" "${legacy_release}"
+  printf '%s\n' '1.1.9' >"${modern_release}/VERSION"
+  printf '%s\n' '1.1.8' >"${legacy_release}/VERSION"
+  unit_lines="$(redgres_app_unit_runtime_lines "${modern_release}/redgres" "${vault_secret}" "${vault_marker}")" || exit 1
   [[ "${unit_lines}" == *"LoadCredential=legacy-vault-secret:${vault_secret}"* ]] || exit 1
-  [[ "${unit_lines}" == *'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE=%d/legacy-vault-secret /opt/redgres/current/redgres serve'* ]] || exit 1
+  [[ "${unit_lines}" == *"ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE=%d/legacy-vault-secret ${modern_release}/redgres serve"* ]] || exit 1
   inherited='source-path'
   effective="$(env REDGRES_ENVIRONMENT=development REDGRES_LEGACY_VAULT_SECRET_FILE="${inherited}" /usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE='%d/legacy-vault-secret' /bin/sh -c 'printf "%s:%s" "$REDGRES_ENVIRONMENT" "$REDGRES_LEGACY_VAULT_SECRET_FILE"')" || exit 1
   [[ "${effective}" == 'production:%d/legacy-vault-secret' ]] || exit 1
-  custom_lines="$(redgres_app_unit_runtime_lines '/opt/redgres/current/redgres' "${vault_secret}" "${vault_marker}")" || exit 1
+  custom_lines="$(redgres_app_unit_runtime_lines "${modern_release}/redgres" "${vault_secret}" "${vault_marker}")" || exit 1
   [[ "${custom_lines}" == *'REDGRES_LEGACY_VAULT_SECRET_FILE=%d/legacy-vault-secret'* ]] || exit 1
-  adoption_lines="$(redgres_app_unit_runtime_lines '/opt/redgres/current/redgres' "${vault_secret}" "${vault_marker}.absent")" || exit 1
-  [[ "${adoption_lines}" == 'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= /opt/redgres/current/redgres serve' ]] || exit 1
+  legacy_lines="$(redgres_app_unit_runtime_lines "${legacy_release}/redgres" "${vault_secret}" "${vault_marker}")" || exit 1
+  [[ "${legacy_lines}" == *'RuntimeDirectory=redgres-vault'* ]] || exit 1
+  [[ "${legacy_lines}" == *'ExecStartPre=/usr/bin/install -m 0600 %d/legacy-vault-secret /run/redgres-vault/legacy-vault-secret'* ]] || exit 1
+  [[ "${legacy_lines}" == *"REDGRES_LEGACY_VAULT_SECRET_FILE=/run/redgres-vault/legacy-vault-secret ${legacy_release}/redgres serve"* ]] || exit 1
+  adoption_lines="$(redgres_app_unit_runtime_lines "${modern_release}/redgres" "${vault_secret}" "${vault_marker}.absent")" || exit 1
+  [[ "${adoption_lines}" == "ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= ${modern_release}/redgres serve" ]] || exit 1
   redgres_vault_source_metadata() { printf '%s\n' '1000:1000:600'; }
-  untrusted_lines="$(redgres_app_unit_runtime_lines '/opt/redgres/current/redgres' "${vault_secret}" "${vault_marker}")" || exit 1
-  [[ "${untrusted_lines}" == 'ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= /opt/redgres/current/redgres serve' ]] || exit 1
+  untrusted_lines="$(redgres_app_unit_runtime_lines "${modern_release}/redgres" "${vault_secret}" "${vault_marker}")" || exit 1
+  [[ "${untrusted_lines}" == "ExecStart=/usr/bin/env REDGRES_ENVIRONMENT=production REDGRES_LEGACY_VAULT_SECRET_FILE= ${modern_release}/redgres serve" ]] || exit 1
 )" 2>&1 || postgres_control_rc=$?
 if [[ "${postgres_control_rc}" -eq 0 ]]; then
   pass 'fresh PostgreSQL control role and encrypted vault satisfy create-database prerequisites'
 else
   fail "fresh PostgreSQL create-database prerequisites (rc=${postgres_control_rc})"
   printf '%s\n' "${postgres_control_err}" >&2
+fi
+
+vault_adoption_rc=0
+vault_adoption_err="$(
+  s2_lib_src
+  candidate="${tmpdir}/legacy-adoption-source"
+  env_file="${tmpdir}/legacy-adoption.env"
+  canonical_dir="${tmpdir}/legacy-adoption-canonical"
+  adoption_manifest="${tmpdir}/legacy-vault-secret.adopt"
+  printf '%s\n' 'stable-existing-vault-source' >"${candidate}"
+  printf 'REDGRES_LEGACY_VAULT_SECRET_FILE=%s\n' "${candidate}" >"${env_file}"
+  if redgres_adopt_legacy_vault_secret "${env_file}" "${canonical_dir}" "${adoption_manifest}"; then exit 1; fi
+  printf '%s\n' "${candidate}" >"${adoption_manifest}"
+  redgres_trusted_legacy_vault_source() {
+    exec {adopt_fd}<"$1" || return 1
+    REDGRES_TRUSTED_VAULT_FD="${adopt_fd}"
+    REDGRES_TRUSTED_VAULT_PID="${BASHPID}"
+  }
+  redgres_chown_legacy_vault_secret_dir() { :; }
+  redgres_chown_legacy_vault_secret() { :; }
+  redgres_vault_source_metadata() { printf '%s\n' '0:0:600'; }
+  printf 'REDGRES_LEGACY_VAULT_SECRET_FILE=%s\nREDGRES_LEGACY_VAULT_SECRET_FILE=%s\n' "${candidate}" "${candidate}" >"${env_file}"
+  if redgres_adopt_legacy_vault_secret "${env_file}" "${canonical_dir}" "${adoption_manifest}"; then exit 1; fi
+  printf 'REDGRES_LEGACY_VAULT_SECRET_FILE=%s\n' "${candidate}" >"${env_file}"
+  redgres_adopt_legacy_vault_secret "${env_file}" "${canonical_dir}" "${adoption_manifest}" || exit 1
+  cmp -s "${candidate}" "${canonical_dir}/legacy-vault-secret" || exit 1
+  [[ "$(cat "${canonical_dir}/legacy-vault-secret.managed")" == 'managed-by-redgres-installer-v1' ]] || exit 1
+  [[ ! -e "${adoption_manifest}" ]] || exit 1
+)" 2>&1 || vault_adoption_rc=$?
+if [[ "${vault_adoption_rc}" -eq 0 ]]; then
+  pass 'upgrade requires and consumes one root-authorized legacy vault adoption manifest'
+else
+  fail "legacy vault adoption migration (rc=${vault_adoption_rc})"
+  printf '%s\n' "${vault_adoption_err}" >&2
 fi
 
 vault_preflight_rc=0
@@ -2031,6 +2074,8 @@ upgrade_master_err="$(
   ! /usr/bin/grep -q '^ln -sfn "${DEST}" "${OPT_ROOT}/current"' "${deploy_dir%/*}/upgrade.sh"
   /usr/bin/grep -q 'redgres_restore_pgadmin_master_ownership' "${deploy_dir%/*}/install.sh"
   /usr/bin/grep -q 'redgres_restore_pgadmin_master_ownership' "${deploy_dir%/*}/install-dev.sh"
+  /usr/bin/grep -q 'legacy-vault-secret.adopt' "${deploy_dir%/*}/upgrade.sh"
+  /usr/bin/grep -q 'legacy vault migration requires root authorization' "${deploy_dir%/*}/upgrade.sh"
 )" 2>&1 || upgrade_master_rc=$?
 if [[ "${upgrade_master_rc}" -eq 0 ]]; then
   pass 'public upgrade delegates to checksummed transactional installer'
