@@ -20,6 +20,6 @@ New work replaces **one** current-slice block. Do not re-copy older slices.
 
 ## Current slice
 
-### Firewall step UFW quiet allow (2026-09-01)
+### Uninstall continues after incomplete Cloudflare cleanup (2026-09-01)
 
-OPS-001 Partial: live `[6/8] Firewall` no longer prints raw `ufw` stdout (`Rule added`) flush-left above the indented note. `redgres_ufw_restrict_bootstrap` redirects `ufw allow … >/dev/null 2>&1` and keeps only `redgres_fw_note` under `REDGRES_LOG_PREFIX` (`    ufw: allow 8989/tcp from … only`). Evidence: `deploy/tests/run.sh` stub asserts output contains the indented note and rejects `Rule added`. Do not mark Complete: broader installer UX/live acceptance remains outstanding.
+OPS-001 Partial: full uninstall no longer aborts the host purge when Cloudflare API cleanup is unconfirmed (`no_token`, `no_state`, `insufficient_evidence`, `api_partial`, missing python3) or Certbot lineage delete cannot be verified. Step 0 prints a yellow warning, marks `CF_REMOTE_INCOMPLETE`, continues stages 1–8, and ends with dashboard follow-up plus an incomplete-remote note. Confirmed remote success still prints `done`. `--keep-remote` unchanged. Evidence: `deploy/tests/uninstall_cloudflare_test.sh` and `deploy/tests/run.sh` assert no `remote_cloudflare_disconnect || exit 1` / `purge_tls_certs || exit 1` and require the continuing-local-purge warning strings. Do not mark Complete: live host confirmation of continue-on-incomplete-remote remains outstanding.

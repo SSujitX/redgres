@@ -541,6 +541,7 @@ redgres_uninstall_export_apt_env
 DOMAIN_SNAPSHOT="$(mktemp /tmp/redgres-uninstall-domain.XXXXXX)"
 CF_API_STATUS="unknown"
 CF_CLEANUP_SCOPE="full"
+CF_REMOTE_INCOMPLETE=0
 REDGRES_UNINSTALL_QUIESCE_GUARD=0
 REDGRES_UNINSTALL_APP_WAS_ACTIVE=0
 REDGRES_UNINSTALL_TLS_PATH_WAS_ACTIVE=0
@@ -851,9 +852,10 @@ remote_cloudflare_disconnect() {
   }
   sqlite="${VAR_ROOT}/redgres.db"
   command -v python3 >/dev/null 2>&1 || {
-    printf '%b\n' "${RED}Error: python3 is required for confirmed Cloudflare cleanup; local evidence was preserved.${NC}" >&2
     CF_API_STATUS="no_python"
-    return 1
+    CF_REMOTE_INCOMPLETE=1
+    printf '%b\n' "${YELLOW}Warning: python3 is required for Cloudflare API cleanup; continuing local purge. Remove leftover DNS/Access/tunnels in the dashboard.${NC}" >&2
+    return 0
   }
   cf_out="$(python3 - "${sqlite}" "${VAR_ROOT}" "${ETC_ROOT}" \
     "/var/lib/redgres-tls/issue.result" "/etc/redgres/tls-lineage" <<'PY' 2>&1 || true
@@ -1300,14 +1302,22 @@ PY
 )"
   printf '%s\n' "${cf_out}" | grep -Ev '^(STATUS|TUNNEL|SCOPE):' || true
   redgres_uninstall_apply_cloudflare_result "${cf_out}"
-  if [[ "${CF_API_STATUS}" == "no_state" || "${CF_API_STATUS}" == "insufficient_evidence" ]]; then
-    printf '%b\n' "${RED}Error: no reconstructible Cloudflare inventory from local Redgres evidence; local state was preserved. Use --keep-remote only after accepting manual Cloudflare cleanup.${NC}" >&2
-    return 1
+  if redgres_uninstall_cloudflare_status_confirmed "${CF_API_STATUS}"; then
+    return 0
   fi
-  if ! redgres_uninstall_cloudflare_status_confirmed "${CF_API_STATUS}"; then
-    printf '%b\n' "${RED}Error: Cloudflare cleanup was not confirmed; local state and credentials were preserved for retry. Use --keep-remote only to accept manual remote cleanup.${NC}" >&2
-    return 1
-  fi
+  CF_REMOTE_INCOMPLETE=1
+  case "${CF_API_STATUS}" in
+    no_state|insufficient_evidence)
+      printf '%b\n' "${YELLOW}Warning: no reconstructible Cloudflare inventory; continuing local purge. Remove leftover DNS/Access/tunnels in the dashboard.${NC}" >&2
+      ;;
+    no_token)
+      printf '%b\n' "${YELLOW}Warning: no Cloudflare token; continuing local purge. Remove leftover DNS/Access/tunnels in the dashboard.${NC}" >&2
+      ;;
+    *)
+      printf '%b\n' "${YELLOW}Warning: Cloudflare cleanup was not confirmed; continuing local purge. Remove leftover DNS/Access/tunnels in the dashboard.${NC}" >&2
+      ;;
+  esac
+  return 0
 }
 
 purge_tls_certs() {
@@ -1319,8 +1329,9 @@ purge_tls_certs() {
   fi
   redgres_uninstall_delete_trusted_lineage "${lineage_file}" /usr/bin/certbot || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
-    printf '%b\n' "${RED}Error: Certbot lineage cleanup could not be verified; trusted evidence was preserved for retry.${NC}" >&2
-    return 1
+    CF_REMOTE_INCOMPLETE=1
+    printf '%b\n' "${YELLOW}Warning: Certbot lineage cleanup could not be verified; continuing local purge. Review certificates manually if needed.${NC}" >&2
+    return 0
   fi
   lineage="$(/usr/bin/head -n1 "${lineage_file}")"
   cert_name="${lineage##*/}"
@@ -1510,10 +1521,14 @@ if [[ "${APP_ONLY}" -eq 0 ]]; then
 fi
 if [[ "${APP_ONLY}" -eq 0 && "${KEEP_REMOTE}" -eq 0 ]]; then
   step "  ${CYAN}[0/8]${NC} Cloudflare + TLS cleanup... "
-  remote_cloudflare_disconnect || exit 1
-  purge_tls_certs || exit 1
+  remote_cloudflare_disconnect
+  purge_tls_certs
   purge_tls_local_copies
-  step_done
+  if [[ "${CF_REMOTE_INCOMPLETE}" -eq 1 ]]; then
+    printf '%b\n' "${YELLOW}partial${NC}"
+  else
+    step_done
+  fi
 elif [[ "${APP_ONLY}" -eq 0 && "${KEEP_REMOTE}" -eq 1 ]]; then
   step "  ${CYAN}[0/8]${NC} Preserving remote Cloudflare + Certbot lineage; removing local TLS copies... "
   purge_tls_local_copies
@@ -1685,6 +1700,9 @@ else
 fi
 if [[ "${APP_ONLY}" -eq 0 ]]; then
   print_cloudflare_followup
+  if [[ "${CF_REMOTE_INCOMPLETE}" -eq 1 ]]; then
+    printf '%b\n' "  ${YELLOW}Cloudflare/TLS remote cleanup was incomplete; local host purge continued.${NC}"
+  fi
   printf '%b\n' "  ${DIM}Reinstall: curl -fsSL .../install.sh | sudo bash${NC}"
 else
   printf '%b\n' "  ${DIM}PostgreSQL and Redis were not removed (--app-only).${NC}"

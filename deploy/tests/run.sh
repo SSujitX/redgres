@@ -3130,19 +3130,19 @@ uninstall_tls_rc=0
   grep -q '\[\[ "${KEEP_REMOTE}" -eq 1 \]\] && return 0' "${deploy_dir%/*}/uninstall.sh"
   ! grep -q 'REDGRES_CERTBOT_BIN' "${deploy_dir%/*}/uninstall.sh"
   grep -q '/usr/bin/certbot delete' "${deploy_dir%/*}/uninstall.sh"
-  grep -q 'purge_tls_certs || exit 1' "${deploy_dir%/*}/uninstall.sh"
-  ! grep -q 'certbot delete.*|| true' "${deploy_dir%/*}/uninstall.sh"
-  grep -q 'trusted lineage evidence was preserved for retry' "${deploy_dir%/*}/uninstall.sh"
+  ! grep -q 'purge_tls_certs || exit 1' "${deploy_dir%/*}/uninstall.sh"
+  ! grep -q 'remote_cloudflare_disconnect || exit 1' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'Warning: Certbot lineage cleanup could not be verified; continuing local purge' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'Warning: Cloudflare cleanup was not confirmed; continuing local purge' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'CF_REMOTE_INCOMPLETE=1' "${deploy_dir%/*}/uninstall.sh"
   ! grep -q 'source "${snap}"' "${deploy_dir%/*}/uninstall.sh"
   grep -q 'json.dump' "${deploy_dir%/*}/uninstall.sh"
   grep -q 'redgres_quiesce_domain_tls || exit 1' "${deploy_dir%/*}/uninstall.sh"
-  grep -q 'remote_cloudflare_disconnect || exit 1' "${deploy_dir%/*}/uninstall.sh"
-  grep -q 'Cloudflare cleanup was not confirmed; local state and credentials were preserved for retry' "${deploy_dir%/*}/uninstall.sh"
 ) || uninstall_tls_rc=$?
 if [[ "${uninstall_tls_rc}" -eq 0 ]]; then
-  pass 'uninstall preserves Certbot lineage in keep-remote mode without hard-coded domains'
+  pass 'uninstall continues local purge when Cloudflare/Certbot remote cleanup is incomplete'
 else
-  fail "uninstall Certbot lineage preservation (rc=${uninstall_tls_rc})"
+  fail "uninstall Cloudflare/Certbot continue-on-remote-incomplete (rc=${uninstall_tls_rc})"
 fi
 
 summary_load_rc=0

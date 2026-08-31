@@ -73,10 +73,14 @@ already_removed_output="$(
 
 already_removed_line="$(grep -n 'redgres_uninstall_exit_if_already_removed' "${repo_root}/uninstall.sh" | tail -n1 | cut -d: -f1)"
 confirm_line="$(grep -n '^[[:space:]]*confirm_uninstall$' "${repo_root}/uninstall.sh" | tail -n1 | cut -d: -f1)"
-disconnect_line="$(grep -n 'remote_cloudflare_disconnect || exit 1' "${repo_root}/uninstall.sh" | tail -n1 | cut -d: -f1)"
+disconnect_line="$(grep -n 'remote_cloudflare_disconnect$' "${repo_root}/uninstall.sh" | tail -n1 | cut -d: -f1)"
 [[ -n "${confirm_line}" && -n "${already_removed_line}" && -n "${disconnect_line}" ]]
 (( confirm_line < already_removed_line ))
 (( already_removed_line < disconnect_line ))
+grep -q 'Warning: Cloudflare cleanup was not confirmed; continuing local purge' "${repo_root}/uninstall.sh"
+grep -q 'CF_REMOTE_INCOMPLETE=1' "${repo_root}/uninstall.sh"
+! grep -q 'remote_cloudflare_disconnect || exit 1' "${repo_root}/uninstall.sh"
+! grep -q 'purge_tls_certs || exit 1' "${repo_root}/uninstall.sh"
 
 systemctl_log="${test_root}/systemctl.log"
 service_active=1
@@ -121,7 +125,7 @@ grep -qx 'stop cloudflared-redgres.path' "${systemctl_log}"
 grep -qx 'stop cloudflared-redgres.service' "${systemctl_log}"
 
 quiesce_line="$(grep -n 'redgres_uninstall_quiesce_cloudflare || return 1' "${repo_root}/uninstall.sh" | head -n1 | cut -d: -f1)"
-disconnect_line="$(grep -n 'remote_cloudflare_disconnect || exit 1' "${repo_root}/uninstall.sh" | head -n1 | cut -d: -f1)"
+disconnect_line="$(grep -n 'remote_cloudflare_disconnect$' "${repo_root}/uninstall.sh" | head -n1 | cut -d: -f1)"
 [[ -n "${quiesce_line}" && -n "${disconnect_line}" ]]
 (( quiesce_line < disconnect_line ))
 
