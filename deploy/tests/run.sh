@@ -1900,8 +1900,36 @@ uninstall_purge_err="$(
   grep -F -q 'exec bash "${_uninstall_tmp}" "$@" </dev/null' "${deploy_dir%/*}/uninstall.sh"
   grep -q 'redgres_uninstall_apt_handle_log' "${deploy_dir%/*}/uninstall.sh"
   grep -q 'redgres_uninstall_purge_installed' "${deploy_dir%/*}/uninstall.sh"
-  grep -A1 'Removing PostgreSQL clusters' "${deploy_dir%/*}/uninstall.sh" | grep -q purge_postgresql
+  grep -q 'redgres_uninstall_repair_dpkg' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'dpkg --configure -a' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'redgres_uninstall_list_installed_target_packages' "${deploy_dir%/*}/uninstall.sh"
+  grep -q 'some packages are still installed' "${deploy_dir%/*}/uninstall.sh"
+  grep -A2 'Removing PostgreSQL clusters' "${deploy_dir%/*}/uninstall.sh" | grep -q redgres_uninstall_repair_dpkg
+  grep -A3 'Removing PostgreSQL clusters' "${deploy_dir%/*}/uninstall.sh" | grep -q purge_postgresql
   grep -A1 'Removing leftover packages' "${deploy_dir%/*}/uninstall.sh" | grep -q redgres_uninstall_enter_safe_cwd
+  (
+    repair_log="${tmpdir}/uninstall-dpkg-repair.log"
+    : >"${repair_log}"
+    dpkg() { printf 'dpkg %s\n' "$*" >>"${repair_log}"; }
+    redgres_uninstall_apt_get() { printf 'apt %s\n' "$*" >>"${repair_log}"; return 0; }
+    command() {
+      if [[ "${1:-}" == -v && "${2:-}" == dpkg ]]; then return 0; fi
+      if [[ "${1:-}" == -v && "${2:-}" == apt-get ]]; then return 0; fi
+      return 1
+    }
+    redgres_uninstall_repair_dpkg
+    grep -Fqx 'dpkg --configure -a' "${repair_log}"
+    grep -Fqx 'apt -f install -y' "${repair_log}"
+    leftover_list="$(
+      dpkg-query() {
+        printf '%s\n' 'postgresql-18 installed' 'pgbouncer installed' 'hello not-installed'
+      }
+      redgres_uninstall_list_installed_target_packages
+    )"
+    [[ "${leftover_list}" == *'pgbouncer'* ]]
+    [[ "${leftover_list}" == *'postgresql-18'* ]]
+    [[ "${leftover_list}" != *'hello'* ]]
+  )
   apt_ok="$(mktemp)"
   printf '%s\n' 'Reading package lists... Done' 'Scanning processes...' >"${apt_ok}"
   [[ -z "$(redgres_uninstall_apt_handle_log "${apt_ok}" 0)" ]]

@@ -274,6 +274,28 @@ redgres_uninstall_apt_get() {
   return 0
 }
 
+# Recover interrupted dpkg so purge/autoremove are not blocked by
+# "dpkg was interrupted; run dpkg --configure -a".
+redgres_uninstall_repair_dpkg() {
+  local dpkg_bin
+  command -v dpkg >/dev/null 2>&1 || return 0
+  dpkg_bin="$(command -v dpkg)"
+  redgres_uninstall_export_apt_env
+  "${dpkg_bin}" --configure -a </dev/null >/dev/null 2>&1 || true
+  if command -v apt-get >/dev/null 2>&1; then
+    redgres_uninstall_apt_get -f install -y || true
+  fi
+}
+
+redgres_uninstall_list_installed_target_packages() {
+  local installed dpkg_rc=0
+  command -v dpkg-query >/dev/null 2>&1 || return 0
+  installed="$(dpkg-query -W -f='${binary:Package} ${db:Status-Status}\n' \
+    'postgresql*' 'redis*' 'redis-server' 'redis-tools' pgbouncer cloudflared 2>/dev/null)" || dpkg_rc=$?
+  (( dpkg_rc <= 1 )) || return 0
+  printf '%s\n' "${installed}" | awk '$2 == "installed" { print $1 }'
+}
+
 redgres_uninstall_cloudflare_status_confirmed() {
   case "${1:-}" in
     api_ok|no_domain|manual_dns) return 0 ;;
@@ -1422,7 +1444,7 @@ remove_bootstrap_firewall() {
     [[ -n "${rule}" ]] || break
     ufw --force delete "${rule}" 2>/dev/null || break
   done
-  ufw delete allow 8989/tcp 2>/dev/null || true
+  ufw delete allow 8989/tcp >/dev/null 2>&1 || true
 }
 
 remove_owned_bootstrap_firewall_rules() {
@@ -1597,6 +1619,7 @@ fi
 # ── 4. PostgreSQL / Redis / PgBouncer ───────────────────────────────────────
 if [[ "${APP_ONLY}" -eq 0 ]]; then
   step "  ${CYAN}[4/8]${NC} Removing PostgreSQL clusters and packages... "
+  redgres_uninstall_repair_dpkg
   purge_postgresql
   step_done
 
@@ -1604,6 +1627,15 @@ if [[ "${APP_ONLY}" -eq 0 ]]; then
   purge_redis_native
   purge_pgbouncer
   purge_cloudflared_package
+  # One retry after repair when a prior interrupted dpkg blocked the first purge.
+  if [[ -n "$(redgres_uninstall_list_installed_target_packages 2>/dev/null || true)" ]]; then
+    printf '%b\n' "         ${YELLOW}retrying package purge after dpkg repair${NC}"
+    redgres_uninstall_repair_dpkg
+    purge_postgresql
+    purge_redis_native
+    purge_pgbouncer
+    purge_cloudflared_package
+  fi
   step_done
 else
   step "  ${CYAN}[4/8]${NC} PostgreSQL/Redis/PgBouncer "
@@ -1662,11 +1694,19 @@ fi
 step_done
 
 # ── 8. Leftover apt packages (after cwd is off the deleted checkout) ─────────
+APT_PURGE_LEFTOVERS=""
 if [[ "${APP_ONLY}" -eq 0 ]] && command -v apt-get >/dev/null 2>&1; then
   step "  ${CYAN}[8/8]${NC} Removing leftover packages... "
   redgres_uninstall_enter_safe_cwd || true
+  redgres_uninstall_repair_dpkg
   redgres_uninstall_apt_get autoremove -y || true
-  step_done
+  APT_PURGE_LEFTOVERS="$(redgres_uninstall_list_installed_target_packages 2>/dev/null || true)"
+  if [[ -n "${APT_PURGE_LEFTOVERS}" ]]; then
+    printf '%b\n' "${YELLOW}partial${NC}"
+    printf '%b\n' "         ${YELLOW}still installed: $(printf '%s' "${APT_PURGE_LEFTOVERS}" | tr '\n' ' ')${NC}"
+  else
+    step_done
+  fi
 else
   step "  ${CYAN}[8/8]${NC} Leftover packages "
   step_skip
@@ -1687,11 +1727,17 @@ fi
 log=""
 if [[ "${APP_ONLY}" -eq 1 ]]; then
   log="${GREEN}${BOLD}Redgres application uninstalled.${NC}"
+elif [[ -n "${APT_PURGE_LEFTOVERS}" ]]; then
+  log="${YELLOW}${BOLD}Redgres files removed, but some packages are still installed.${NC}"
 else
   log="${GREEN}${BOLD}Redgres fully removed. Host is clean for a fresh install.${NC}"
 fi
 printf '%b\n' ""
 printf '%b\n' "  ${log}"
+if [[ -n "${APT_PURGE_LEFTOVERS}" ]]; then
+  printf '%b\n' "  ${YELLOW}Run:${NC} sudo dpkg --configure -a && sudo apt-get -f install -y"
+  printf '%b\n' "  ${YELLOW}Then:${NC} sudo apt-get purge -y $(printf '%s' "${APT_PURGE_LEFTOVERS}" | tr '\n' ' ')"
+fi
 if [[ -n "${BUSY}" ]]; then
   printf '%b\n' "  ${YELLOW}Note:${NC} ports still in use (non-Redgres or stale socket): ${BUSY}"
   printf '%b\n' "  ${DIM}Check with: ss -tlnp${NC}"

@@ -20,6 +20,6 @@ New work replaces **one** current-slice block. Do not re-copy older slices.
 
 ## Current slice
 
-### Uninstall continues after incomplete Cloudflare cleanup (2026-09-01)
+### Uninstall repairs interrupted dpkg before package purge (2026-09-01)
 
-OPS-001 Partial: full uninstall no longer aborts the host purge when Cloudflare API cleanup is unconfirmed (`no_token`, `no_state`, `insufficient_evidence`, `api_partial`, missing python3) or Certbot lineage delete cannot be verified. Step 0 prints a yellow warning, marks `CF_REMOTE_INCOMPLETE`, continues stages 1–8, and ends with dashboard follow-up plus an incomplete-remote note. Confirmed remote success still prints `done`. `--keep-remote` unchanged. Evidence: `deploy/tests/uninstall_cloudflare_test.sh` and `deploy/tests/run.sh` assert no `remote_cloudflare_disconnect || exit 1` / `purge_tls_certs || exit 1` and require the continuing-local-purge warning strings. Do not mark Complete: live host confirmation of continue-on-incomplete-remote remains outstanding.
+OPS-001 Partial: full uninstall now runs `dpkg --configure -a` and `apt-get -f install -y` before PostgreSQL/Redis/PgBouncer/cloudflared purge and again before autoremove, then retries purge once if targeted packages remain. Finish text no longer claims “fully removed” when `dpkg-query` still lists those packages; it prints the leftover names and recovery commands. Cloudflare incomplete cleanup still continues the local purge (prior slice). Evidence: `deploy/tests/run.sh` asserts repair/list helpers and stubbed `dpkg --configure -a` / `apt-get -f install -y` ordering. Do not mark Complete: live VPS confirmation after an interrupted-dpkg uninstall remains outstanding.
