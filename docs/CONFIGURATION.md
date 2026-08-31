@@ -57,19 +57,24 @@ Development may start without PostgreSQL; list/details then return `503` `depend
 
 ### One-time legacy vault adoption
 
-Use this only when an older working installation already has `REDGRES_LEGACY_VAULT_SECRET_FILE` and no `/etc/redgres/secrets/legacy-vault-secret.managed` marker. Replace the example with that existing absolute source path; do not rotate or copy a different secret:
+Use this only when an older working installation already has `REDGRES_LEGACY_VAULT_SECRET_FILE` and no `/etc/redgres/secrets/legacy-vault-secret.managed` marker. The old file is commonly `redgres:redgres 0600`, so it is not itself eligible to become root authority. Replace the first example path with that exact existing source; do not rotate or substitute different bytes:
 
 ```bash
+legacy_vault_source='/absolute/path/currently-set-in-redgres.env'
+sudo systemctl stop redgres
+sudo test -f "${legacy_vault_source}"
+sudo test ! -L "${legacy_vault_source}"
 sudo test -d /etc/redgres
 sudo test ! -L /etc/redgres
 sudo install -d -o root -g redgres -m 0750 /etc/redgres /etc/redgres/secrets
+sudo install -o root -g root -m 0600 "${legacy_vault_source}" /etc/redgres/secrets/legacy-vault-secret.staged
 sudo install -o root -g root -m 0600 /dev/null /etc/redgres/secrets/legacy-vault-secret.adopt
-printf '%s\n' '/absolute/root-owned/legacy-vault-source' | sudo tee /etc/redgres/secrets/legacy-vault-secret.adopt >/dev/null
+printf '%s\n' '/etc/redgres/secrets/legacy-vault-secret.staged' | sudo tee /etc/redgres/secrets/legacy-vault-secret.adopt >/dev/null
 sudo chown root:root /etc/redgres/secrets/legacy-vault-secret.adopt
 sudo chmod 0600 /etc/redgres/secrets/legacy-vault-secret.adopt
 ```
 
-Then rerun `upgrade.sh`. The installer requires exactly one matching env selection, validates and descriptor-pins the root-owned manifest and source without printing either content, copies the existing bytes to the canonical root source, creates the managed marker, and removes the one-time manifest. It aborts before stopping Redgres when the manifest is missing, unsafe, disagrees with the configured path, or collides with different canonical bytes.
+Then rerun `upgrade.sh`. The installer validates and descriptor-pins the root-owned manifest and staged source without printing either content, separately pins the configured owner-only legacy source, and requires both files to contain identical bytes. It copies the staged bytes to the canonical root source, creates the managed marker, and removes the one-time manifest. It aborts before its own service-quiesce transaction when the manifest is missing, unsafe, differs from the configured source, or collides with different canonical bytes; because the procedure stopped the service first, run `sudo systemctl start redgres` if the upgrade exits before restoring it. After the upgraded UI passes Create → Reveal → Drop, remove only the staging copy with `sudo rm -f /etc/redgres/secrets/legacy-vault-secret.staged`; never remove the canonical source or marker.
 
 These are application connection settings, not authority to install PostgreSQL or change extensions. Installer-only lifecycle values such as `POSTGRES_MODE`, `POSTGRES_MAJOR`, `PGBOUNCER_MODE`, `POSTGRES_EXTENSION_POLICY`, and `POSTGRES_EXTENSION_PLAN_FILE` live in the protected install configuration and are validated under [POSTGRESQL_PROVISIONING.md](POSTGRESQL_PROVISIONING.md). The main installer dry-run now syntax-validates exactly those five keys from a trusted, descriptor-pinned file: one `KEY=VALUE` per line, optional empty lines and `#` comments, no duplicate or unknown keys, no `export` syntax, maximum 64 KiB. Values are inert bytes and are never sourced, evaluated, interpolated, exported, or printed. This Partial parser does not yet apply config values, define precedence over CLI selections, or perform the per-key domain validation required before mutation. The application environment never accepts package names, repositories, arbitrary extension SQL or preload libraries.
 
