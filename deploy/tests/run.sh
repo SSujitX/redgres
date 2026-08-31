@@ -1820,6 +1820,7 @@ uninstall_checkout_err="$(
   redgres_uninstall_cloudflare_status_confirmed no_domain
   redgres_uninstall_cloudflare_status_confirmed manual_dns
   ! redgres_uninstall_cloudflare_status_confirmed no_state
+  ! redgres_uninstall_cloudflare_status_confirmed insufficient_evidence
   ! redgres_uninstall_cloudflare_status_confirmed no_token
   ! redgres_uninstall_cloudflare_status_confirmed api_partial
   restore_log="${tmpdir}/uninstall-restore.log"
