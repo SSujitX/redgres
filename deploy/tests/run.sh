@@ -1919,6 +1919,10 @@ uninstall_purge_err="$(
   miss="$(PATH="${stub_bin}:${PATH}" REDGRES_UNINSTALL_APT_GET="${stub_bin}/apt-get" redgres_uninstall_purge_installed redis-server pgbouncer cloudflared)"
   [[ -z "${miss}" ]]
   [[ "${miss}" != *RAN_APT* ]]
+  redis_purge_log="${tmpdir}/uninstall-redis-purge.log"
+  redgres_uninstall_purge_installed() { printf '%s\n' "$*" >"${redis_purge_log}"; }
+  redgres_uninstall_purge_native_redis_packages
+  grep -Fqx 'redis-server redis redis-tools' "${redis_purge_log}" || exit 1
 ) 2>&1" || uninstall_purge_rc=$?
 if [[ "${uninstall_purge_rc}" -eq 0 ]]; then
   pass 'uninstall purge leaves leftover Postgres dirs, noninteractive apt, and a safe cwd'

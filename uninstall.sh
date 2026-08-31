@@ -160,6 +160,10 @@ redgres_uninstall_purge_installed() {
   redgres_uninstall_apt_get purge -y "${pkgs[@]}"
 }
 
+redgres_uninstall_purge_native_redis_packages() {
+  redgres_uninstall_purge_installed redis-server redis redis-tools
+}
+
 redgres_uninstall_purge_postgresql_packages() {
   local -a pkgs=()
   local pkg status
@@ -875,7 +879,7 @@ purge_redis_native() {
   stop_systemd_unit redis-server.service
   stop_systemd_unit redis.service
   if command -v apt-get >/dev/null 2>&1; then
-    redgres_uninstall_purge_installed redis-server redis || true
+    redgres_uninstall_purge_native_redis_packages || true
   elif command -v dnf >/dev/null 2>&1; then
     dnf remove -y redis 2>/dev/null || true
   elif command -v yum >/dev/null 2>&1; then
